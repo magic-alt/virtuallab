@@ -3,6 +3,7 @@ import {
   FolderGit2,
   GitBranch,
   Plus,
+  GitBranchPlus,
   Trash2,
   Workflow,
 } from "lucide-react";
@@ -18,6 +19,10 @@ interface Props {
   onAdd: () => void;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
+  onNewWorkspace: () => void;
+  onSelectWorkspace: (path: string) => void;
+  onRemoveWorkspace: (path: string) => void;
+  workspaceActionsEnabled: boolean;
 }
 
 export function ProjectSidebar({
@@ -28,6 +33,10 @@ export function ProjectSidebar({
   onAdd,
   onSelect,
   onRemove,
+  onNewWorkspace,
+  onSelectWorkspace,
+  onRemoveWorkspace,
+  workspaceActionsEnabled,
 }: Props) {
   return (
     <aside className="flex min-h-0 w-[286px] shrink-0 flex-col border-r border-white/[0.07] bg-[#090e17]/96">
@@ -100,22 +109,45 @@ export function ProjectSidebar({
         )}
 
         <div className="mt-7">
-          <SectionLabel icon={<Workflow size={13} />} label="Workspace lanes" />
+          <div className="flex items-center justify-between">
+            <SectionLabel icon={<Workflow size={13} />} label="Workspace lanes" />
+            <button
+              className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-orange-300 transition hover:bg-orange-400/10 disabled:opacity-30"
+              disabled={!workspaceActionsEnabled}
+              onClick={onNewWorkspace}
+              type="button"
+            >
+              <GitBranchPlus size={11} />
+              New
+            </button>
+          </div>
           <div className="mt-2 space-y-1.5">
             {snapshot.worktrees.slice(0, 6).map((worktree, index) => (
               <div
                 key={`${worktree.path}-${index}`}
-                className="rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
+                className="group flex items-center gap-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
               >
-                <div className="flex items-center gap-2 text-xs text-slate-300">
-                  <GitBranch size={12} className="text-slate-600" />
-                  <span className="truncate">
-                    {worktree.branch ?? (worktree.detached ? "detached" : "workspace")}
-                  </span>
-                </div>
-                <div className="mt-1 truncate pl-5 text-[10px] text-slate-600">
-                  {compactPath(worktree.path, 30)}
-                </div>
+                <button className="min-w-0 flex-1 text-left" onClick={() => onSelectWorkspace(worktree.path)} type="button">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <GitBranch size={12} className="text-slate-600" />
+                    <span className="truncate">
+                      {worktree.branch ?? (worktree.detached ? "detached" : "workspace")}
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate pl-5 text-[10px] text-slate-600">
+                    {compactPath(worktree.path, 30)}
+                  </div>
+                </button>
+                {index > 0 && (
+                  <button
+                    aria-label="Remove workspace"
+                    className="rounded-md p-1 text-slate-700 opacity-0 transition hover:bg-rose-400/10 hover:text-rose-300 group-hover:opacity-100"
+                    onClick={() => onRemoveWorkspace(worktree.path)}
+                    type="button"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                )}
               </div>
             ))}
           </div>

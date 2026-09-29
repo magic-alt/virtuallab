@@ -1,15 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { RepositorySnapshot } from "@/types/workbench";
+import type {
+  ProcessSpec,
+  RepositorySnapshot,
+  WorkspaceMutationResult,
+} from "@/types/workbench";
 
 export function isDesktopRuntime() {
   return "__TAURI_INTERNALS__" in window;
 }
 
-export async function chooseRepositoryDirectory(): Promise<string | null> {
+function requireDesktop() {
   if (!isDesktopRuntime()) {
-    throw new Error("Folder selection is available in the Tauri desktop runtime.");
+    throw new Error("This action requires the Tauri desktop runtime.");
   }
+}
+
+export async function chooseRepositoryDirectory(): Promise<string | null> {
+  requireDesktop();
 
   const selected = await open({
     directory: true,
@@ -21,9 +29,78 @@ export async function chooseRepositoryDirectory(): Promise<string | null> {
 }
 
 export async function inspectRepository(path: string): Promise<RepositorySnapshot> {
-  if (!isDesktopRuntime()) {
-    throw new Error("Native Git inspection is available in the Tauri desktop runtime.");
-  }
-
+  requireDesktop();
   return invoke<RepositorySnapshot>("inspect_repository", { path });
+}
+
+export async function createWorktree(
+  repositoryRoot: string,
+  branch: string,
+  baseRef?: string,
+  targetPath?: string,
+): Promise<WorkspaceMutationResult> {
+  requireDesktop();
+  return invoke<WorkspaceMutationResult>("create_worktree", {
+    repositoryRoot,
+    branch,
+    baseRef: baseRef || null,
+    targetPath: targetPath || null,
+  });
+}
+
+export async function removeWorktree(
+  repositoryRoot: string,
+  worktreePath: string,
+): Promise<void> {
+  requireDesktop();
+  return invoke("remove_worktree", { repositoryRoot, worktreePath });
+}
+
+export async function terminalSpawn(
+  id: string,
+  cwd: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  requireDesktop();
+  return invoke("terminal_spawn", { id, cwd, cols, rows });
+}
+
+export async function terminalWrite(id: string, data: Uint8Array): Promise<void> {
+  requireDesktop();
+  return invoke("terminal_write", { id, data: Array.from(data) });
+}
+
+export async function terminalResize(
+  id: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  requireDesktop();
+  return invoke("terminal_resize", { id, cols, rows });
+}
+
+export async function terminalStop(id: string): Promise<void> {
+  requireDesktop();
+  return invoke("terminal_stop", { id });
+}
+
+export async function processSpawn(spec: ProcessSpec): Promise<void> {
+  requireDesktop();
+  return invoke("process_spawn", { spec });
+}
+
+export async function processStop(id: string): Promise<void> {
+  requireDesktop();
+  return invoke("process_stop", { id });
+}
+
+export async function watchStart(id: string, path: string): Promise<void> {
+  requireDesktop();
+  return invoke("watch_start", { id, path });
+}
+
+export async function watchStop(id: string): Promise<void> {
+  if (!isDesktopRuntime()) return;
+  return invoke("watch_stop", { id });
 }

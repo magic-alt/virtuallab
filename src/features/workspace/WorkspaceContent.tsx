@@ -8,11 +8,15 @@ import {
   History,
   ListChecks,
   MonitorDot,
+  PlayCircle,
   TerminalSquare,
   TriangleAlert,
   Workflow,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { ProcessRunner } from "@/features/execution/ProcessRunner";
+import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
+import { isDesktopRuntime } from "@/lib/backend";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
   RepositorySnapshot,
@@ -40,6 +44,7 @@ const tabs: Array<{
     counter: (snapshot) => snapshot.dirtyCount || null,
   },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
+  { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
   { id: "history", label: "History", icon: <History size={14} /> },
 ];
@@ -84,7 +89,12 @@ export function WorkspaceContent({
       <main className="surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && <Changes snapshot={snapshot} />}
-        {tab === "terminal" && <TerminalPlaceholder snapshot={snapshot} />}
+        {tab === "terminal" && (
+          <TerminalWorkspace cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
+        )}
+        {tab === "run" && (
+          <ProcessRunner cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
+        )}
         {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
         {tab === "history" && <HistoryView snapshot={snapshot} />}
       </main>
@@ -250,41 +260,6 @@ function Changes({ snapshot }: { snapshot: RepositorySnapshot }) {
           </div>
         )}
       </Panel>
-    </div>
-  );
-}
-
-function TerminalPlaceholder({ snapshot }: { snapshot: RepositorySnapshot }) {
-  return (
-    <div className="mx-auto max-w-[1120px]">
-      <div className="soft-shadow overflow-hidden rounded-2xl border border-white/[0.08] bg-[#05080e]">
-        <div className="flex h-10 items-center justify-between border-b border-white/[0.07] bg-white/[0.025] px-4">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
-            <TerminalSquare size={14} />
-            Workspace terminal
-          </div>
-          <Badge tone="orange">PTY adapter · V0.2</Badge>
-        </div>
-        <div className="mono min-h-[430px] p-5 text-[12px] leading-6">
-          <div className="text-slate-600"># Native PTY execution is intentionally not enabled in V0.1.</div>
-          <div className="mt-5 text-emerald-300">virtuallab</div>
-          <div className="text-slate-500">{compactPath(snapshot.root, 100)}</div>
-          <div className="mt-5 text-slate-500">$ git status --short</div>
-          {snapshot.changes.length === 0 ? (
-            <div className="text-slate-700"># clean</div>
-          ) : (
-            snapshot.changes.slice(0, 8).map((change) => (
-              <div key={change.path} className="text-slate-400">
-                {change.indexStatus}{change.worktreeStatus} {change.path}
-              </div>
-            ))
-          )}
-          <div className="mt-7 flex items-center gap-2 text-orange-300">
-            <span className="animate-pulse">▋</span>
-            <span className="text-slate-600">xterm.js + portable PTY lands behind this surface next.</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

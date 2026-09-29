@@ -82,3 +82,30 @@ button:focus-visible {
 .scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
+
+.field {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0 11px;
+  color: #e7e5e4;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.field:focus {
+  border-color: rgba(251, 146, 60, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.08);
+}
+
+.field::placeholder {
+  color: #57534e;
+}
+
+select.field option {
+  background: #15100c;
+}
