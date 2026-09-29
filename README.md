@@ -17,7 +17,7 @@ Repository
 
 Claude Code, Codex or other agents will attach to this model later; the workbench remains useful without them.
 
-## Current status — V0.1 foundation
+## Current status — V0.2 workspace execution
 
 The first slice is already designed for daily local use:
 
@@ -33,7 +33,7 @@ The first slice is already designed for daily local use:
 - preview mode when running as a normal web page
 - architecture and safety boundary ready for PTY, review, verification and agents
 
-The embedded terminal surface is deliberately non-executing in V0.1. PTY/process execution lands in V0.2 behind a reviewed native boundary.
+V0.2 turns the shell into an execution workbench: PTY terminals, isolated worktrees, structured build/test processes and filesystem-driven refresh live behind typed native commands.
 
 ## Technology stack
 
@@ -121,3 +121,16 @@ V0.5 adds agent harnesses. The invariant remains:
 ## Safety posture
 
 Read-only inspection is the default. Destructive Git operations, firmware flashing, motor/power-stage enable and release/merge actions will require explicit human approval gates.
+
+### Windows: `cargo metadata ... program not found`
+
+VirtualLab's desktop runtime requires the Rust toolchain because Tauri compiles a native Rust host. The repository now wraps `tauri:dev` with a preflight that also discovers `%USERPROFILE%\\.cargo\\bin\\cargo.exe` when Cargo is installed but missing from the current Conda/PowerShell PATH.
+
+Run:
+
+```powershell
+npm run doctor
+npm run tauri:dev
+```
+
+If Rust is not installed, install rustup first (for example `winget install Rustlang.Rustup`), restart PowerShell, then run `rustup default stable` and retry.

@@ -100,7 +100,7 @@ export function WorkbenchShell() {
         data-tauri-drag-region
       >
         <div className="flex items-center gap-2.5">
-          <div className="flex size-7 items-center justify-center rounded-lg border border-blue-400/20 bg-blue-400/10 text-blue-300">
+          <div className="flex size-7 items-center justify-center rounded-lg border border-orange-400/20 bg-orange-400/10 text-orange-300">
             <Layers3 size={15} />
           </div>
           <div>

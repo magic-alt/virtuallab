@@ -43,11 +43,11 @@ export function ProjectSidebar({
 
         {repositories.length === 0 ? (
           <button
-            className="mt-2 w-full rounded-xl border border-blue-400/15 bg-blue-400/[0.07] p-3 text-left"
+            className="mt-2 w-full rounded-xl border border-orange-400/15 bg-orange-400/[0.07] p-3 text-left"
             type="button"
           >
             <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-blue-500/15 text-blue-300">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-orange-500/15 text-orange-300">
                 <Boxes size={14} />
               </div>
               Workbench preview
@@ -66,7 +66,7 @@ export function ProjectSidebar({
                   className={cn(
                     "group flex items-center gap-1 rounded-xl border px-2 py-2 transition",
                     active
-                      ? "border-blue-400/20 bg-blue-400/[0.08]"
+                      ? "border-orange-400/20 bg-orange-400/[0.08]"
                       : "border-transparent hover:bg-white/[0.035]",
                   )}
                 >

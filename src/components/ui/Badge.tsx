@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red";
+type BadgeTone = "neutral" | "blue" | "orange" | "green" | "amber" | "red";
 
 const tones: Record<BadgeTone, string> = {
   neutral: "border-white/10 bg-white/[0.045] text-slate-300",
   blue: "border-blue-400/20 bg-blue-400/10 text-blue-200",
+  orange: "border-orange-400/20 bg-orange-400/10 text-orange-200",
   green: "border-emerald-400/20 bg-emerald-400/10 text-emerald-200",
   amber: "border-amber-400/20 bg-amber-400/10 text-amber-200",
   red: "border-rose-400/20 bg-rose-400/10 text-rose-200",

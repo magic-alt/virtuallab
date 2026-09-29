@@ -10,7 +10,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants: Record<ButtonVariant, string> = {
   primary:
-    "border border-blue-400/30 bg-blue-500/90 text-white shadow-[0_10px_30px_rgba(59,130,246,0.16)] hover:bg-blue-400",
+    "border border-orange-400/30 bg-orange-500/90 text-white shadow-[0_10px_30px_rgba(249,115,22,0.16)] hover:bg-orange-400",
   outline:
     "border border-white/10 bg-white/[0.035] text-slate-200 hover:border-white/20 hover:bg-white/[0.07]",
   ghost: "border border-transparent text-slate-400 hover:bg-white/[0.05] hover:text-slate-100",

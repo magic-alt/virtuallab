@@ -74,7 +74,7 @@ export function WorkspaceContent({
                 </span>
               )}
               {active && (
-                <span className="absolute inset-x-2 bottom-0 h-px bg-blue-400 shadow-[0_0_18px_rgba(96,165,250,0.8)]" />
+                <span className="absolute inset-x-2 bottom-0 h-px bg-orange-400 shadow-[0_0_18px_rgba(96,165,250,0.8)]" />
               )}
             </button>
           );
@@ -141,7 +141,7 @@ function Overview({
                 key={`${worktree.path}-${index}`}
                 className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-3"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#0a101a] text-blue-300">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#0a101a] text-orange-300">
                   <GitBranch size={15} />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -152,7 +152,7 @@ function Overview({
                     {compactPath(worktree.path, 74)}
                   </div>
                 </div>
-                <Badge tone={index === 0 ? "blue" : "neutral"}>
+                <Badge tone={index === 0 ? "orange" : "neutral"}>
                   {index === 0 ? "primary" : "isolated"}
                 </Badge>
               </div>
@@ -263,7 +263,7 @@ function TerminalPlaceholder({ snapshot }: { snapshot: RepositorySnapshot }) {
             <TerminalSquare size={14} />
             Workspace terminal
           </div>
-          <Badge tone="blue">PTY adapter · V0.2</Badge>
+          <Badge tone="orange">PTY adapter · V0.2</Badge>
         </div>
         <div className="mono min-h-[430px] p-5 text-[12px] leading-6">
           <div className="text-slate-600"># Native PTY execution is intentionally not enabled in V0.1.</div>
@@ -279,7 +279,7 @@ function TerminalPlaceholder({ snapshot }: { snapshot: RepositorySnapshot }) {
               </div>
             ))
           )}
-          <div className="mt-7 flex items-center gap-2 text-blue-300">
+          <div className="mt-7 flex items-center gap-2 text-orange-300">
             <span className="animate-pulse">▋</span>
             <span className="text-slate-600">xterm.js + portable PTY lands behind this surface next.</span>
           </div>
@@ -373,7 +373,7 @@ function HistoryView({ snapshot }: { snapshot: RepositorySnapshot }) {
         <div className="divide-y divide-white/[0.055]">
           {snapshot.recentCommits.map((commit) => (
             <div key={commit.sha} className="flex items-center gap-4 py-3">
-              <div className="mono w-20 shrink-0 text-[11px] text-blue-300">{commit.sha}</div>
+              <div className="mono w-20 shrink-0 text-[11px] text-orange-300">{commit.sha}</div>
               <div className="min-w-0 flex-1 truncate text-xs text-slate-300">{commit.subject}</div>
               <div className="shrink-0 text-[10px] text-slate-600">
                 {formatCommitTime(commit.timestamp)}
@@ -467,7 +467,7 @@ function CapabilityCard({
         <span className={state === "available" ? "text-emerald-300" : "text-slate-600"}>
           {icon}
         </span>
-        <Badge tone={state === "available" ? "green" : state === "next" ? "blue" : "neutral"}>
+        <Badge tone={state === "available" ? "green" : state === "next" ? "orange" : "neutral"}>
           {state}
         </Badge>
       </div>
@@ -480,7 +480,7 @@ function CapabilityCard({
 function ChangeMark({ kind }: { kind: string }) {
   const map: Record<string, { text: string; classes: string }> = {
     added: { text: "A", classes: "bg-emerald-400/10 text-emerald-300 border-emerald-400/15" },
-    modified: { text: "M", classes: "bg-blue-400/10 text-blue-300 border-blue-400/15" },
+    modified: { text: "M", classes: "bg-orange-400/10 text-orange-300 border-orange-400/15" },
     deleted: { text: "D", classes: "bg-rose-400/10 text-rose-300 border-rose-400/15" },
     renamed: { text: "R", classes: "bg-violet-400/10 text-violet-300 border-violet-400/15" },
     untracked: { text: "?", classes: "bg-amber-400/10 text-amber-300 border-amber-400/15" },

@@ -28,7 +28,7 @@ body {
   margin: 0;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% -30%, rgba(46, 107, 255, 0.16), transparent 44%),
+    radial-gradient(circle at 50% -30%, rgba(249, 115, 22, 0.16), transparent 44%),
     #070b12;
 }
 
@@ -38,12 +38,12 @@ input {
 }
 
 button:focus-visible {
-  outline: 2px solid rgba(99, 160, 255, 0.9);
+  outline: 2px solid rgba(251, 146, 60, 0.9);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(80, 142, 255, 0.36);
+  background: rgba(249, 115, 22, 0.36);
 }
 
 .mono {
