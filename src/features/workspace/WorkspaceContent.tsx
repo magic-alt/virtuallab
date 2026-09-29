@@ -1,0 +1,524 @@
+import {
+  Activity,
+  CheckCircle2,
+  CircleDot,
+  FileCode2,
+  GitBranch,
+  GitCommitHorizontal,
+  History,
+  ListChecks,
+  MonitorDot,
+  TerminalSquare,
+  TriangleAlert,
+  Workflow,
+} from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
+import { cn, compactPath, formatCommitTime } from "@/lib/utils";
+import type {
+  RepositorySnapshot,
+  WorkspaceTab,
+} from "@/types/workbench";
+
+interface Props {
+  snapshot: RepositorySnapshot;
+  tab: WorkspaceTab;
+  isPreview: boolean;
+  onTabChange: (tab: WorkspaceTab) => void;
+}
+
+const tabs: Array<{
+  id: WorkspaceTab;
+  label: string;
+  icon: React.ReactNode;
+  counter?: (snapshot: RepositorySnapshot) => number | null;
+}> = [
+  { id: "overview", label: "Overview", icon: <Activity size={14} /> },
+  {
+    id: "changes",
+    label: "Changes",
+    icon: <FileCode2 size={14} />,
+    counter: (snapshot) => snapshot.dirtyCount || null,
+  },
+  { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
+  { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
+  { id: "history", label: "History", icon: <History size={14} /> },
+];
+
+export function WorkspaceContent({
+  snapshot,
+  tab,
+  isPreview,
+  onTabChange,
+}: Props) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-white/[0.07] bg-[#090e17]/80 px-5">
+        {tabs.map((item) => {
+          const active = item.id === tab;
+          const counter = item.counter?.(snapshot) ?? null;
+          return (
+            <button
+              key={item.id}
+              className={cn(
+                "relative flex h-10 items-center gap-2 px-3 text-xs font-medium transition",
+                active ? "text-slate-100" : "text-slate-500 hover:text-slate-300",
+              )}
+              onClick={() => onTabChange(item.id)}
+              type="button"
+            >
+              {item.icon}
+              {item.label}
+              {counter !== null && (
+                <span className="rounded-full bg-white/[0.07] px-1.5 py-0.5 text-[10px] text-slate-400">
+                  {counter}
+                </span>
+              )}
+              {active && (
+                <span className="absolute inset-x-2 bottom-0 h-px bg-blue-400 shadow-[0_0_18px_rgba(96,165,250,0.8)]" />
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      <main className="surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
+        {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
+        {tab === "changes" && <Changes snapshot={snapshot} />}
+        {tab === "terminal" && <TerminalPlaceholder snapshot={snapshot} />}
+        {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
+        {tab === "history" && <HistoryView snapshot={snapshot} />}
+      </main>
+    </div>
+  );
+}
+
+function Overview({
+  snapshot,
+  isPreview,
+}: {
+  snapshot: RepositorySnapshot;
+  isPreview: boolean;
+}) {
+  const clean = snapshot.dirtyCount === 0;
+
+  return (
+    <div className="mx-auto max-w-[1320px] space-y-5">
+      <div className="grid grid-cols-4 gap-3">
+        <Metric
+          label="Working tree"
+          value={clean ? "Clean" : `${snapshot.dirtyCount} changes`}
+          detail={clean ? "No local modifications" : `${snapshot.stagedCount} staged · ${snapshot.untrackedCount} untracked`}
+          tone={clean ? "green" : "amber"}
+        />
+        <Metric
+          label="Active branch"
+          value={snapshot.currentBranch}
+          detail={`HEAD ${snapshot.headSha}`}
+          mono
+        />
+        <Metric
+          label="Worktrees"
+          value={String(snapshot.worktrees.length)}
+          detail="Parallel workspace lanes"
+        />
+        <Metric
+          label="Runtime"
+          value={isPreview ? "Preview" : "Native"}
+          detail={isPreview ? "Connect a local repository" : "Tauri + local Git"}
+          tone={isPreview ? "amber" : "green"}
+        />
+      </div>
+
+      <div className="grid grid-cols-[1.15fr_0.85fr] gap-4">
+        <Panel
+          title="Workspace topology"
+          subtitle="Git worktrees are the substrate for isolated engineering lanes."
+          icon={<Workflow size={16} />}
+        >
+          <div className="space-y-2">
+            {snapshot.worktrees.map((worktree, index) => (
+              <div
+                key={`${worktree.path}-${index}`}
+                className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-3"
+              >
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#0a101a] text-blue-300">
+                  <GitBranch size={15} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium text-slate-200">
+                    {worktree.branch ?? (worktree.detached ? "Detached HEAD" : "Workspace")}
+                  </div>
+                  <div className="mono mt-1 truncate text-[10px] text-slate-600" title={worktree.path}>
+                    {compactPath(worktree.path, 74)}
+                  </div>
+                </div>
+                <Badge tone={index === 0 ? "blue" : "neutral"}>
+                  {index === 0 ? "primary" : "isolated"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel
+          title="Recent activity"
+          subtitle="Latest repository commits."
+          icon={<GitCommitHorizontal size={16} />}
+        >
+          <div className="relative space-y-1">
+            <div className="absolute bottom-3 left-[7px] top-3 w-px bg-white/[0.07]" />
+            {snapshot.recentCommits.slice(0, 6).map((commit) => (
+              <div key={commit.sha} className="relative flex gap-3 py-2">
+                <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#0c131f] bg-slate-600" />
+                <div className="min-w-0">
+                  <div className="truncate text-xs text-slate-300">{commit.subject}</div>
+                  <div className="mono mt-1 text-[10px] text-slate-650">
+                    {commit.sha} · {formatCommitTime(commit.timestamp)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel
+        title="Control plane"
+        subtitle="The first release keeps the native boundary intentionally read-only."
+        icon={<MonitorDot size={16} />}
+      >
+        <div className="grid grid-cols-3 gap-3">
+          <CapabilityCard
+            icon={<CheckCircle2 size={16} />}
+            title="Repository inventory"
+            description="Native Git status, branch, worktree and recent commit inspection."
+            state="available"
+          />
+          <CapabilityCard
+            icon={<CircleDot size={16} />}
+            title="Workspace execution"
+            description="Embedded PTY and process supervisor are the next isolated adapter."
+            state="next"
+          />
+          <CapabilityCard
+            icon={<CircleDot size={16} />}
+            title="Agent harness"
+            description="Claude/Codex attach to a workspace later; they do not own it."
+            state="planned"
+          />
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function Changes({ snapshot }: { snapshot: RepositorySnapshot }) {
+  return (
+    <div className="mx-auto max-w-[1120px]">
+      <Panel
+        title="Local changes"
+        subtitle="Read-only Git porcelain view. Staging and review actions arrive after the workspace write boundary is defined."
+        icon={<FileCode2 size={16} />}
+      >
+        {snapshot.changes.length === 0 ? (
+          <EmptyState
+            icon={<CheckCircle2 size={19} />}
+            title="Working tree is clean"
+            text="There are no local modifications in this repository."
+          />
+        ) : (
+          <div className="divide-y divide-white/[0.055]">
+            {snapshot.changes.map((change, index) => (
+              <div
+                key={`${change.path}-${index}`}
+                className="flex items-center gap-3 py-3"
+              >
+                <ChangeMark kind={change.kind} />
+                <div className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={change.path}>
+                  {change.path}
+                </div>
+                <div className="mono flex items-center gap-1.5 text-[10px] text-slate-600">
+                  <span className="rounded border border-white/[0.07] bg-white/[0.025] px-1.5 py-1">
+                    I:{change.indexStatus === " " ? "·" : change.indexStatus}
+                  </span>
+                  <span className="rounded border border-white/[0.07] bg-white/[0.025] px-1.5 py-1">
+                    W:{change.worktreeStatus === " " ? "·" : change.worktreeStatus}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function TerminalPlaceholder({ snapshot }: { snapshot: RepositorySnapshot }) {
+  return (
+    <div className="mx-auto max-w-[1120px]">
+      <div className="soft-shadow overflow-hidden rounded-2xl border border-white/[0.08] bg-[#05080e]">
+        <div className="flex h-10 items-center justify-between border-b border-white/[0.07] bg-white/[0.025] px-4">
+          <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
+            <TerminalSquare size={14} />
+            Workspace terminal
+          </div>
+          <Badge tone="blue">PTY adapter · V0.2</Badge>
+        </div>
+        <div className="mono min-h-[430px] p-5 text-[12px] leading-6">
+          <div className="text-slate-600"># Native PTY execution is intentionally not enabled in V0.1.</div>
+          <div className="mt-5 text-emerald-300">virtuallab</div>
+          <div className="text-slate-500">{compactPath(snapshot.root, 100)}</div>
+          <div className="mt-5 text-slate-500">$ git status --short</div>
+          {snapshot.changes.length === 0 ? (
+            <div className="text-slate-700"># clean</div>
+          ) : (
+            snapshot.changes.slice(0, 8).map((change) => (
+              <div key={change.path} className="text-slate-400">
+                {change.indexStatus}{change.worktreeStatus} {change.path}
+              </div>
+            ))
+          )}
+          <div className="mt-7 flex items-center gap-2 text-blue-300">
+            <span className="animate-pulse">▋</span>
+            <span className="text-slate-600">xterm.js + portable PTY lands behind this surface next.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Checks({
+  snapshot,
+  isPreview,
+}: {
+  snapshot: RepositorySnapshot;
+  isPreview: boolean;
+}) {
+  const checks = [
+    {
+      label: "Repository recognized",
+      detail: "Git rev-parse resolved a repository root.",
+      ok: !isPreview,
+    },
+    {
+      label: "Worktree inventory",
+      detail: `${snapshot.worktrees.length} workspace lane(s) detected.`,
+      ok: !isPreview && snapshot.worktrees.length > 0,
+    },
+    {
+      label: "Origin remote",
+      detail: snapshot.remoteUrl ?? "No origin remote configured.",
+      ok: !isPreview && Boolean(snapshot.remoteUrl),
+    },
+    {
+      label: "Working tree",
+      detail:
+        snapshot.dirtyCount === 0
+          ? "No local changes."
+          : `${snapshot.dirtyCount} change(s) need review.`,
+      ok: !isPreview && snapshot.dirtyCount === 0,
+      warning: !isPreview && snapshot.dirtyCount > 0,
+    },
+  ];
+
+  return (
+    <div className="mx-auto max-w-[980px]">
+      <Panel
+        title="Local readiness checks"
+        subtitle="These checks describe current repository state; they are not release gates yet."
+        icon={<ListChecks size={16} />}
+      >
+        <div className="space-y-2">
+          {checks.map((check) => (
+            <div
+              key={check.label}
+              className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3"
+            >
+              <div
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                  check.ok
+                    ? "bg-emerald-400/10 text-emerald-300"
+                    : check.warning
+                      ? "bg-amber-400/10 text-amber-300"
+                      : "bg-white/[0.04] text-slate-600",
+                )}
+              >
+                {check.ok ? <CheckCircle2 size={16} /> : <TriangleAlert size={16} />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-slate-200">{check.label}</div>
+                <div className="mt-1 truncate text-[11px] text-slate-600" title={check.detail}>
+                  {check.detail}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function HistoryView({ snapshot }: { snapshot: RepositorySnapshot }) {
+  return (
+    <div className="mx-auto max-w-[980px]">
+      <Panel
+        title="Recent commits"
+        subtitle="Repository-local commit history."
+        icon={<History size={16} />}
+      >
+        <div className="divide-y divide-white/[0.055]">
+          {snapshot.recentCommits.map((commit) => (
+            <div key={commit.sha} className="flex items-center gap-4 py-3">
+              <div className="mono w-20 shrink-0 text-[11px] text-blue-300">{commit.sha}</div>
+              <div className="min-w-0 flex-1 truncate text-xs text-slate-300">{commit.subject}</div>
+              <div className="shrink-0 text-[10px] text-slate-650">
+                {formatCommitTime(commit.timestamp)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  detail,
+  mono,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  mono?: boolean;
+  tone?: "neutral" | "green" | "amber";
+}) {
+  return (
+    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92 p-4">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-650">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "mt-3 truncate text-lg font-semibold tracking-[-0.02em]",
+          mono && "mono text-[14px]",
+          tone === "green"
+            ? "text-emerald-300"
+            : tone === "amber"
+              ? "text-amber-300"
+              : "text-slate-100",
+        )}
+        title={value}
+      >
+        {value}
+      </div>
+      <div className="mt-1.5 truncate text-[10px] text-slate-650" title={detail}>
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  subtitle,
+  icon,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92">
+      <div className="flex items-start gap-3 border-b border-white/[0.06] px-4 py-3.5">
+        <div className="mt-0.5 text-slate-500">{icon}</div>
+        <div>
+          <div className="text-sm font-medium text-slate-200">{title}</div>
+          <div className="mt-1 text-[11px] text-slate-650">{subtitle}</div>
+        </div>
+      </div>
+      <div className="p-4">{children}</div>
+    </section>
+  );
+}
+
+function CapabilityCard({
+  icon,
+  title,
+  description,
+  state,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  state: "available" | "next" | "planned";
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-white/[0.022] p-3.5">
+      <div className="flex items-center justify-between">
+        <span className={state === "available" ? "text-emerald-300" : "text-slate-600"}>
+          {icon}
+        </span>
+        <Badge tone={state === "available" ? "green" : state === "next" ? "blue" : "neutral"}>
+          {state}
+        </Badge>
+      </div>
+      <div className="mt-4 text-xs font-medium text-slate-200">{title}</div>
+      <p className="mb-0 mt-2 text-[11px] leading-5 text-slate-600">{description}</p>
+    </div>
+  );
+}
+
+function ChangeMark({ kind }: { kind: string }) {
+  const map: Record<string, { text: string; classes: string }> = {
+    added: { text: "A", classes: "bg-emerald-400/10 text-emerald-300 border-emerald-400/15" },
+    modified: { text: "M", classes: "bg-blue-400/10 text-blue-300 border-blue-400/15" },
+    deleted: { text: "D", classes: "bg-rose-400/10 text-rose-300 border-rose-400/15" },
+    renamed: { text: "R", classes: "bg-violet-400/10 text-violet-300 border-violet-400/15" },
+    untracked: { text: "?", classes: "bg-amber-400/10 text-amber-300 border-amber-400/15" },
+    conflicted: { text: "!", classes: "bg-rose-400/10 text-rose-300 border-rose-400/15" },
+  };
+  const item = map[kind] ?? {
+    text: "·",
+    classes: "bg-white/[0.04] text-slate-500 border-white/[0.07]",
+  };
+
+  return (
+    <span
+      className={cn(
+        "mono flex size-7 shrink-0 items-center justify-center rounded-lg border text-[11px] font-bold",
+        item.classes,
+      )}
+    >
+      {item.text}
+    </span>
+  );
+}
+
+function EmptyState({
+  icon,
+  title,
+  text,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="flex min-h-56 flex-col items-center justify-center text-center">
+      <div className="flex size-10 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300">
+        {icon}
+      </div>
+      <div className="mt-3 text-sm font-medium text-slate-300">{title}</div>
+      <div className="mt-1 text-xs text-slate-600">{text}</div>
+    </div>
+  );
+}
