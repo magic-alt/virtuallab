@@ -152,3 +152,41 @@ npm run acceptance:local
 ```
 
 The control-to-test mapping is documented in [docs/CONTROL_ACCEPTANCE.md](docs/CONTROL_ACCEPTANCE.md).
+
+
+## Local Windows build
+
+Frontend-only preview:
+
+```powershell
+npm install
+npm run dev
+```
+
+Production frontend build:
+
+```powershell
+npm run typecheck
+npm run test:controls
+npm run build
+```
+
+The frontend output is written to `dist/`.
+
+Native Tauri development:
+
+```powershell
+npm run doctor
+npm run tauri:dev
+```
+
+Native release build:
+
+```powershell
+npm run acceptance:local
+npm run tauri:build
+```
+
+Expected Windows outputs are under `src-tauri/target/release/`; installer bundles are under `src-tauri/target/release/bundle/`.
+
+If Rust is available but linking fails, install the Visual Studio Build Tools **Desktop development with C++** workload and ensure the Microsoft Edge WebView2 runtime is present.

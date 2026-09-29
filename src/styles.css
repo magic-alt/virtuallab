@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  font-family: "Cascadia Mono", "Lucida Console", "Courier New", monospace;
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
+    sans-serif;
   color: #fff0d2;
   background: #913400;
   font-synthesis: none;
@@ -49,7 +51,9 @@ textarea:focus-visible {
 }
 
 .mono {
-  font-family: "Cascadia Mono", "Lucida Console", "Courier New", monospace;
+  font-family:
+    "Cascadia Code", "JetBrains Mono", "Cascadia Mono", "SFMono-Regular",
+    "Microsoft YaHei UI", Consolas, monospace;
 }
 
 .pixel-ui {
@@ -64,7 +68,10 @@ textarea:focus-visible {
   isolation: isolate;
   background: #8f3100;
   color: #fff0d2;
-  font-family: "Cascadia Mono", "Lucida Console", "Courier New", monospace;
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
+    sans-serif;
+  font-size: 14px;
   text-shadow: 1px 1px 0 rgba(63, 18, 0, 0.72);
 }
 
@@ -264,4 +271,44 @@ textarea:focus-visible {
 select.field option {
   background: #4d1900;
   color: #fff0d2;
+}
+
+
+/* Readability scale: keep the retro desktop proportions without 9–10 px body copy. */
+.pixel-ui .text-\[9px\] {
+  font-size: 11px !important;
+  line-height: 1.25 !important;
+}
+
+.pixel-ui .text-\[10px\] {
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+}
+
+.pixel-ui .text-\[11px\] {
+  font-size: 12.5px !important;
+  line-height: 1.4 !important;
+}
+
+.pixel-ui .text-xs {
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+}
+
+.pixel-ui .text-sm {
+  font-size: 14px !important;
+  line-height: 1.5 !important;
+}
+
+.pixel-ui h1,
+.pixel-ui h2,
+.pixel-ui [class*="uppercase"],
+.pixel-ui .mono {
+  font-family:
+    "Cascadia Code", "JetBrains Mono", "Cascadia Mono", "SFMono-Regular",
+    "Microsoft YaHei UI", Consolas, monospace;
+}
+
+.pixel-ui button {
+  letter-spacing: 0.01em;
 }

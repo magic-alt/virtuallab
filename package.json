@@ -12,7 +12,7 @@
     "tauri:build": "node scripts/tauri-run.mjs build",
     "doctor": "node scripts/doctor.mjs",
     "test": "vitest run",
-    "test:controls": "vitest run src/**/*.test.tsx",
+    "test:controls": "vitest run",
     "test:watch": "vitest",
     "acceptance:local": "powershell -ExecutionPolicy Bypass -File scripts/native-acceptance.ps1"
   },
