@@ -154,7 +154,7 @@ npm run acceptance:local
 The control-to-test mapping is documented in [docs/CONTROL_ACCEPTANCE.md](docs/CONTROL_ACCEPTANCE.md).
 
 
-## Local Windows build
+## Local cross-platform build
 
 Frontend-only preview:
 
@@ -187,9 +187,9 @@ npm run acceptance:local
 npm run tauri:build
 ```
 
-Expected Windows outputs are under `src-tauri/target/release/`; installer bundles are under `src-tauri/target/release/bundle/`.
+Build outputs are under `src-tauri/target/{debug|release}/`; platform bundles are under the corresponding `bundle/` directory.
 
-If Rust is available but linking fails, install the Visual Studio Build Tools **Desktop development with C++** workload and ensure the Microsoft Edge WebView2 runtime is present.
+Windows native builds require the Visual Studio Build Tools **Desktop development with C++** workload and WebView2. macOS native builds require Xcode Command Line Tools.
 
 
 ### Build/test profile scope
@@ -209,11 +209,19 @@ For a directly launchable debug executable with frontend assets embedded, build 
 npm run tauri:build:debug
 ```
 
-Then run:
+Then run the generated standalone debug application for your platform:
 
 ```powershell
+# Windows
 .\src-tauri\target\debug\virtuallab.exe
 ```
+
+```bash
+# macOS / Linux binary path
+./src-tauri/target/debug/virtuallab
+```
+
+On macOS, the bundled app is also available under `src-tauri/target/debug/bundle/macos/` when generated.
 
 Debug bundles/installers are generated under `src-tauri/target/debug/bundle/`.
 
