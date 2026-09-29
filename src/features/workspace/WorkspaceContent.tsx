@@ -25,6 +25,7 @@ import type {
 
 interface Props {
   snapshot: RepositorySnapshot;
+  profileRepositoryRoot: string;
   tab: WorkspaceTab;
   isPreview: boolean;
   onTabChange: (tab: WorkspaceTab) => void;
@@ -51,6 +52,7 @@ const tabs: Array<{
 
 export function WorkspaceContent({
   snapshot,
+  profileRepositoryRoot,
   tab,
   isPreview,
   onTabChange,
@@ -93,7 +95,11 @@ export function WorkspaceContent({
           <TerminalWorkspace cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
         {tab === "run" && (
-          <ProcessRunner cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
+          <ProcessRunner
+            cwd={snapshot.root}
+            repositoryRoot={profileRepositoryRoot}
+            enabled={!isPreview && isDesktopRuntime()}
+          />
         )}
         {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
         {tab === "history" && <HistoryView snapshot={snapshot} />}

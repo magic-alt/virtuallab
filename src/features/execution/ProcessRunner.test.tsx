@@ -26,6 +26,7 @@ describe("ProcessRunner controls", () => {
           id: "build-1",
           name: "Fixture build",
           kind: "build",
+          repositoryRoot: "D:/repo",
           program: "echo",
           args: ["ok"],
         },
@@ -35,7 +36,7 @@ describe("ProcessRunner controls", () => {
 
   it("runs and stops a structured profile", async () => {
     const user = userEvent.setup();
-    render(<ProcessRunner cwd="D:/workspace" enabled />);
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
 
     await user.click(screen.getByRole("button", { name: /^run$/i }));
     expect(backend.processSpawn).toHaveBeenCalledWith(
@@ -52,7 +53,7 @@ describe("ProcessRunner controls", () => {
 
   it("creates, closes and removes profiles", async () => {
     const user = userEvent.setup();
-    render(<ProcessRunner cwd="D:/workspace" enabled />);
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
 
     await user.click(screen.getByRole("button", { name: /profile/i }));
     expect(screen.getByText("New run profile")).toBeInTheDocument();
@@ -66,13 +67,33 @@ describe("ProcessRunner controls", () => {
     await user.type(screen.getByLabelText(/Arguments/i), "test");
     await user.click(screen.getByRole("button", { name: /save profile/i }));
     expect(screen.getByText("Unit tests")).toBeInTheDocument();
+    expect(useWorkbenchStore.getState().profiles.at(-1)?.repositoryRoot).toBe("D:/repo");
 
     await user.click(screen.getByRole("button", { name: /remove unit tests/i }));
     expect(screen.queryByText("Unit tests")).not.toBeInTheDocument();
   });
 
+  it("does not expose profiles from another repository", () => {
+    useWorkbenchStore.setState({
+      profiles: [
+        {
+          id: "other",
+          name: "VirtualLab Rust check",
+          kind: "test",
+          repositoryRoot: "D:/Project/virtuallab",
+          program: "cargo",
+          args: ["check", "--manifest-path", "src-tauri/Cargo.toml"],
+        },
+      ],
+    });
+
+    render(<ProcessRunner cwd="D:/Project/servo_host" repositoryRoot="D:/Project/servo_host" enabled />);
+    expect(screen.queryByText("VirtualLab Rust check")).not.toBeInTheDocument();
+    expect(screen.getByText(/No run profiles for this repository/i)).toBeInTheDocument();
+  });
+
   it("disables run in web preview", () => {
-    render(<ProcessRunner cwd="preview" enabled={false} />);
+    render(<ProcessRunner cwd="preview" repositoryRoot="preview" enabled={false} />);
     expect(screen.getByRole("button", { name: /^run$/i })).toBeDisabled();
   });
 });

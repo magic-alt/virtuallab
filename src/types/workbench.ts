@@ -60,6 +60,7 @@ export interface ProcessProfile {
   id: string;
   name: string;
   kind: ProcessProfileKind;
+  repositoryRoot: string;
   program: string;
   args: string[];
 }

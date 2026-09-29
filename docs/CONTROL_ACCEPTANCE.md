@@ -19,6 +19,7 @@ Every visible interactive control must be backed by an automated test or an expl
 | Terminal | Start/New/Select/Stop | `TerminalWorkspace.test.tsx` | real PowerShell/bash PTY |
 | Terminal | typing / Ctrl+C / resize | backend compile + local acceptance | required manual PTY check |
 | Run | profile Run/Stop | `ProcessRunner.test.tsx` | real command execution |
+| Run | repository profile isolation | `ProcessRunner.test.tsx` | switch between two repositories and verify profiles never leak |
 | Run | add/remove/close profile | `ProcessRunner.test.tsx` | persistence after restart |
 | Watcher | generated-dir filter | Rust `watch.rs` unit test | source edit auto-refresh |
 | Git | create/remove worktree | Rust `git.rs` real temporary-repo test | real project worktree |

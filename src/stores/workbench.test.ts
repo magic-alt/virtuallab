@@ -16,6 +16,7 @@ describe("workbench persisted store", () => {
       id: "profile-1",
       name: "Fixture",
       kind: "build",
+      repositoryRoot: "D:/Project/virtuallab",
       program: "echo",
       args: ["ok"],
     });

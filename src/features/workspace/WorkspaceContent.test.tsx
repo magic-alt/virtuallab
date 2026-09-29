@@ -18,6 +18,7 @@ describe("WorkspaceContent navigation", () => {
     render(
       <WorkspaceContent
         snapshot={PREVIEW_SNAPSHOT}
+        profileRepositoryRoot="D:/Project/virtuallab"
         tab="overview"
         isPreview
         onTabChange={onTabChange}

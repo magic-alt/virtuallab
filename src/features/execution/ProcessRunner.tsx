@@ -29,12 +29,22 @@ interface RunRecord {
 
 export function ProcessRunner({
   cwd,
+  repositoryRoot,
   enabled,
 }: {
   cwd: string;
+  repositoryRoot: string;
   enabled: boolean;
 }) {
   const { profiles, addProfile, removeProfile } = useWorkbenchStore();
+  const scopedProfiles = useMemo(
+    () =>
+      profiles.filter(
+        (profile) =>
+          normalizePath(profile.repositoryRoot) === normalizePath(repositoryRoot),
+      ),
+    [profiles, repositoryRoot],
+  );
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [showEditor, setShowEditor] = useState(false);
@@ -153,7 +163,15 @@ export function ProcessRunner({
         </div>
 
         <div className="space-y-2 p-3">
-          {profiles.map((profile) => {
+          {scopedProfiles.length === 0 && (
+            <div className="border border-orange-300/25 bg-orange-950/20 p-4 text-xs leading-5 text-orange-100/80">
+              <div className="font-semibold text-orange-100">No run profiles for this repository.</div>
+              <div className="mt-1 text-orange-100/60">
+                Create a repository-scoped Build/Test profile. Profiles from another repository are never executed here.
+              </div>
+            </div>
+          )}
+          {scopedProfiles.map((profile) => {
             const running = runs.some(
               (run) => run.profileId === profile.id && run.status === "running",
             );
@@ -245,6 +263,7 @@ export function ProcessRunner({
 
       {showEditor && (
         <ProfileEditor
+          repositoryRoot={repositoryRoot}
           onClose={() => setShowEditor(false)}
           onSave={(profile) => {
             addProfile(profile);
@@ -275,9 +294,11 @@ function RunStatus({ run }: { run: RunRecord }) {
 }
 
 function ProfileEditor({
+  repositoryRoot,
   onClose,
   onSave,
 }: {
+  repositoryRoot: string;
   onClose: () => void;
   onSave: (profile: ProcessProfile) => void;
 }) {
@@ -294,6 +315,7 @@ function ProfileEditor({
         `profile-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       name: name.trim(),
       kind,
+      repositoryRoot,
       program: program.trim(),
       args: args
         .split("\n")
@@ -326,6 +348,12 @@ function ProfileEditor({
               <option value="build">Build</option>
               <option value="test">Test</option>
             </select>
+          </Field>
+        </div>
+
+        <div className="mt-3">
+          <Field label="Repository scope">
+            <input className="field mono opacity-75" value={repositoryRoot} readOnly />
           </Field>
         </div>
 
@@ -363,4 +391,9 @@ function Field({
       {children}
     </label>
   );
+}
+
+
+function normalizePath(path: string) {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
 }

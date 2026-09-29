@@ -254,6 +254,7 @@ export function WorkbenchShell() {
 
           <WorkspaceContent
             snapshot={snapshot}
+            profileRepositoryRoot={activeRepository?.path ?? snapshot.root}
             tab={tab}
             isPreview={isPreview}
             onTabChange={setTab}

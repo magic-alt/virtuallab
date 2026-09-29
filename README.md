@@ -190,3 +190,10 @@ npm run tauri:build
 Expected Windows outputs are under `src-tauri/target/release/`; installer bundles are under `src-tauri/target/release/bundle/`.
 
 If Rust is available but linking fails, install the Visual Studio Build Tools **Desktop development with C++** workload and ensure the Microsoft Edge WebView2 runtime is present.
+
+
+### Build/test profile scope
+
+Run profiles are repository-scoped. A command configured for one repository is not shown or executed when another repository is active. The process working directory remains the selected workspace/worktree, so the same repository profile can be reused across its worktrees.
+
+V0.2 intentionally ships with no universal build/test defaults because commands such as `npm run build` or `cargo check --manifest-path src-tauri/Cargo.toml` are project-specific.
