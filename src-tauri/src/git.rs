@@ -141,9 +141,9 @@ fn change_kind(index: char, worktree: char) -> &'static str {
     }
 
     let pair = [index, worktree];
-    if pair.iter().any(|code| matches!(code, 'U')) || matches!((index, worktree), ('A', 'A') | ('D', 'D')) {
+    if pair.iter().any(|code| *code == 'U') || matches!((index, worktree), ('A', 'A') | ('D', 'D')) {
         "conflicted"
-    } else if pair.iter().any(|code| matches!(code, 'R' | 'C')) {
+    } else if pair.iter().any(|code| matches!(*code, 'R' | 'C')) {
         "renamed"
     } else if pair.iter().any(|code| *code == 'D') {
         "deleted"

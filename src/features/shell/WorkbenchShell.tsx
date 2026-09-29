@@ -107,13 +107,13 @@ export function WorkbenchShell() {
             <div className="text-[12px] font-semibold leading-none tracking-[-0.01em] text-slate-100">
               VirtualLab
             </div>
-            <div className="mt-1 text-[9px] uppercase tracking-[0.16em] text-slate-650">
+            <div className="mt-1 text-[9px] uppercase tracking-[0.16em] text-slate-600">
               Engineering Workbench
             </div>
           </div>
         </div>
 
-        <div className="mx-auto flex h-8 w-[380px] items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 text-xs text-slate-650">
+        <div className="mx-auto flex h-8 w-[380px] items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.025] px-3 text-xs text-slate-600">
           <Search size={13} />
           <span className="flex-1">Search workspaces and commands</span>
           <span className="mono rounded border border-white/[0.08] bg-black/20 px-1.5 py-0.5 text-[9px]">
@@ -173,7 +173,7 @@ export function WorkbenchShell() {
             onTabChange={setTab}
           />
 
-          <footer className="flex h-7 shrink-0 items-center justify-between border-t border-white/[0.06] bg-[#080d15] px-3 text-[10px] text-slate-650">
+          <footer className="flex h-7 shrink-0 items-center justify-between border-t border-white/[0.06] bg-[#080d15] px-3 text-[10px] text-slate-600">
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1.5">
                 <Command size={11} />

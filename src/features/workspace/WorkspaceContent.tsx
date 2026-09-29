@@ -172,7 +172,7 @@ function Overview({
                 <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#0c131f] bg-slate-600" />
                 <div className="min-w-0">
                   <div className="truncate text-xs text-slate-300">{commit.subject}</div>
-                  <div className="mono mt-1 text-[10px] text-slate-650">
+                  <div className="mono mt-1 text-[10px] text-slate-600">
                     {commit.sha} · {formatCommitTime(commit.timestamp)}
                   </div>
                 </div>
@@ -375,7 +375,7 @@ function HistoryView({ snapshot }: { snapshot: RepositorySnapshot }) {
             <div key={commit.sha} className="flex items-center gap-4 py-3">
               <div className="mono w-20 shrink-0 text-[11px] text-blue-300">{commit.sha}</div>
               <div className="min-w-0 flex-1 truncate text-xs text-slate-300">{commit.subject}</div>
-              <div className="shrink-0 text-[10px] text-slate-650">
+              <div className="shrink-0 text-[10px] text-slate-600">
                 {formatCommitTime(commit.timestamp)}
               </div>
             </div>
@@ -401,7 +401,7 @@ function Metric({
 }) {
   return (
     <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92 p-4">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-650">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-600">
         {label}
       </div>
       <div
@@ -418,7 +418,7 @@ function Metric({
       >
         {value}
       </div>
-      <div className="mt-1.5 truncate text-[10px] text-slate-650" title={detail}>
+      <div className="mt-1.5 truncate text-[10px] text-slate-600" title={detail}>
         {detail}
       </div>
     </div>
@@ -442,7 +442,7 @@ function Panel({
         <div className="mt-0.5 text-slate-500">{icon}</div>
         <div>
           <div className="text-sm font-medium text-slate-200">{title}</div>
-          <div className="mt-1 text-[11px] text-slate-650">{subtitle}</div>
+          <div className="mt-1 text-[11px] text-slate-600">{subtitle}</div>
         </div>
       </div>
       <div className="p-4">{children}</div>

@@ -113,7 +113,7 @@ export function ProjectSidebar({
                     {worktree.branch ?? (worktree.detached ? "detached" : "workspace")}
                   </span>
                 </div>
-                <div className="mt-1 truncate pl-5 text-[10px] text-slate-650">
+                <div className="mt-1 truncate pl-5 text-[10px] text-slate-600">
                   {compactPath(worktree.path, 30)}
                 </div>
               </div>
@@ -140,7 +140,7 @@ function SectionLabel({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-650">
+    <div className="flex items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
       {icon}
       {label}
     </div>
