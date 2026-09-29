@@ -511,3 +511,29 @@ fn resolve_windows_program(program: &str) -> Option<String> {
         .find(|line| !line.is_empty())
         .map(ToOwned::to_owned)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_event_builder_preserves_payload() {
+        let event = WorkbenchEvent::new("process.output", "run-1")
+            .stream("stdout", "ok")
+            .exit_code(Some(0))
+            .path("workspace");
+        assert_eq!(event.event_type, "process.output");
+        assert_eq!(event.id, "run-1");
+        assert_eq!(event.stream.as_deref(), Some("stdout"));
+        assert_eq!(event.data.as_deref(), Some("ok"));
+        assert_eq!(event.exit_code, Some(0));
+        assert_eq!(event.path.as_deref(), Some("workspace"));
+    }
+
+    #[test]
+    fn default_shell_is_defined() {
+        let (shell, _) = default_shell();
+        assert!(!shell.trim().is_empty());
+    }
+}

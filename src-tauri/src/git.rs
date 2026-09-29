@@ -360,3 +360,90 @@ fn default_worktree_path(repository_root: &str, branch: &str) -> Result<std::pat
 fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_root(name: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "virtuallab-{name}-{}-{stamp}",
+            std::process::id()
+        ))
+    }
+
+    fn git_ok(repo: &std::path::Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .expect("git should start");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    #[test]
+    fn change_kind_classifies_porcelain_states() {
+        assert_eq!(change_kind('?', '?'), "untracked");
+        assert_eq!(change_kind('M', ' '), "modified");
+        assert_eq!(change_kind('A', ' '), "added");
+        assert_eq!(change_kind('D', ' '), "deleted");
+        assert_eq!(change_kind('R', ' '), "renamed");
+        assert_eq!(change_kind('U', 'U'), "conflicted");
+    }
+
+    #[test]
+    fn default_worktree_path_sanitizes_branch_separators() {
+        let root = unique_root("path").join("repo");
+        let path = default_worktree_path(root.to_string_lossy().as_ref(), "feat/pixel ui")
+            .expect("path should resolve");
+        assert!(path.ends_with(
+            std::path::Path::new("repo").join("feat-pixel-ui")
+        ));
+    }
+
+    #[test]
+    fn create_and_remove_worktree_round_trip() {
+        let sandbox = unique_root("worktree");
+        let repo = sandbox.join("repo");
+        let target = sandbox.join("workspace");
+        fs::create_dir_all(&repo).expect("repo directory");
+
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "fixture\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+
+        let created = create_worktree(
+            repo.to_string_lossy().to_string(),
+            "feat/control-test".to_string(),
+            Some("HEAD".to_string()),
+            Some(target.to_string_lossy().to_string()),
+        )
+        .expect("create worktree");
+
+        assert_eq!(created.branch, "feat/control-test");
+        assert!(target.is_dir());
+        let branch = git(target.to_string_lossy().as_ref(), &["branch", "--show-current"])
+            .expect("branch lookup");
+        assert_eq!(branch.trim(), "feat/control-test");
+
+        remove_worktree(
+            repo.to_string_lossy().to_string(),
+            target.to_string_lossy().to_string(),
+        )
+        .expect("remove worktree");
+        assert!(!target.exists());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+}

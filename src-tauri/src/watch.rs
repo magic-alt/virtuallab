@@ -85,3 +85,23 @@ fn is_ignored_path(path: &Path) -> bool {
         )
     })
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_directories_are_ignored() {
+        for path in [
+            "repo/.git/index",
+            "repo/node_modules/pkg/file.js",
+            "repo/target/debug/app",
+            "repo/dist/index.html",
+            "repo/.virtuallab/state.json",
+        ] {
+            assert!(is_ignored_path(Path::new(path)), "{path} should be ignored");
+        }
+        assert!(!is_ignored_path(Path::new("repo/src/main.tsx")));
+    }
+}

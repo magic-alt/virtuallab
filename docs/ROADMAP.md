@@ -64,3 +64,13 @@ Goal: useful on day one without any AI dependency.
 - custom LLM agent loop
 - replacing IDEs
 - automatic destructive Git or hardware operations
+
+
+## V0.2 quality gate
+
+- [x] frontend control wiring tests
+- [x] Git worktree create/remove native round-trip test
+- [x] filesystem ignore-filter unit test
+- [x] structured execution event unit test
+- [x] local Windows acceptance script
+- [x] Linux + Windows CI runs frontend tests and Rust tests

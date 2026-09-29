@@ -48,7 +48,7 @@ export function NewWorkspaceDialog({
               Creates an isolated Git worktree and a new branch. Leave target empty to use VirtualLab's managed sibling workspace directory.
             </p>
           </div>
-          <button className="rounded-lg p-2 text-slate-600 hover:bg-white/[0.05]" onClick={onClose} type="button">
+          <button aria-label="Close new workspace dialog" className="rounded-lg p-2 text-slate-600 hover:bg-white/[0.05]" onClick={onClose} type="button">
             <X size={15} />
           </button>
         </div>

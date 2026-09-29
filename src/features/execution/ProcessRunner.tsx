@@ -311,7 +311,7 @@ function ProfileEditor({
               Arguments are stored separately from the executable.
             </p>
           </div>
-          <button className="rounded-lg p-2 text-slate-600 hover:bg-white/[0.05]" onClick={onClose} type="button">
+          <button aria-label="Close profile editor" className="rounded-lg p-2 text-slate-600 hover:bg-white/[0.05]" onClick={onClose} type="button">
             <X size={15} />
           </button>
         </div>

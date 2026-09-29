@@ -19,6 +19,7 @@ jobs:
           node-version: "22"
       - run: npm install
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
 
   rust:
@@ -36,6 +37,7 @@ jobs:
             patchelf
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
 
   windows-native:
     name: Windows desktop smoke
@@ -49,3 +51,4 @@ jobs:
       - run: npm install
       - run: npm run doctor
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml

@@ -138,3 +138,17 @@ npm run tauri:dev
 ```
 
 If Rust is not installed, install rustup first (for example `winget install Rustlang.Rustup`), restart PowerShell, then run `rustup default stable` and retry.
+
+
+## Control acceptance
+
+Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. Run:
+
+```powershell
+npm install
+npm run test:controls
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run acceptance:local
+```
+
+The control-to-test mapping is documented in [docs/CONTROL_ACCEPTANCE.md](docs/CONTROL_ACCEPTANCE.md).
