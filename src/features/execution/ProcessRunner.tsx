@@ -44,7 +44,7 @@ export function ProcessRunner({
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
 
-    void listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
+    void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (!payload.eventType.startsWith("process.")) return;
 
       setRuns((items) =>
@@ -72,7 +72,8 @@ export function ProcessRunner({
           return run;
         }),
       );
-    }).then((fn) => {
+    })).then((fn) => {
+      if (typeof fn !== "function") return;
       if (disposed) fn();
       else unlisten = fn;
     });

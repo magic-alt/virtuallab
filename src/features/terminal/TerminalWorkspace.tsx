@@ -50,7 +50,7 @@ export function TerminalWorkspace({
     let eventUnlisten: UnlistenFn | undefined;
     let disposed = false;
 
-    void listen<TerminalOutput>("terminal://output", ({ payload }) => {
+    void Promise.resolve(listen<TerminalOutput>("terminal://output", ({ payload }) => {
       const handle = handles.current.get(payload.id);
       if (handle) {
         handle.terminal.write(new Uint8Array(payload.data));
@@ -60,12 +60,13 @@ export function TerminalWorkspace({
         if (chunks.length > 256) chunks.shift();
         pending.current.set(payload.id, chunks);
       }
-    }).then((unlisten) => {
+    })).then((unlisten) => {
+      if (typeof unlisten !== "function") return;
       if (disposed) unlisten();
       else outputUnlisten = unlisten;
     });
 
-    void listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
+    void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (!payload.eventType.startsWith("terminal.")) return;
       if (payload.eventType === "terminal.started") {
         setSessions((items) =>
@@ -84,7 +85,8 @@ export function TerminalWorkspace({
           ),
         );
       }
-    }).then((unlisten) => {
+    })).then((unlisten) => {
+      if (typeof unlisten !== "function") return;
       if (disposed) unlisten();
       else eventUnlisten = unlisten;
     });

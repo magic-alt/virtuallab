@@ -36,7 +36,7 @@ describe("ProjectSidebar controls", () => {
     await user.click(screen.getByRole("button", { name: /add repository/i }));
     expect(p.onAdd).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: /servohil/i }));
+    await user.click(screen.getByRole("button", { name: /^servoHIL D:\/Project\/servoHIL$/i }));
     expect(p.onSelect).toHaveBeenCalledWith("repo-2");
 
     await user.click(screen.getByRole("button", { name: /remove servohil/i }));

@@ -94,14 +94,15 @@ export function WorkbenchShell() {
       if (!disposed) setError(err instanceof Error ? err.message : String(err));
     });
 
-    void listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
+    void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (payload.eventType !== "fs.changed" || payload.id !== watchId) return;
       window.clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => {
         const path = activePathRef.current;
         if (path) void loadSnapshot(path).catch(() => undefined);
       }, 550);
-    }).then((fn) => {
+    })).then((fn) => {
+      if (typeof fn !== "function") return;
       if (disposed) fn();
       else unlisten = fn;
     });
