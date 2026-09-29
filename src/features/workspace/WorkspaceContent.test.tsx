@@ -1,6 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/features/terminal/TerminalWorkspace", () => ({
+  TerminalWorkspace: () => <div data-testid="terminal-mock" />,
+}));
+vi.mock("@/features/execution/ProcessRunner", () => ({
+  ProcessRunner: () => <div data-testid="runner-mock" />,
+}));
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceContent } from "./WorkspaceContent";
 

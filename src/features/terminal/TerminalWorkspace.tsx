@@ -97,7 +97,7 @@ export function TerminalWorkspace({
       eventUnlisten?.();
       for (const item of sessionsRef.current) {
         if (item.status === "running" || item.status === "starting") {
-          void terminalStop(item.id).catch(() => undefined);
+          void Promise.resolve(terminalStop(item.id)).catch(() => undefined);
         }
       }
     };
@@ -106,7 +106,7 @@ export function TerminalWorkspace({
   useEffect(() => {
     for (const item of sessionsRef.current) {
       if (item.status === "running" || item.status === "starting") {
-        void terminalStop(item.id).catch(() => undefined);
+        void Promise.resolve(terminalStop(item.id)).catch(() => undefined);
       }
     }
     handles.current.clear();
