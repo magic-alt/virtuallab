@@ -11,6 +11,11 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      jsdom: {
+        url: "http://localhost:1420/",
+      },
+    },
     setupFiles: ["./src/test/setup.ts"],
     clearMocks: true,
     restoreMocks: true,

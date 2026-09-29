@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type {
   ProcessProfile,
   RepositoryRecord,
@@ -95,6 +95,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     }),
     {
       name: "virtuallab-workbench-v2",
+      storage: createJSONStorage(() => window.localStorage),
       version: 2,
       partialize: (state) => ({
         repositories: state.repositories,
