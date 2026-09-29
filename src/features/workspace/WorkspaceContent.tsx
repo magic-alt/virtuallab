@@ -57,7 +57,7 @@ export function WorkspaceContent({
 }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-white/[0.07] bg-[#090e17]/80 px-5">
+      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-white/[0.07] bg-[#100b07]/80 px-5">
         {tabs.map((item) => {
           const active = item.id === tab;
           const counter = item.counter?.(snapshot) ?? null;
@@ -79,7 +79,7 @@ export function WorkspaceContent({
                 </span>
               )}
               {active && (
-                <span className="absolute inset-x-2 bottom-0 h-px bg-orange-400 shadow-[0_0_18px_rgba(96,165,250,0.8)]" />
+                <span className="absolute inset-x-2 bottom-0 h-px bg-orange-400 shadow-[0_0_18px_rgba(251,146,60,0.78)]" />
               )}
             </button>
           );
@@ -151,7 +151,7 @@ function Overview({
                 key={`${worktree.path}-${index}`}
                 className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-3"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#0a101a] text-orange-300">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#120d09] text-orange-300">
                   <GitBranch size={15} />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -179,7 +179,7 @@ function Overview({
             <div className="absolute bottom-3 left-[7px] top-3 w-px bg-white/[0.07]" />
             {snapshot.recentCommits.slice(0, 6).map((commit) => (
               <div key={commit.sha} className="relative flex gap-3 py-2">
-                <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#0c131f] bg-slate-600" />
+                <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#15100c] bg-slate-600" />
                 <div className="min-w-0">
                   <div className="truncate text-xs text-slate-300">{commit.subject}</div>
                   <div className="mono mt-1 text-[10px] text-slate-600">
@@ -375,7 +375,7 @@ function Metric({
   tone?: "neutral" | "green" | "amber";
 }) {
   return (
-    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92 p-4">
+    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92 p-4">
       <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-600">
         {label}
       </div>
@@ -412,7 +412,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92">
+    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92">
       <div className="flex items-start gap-3 border-b border-white/[0.06] px-4 py-3.5">
         <div className="mt-0.5 text-slate-500">{icon}</div>
         <div>

@@ -39,7 +39,7 @@ export function ProjectSidebar({
   workspaceActionsEnabled,
 }: Props) {
   return (
-    <aside className="flex min-h-0 w-[286px] shrink-0 flex-col border-r border-white/[0.07] bg-[#090e17]/96">
+    <aside className="flex min-h-0 w-[286px] shrink-0 flex-col border-r border-white/[0.07] bg-[#100b07]/96">
       <div className="border-b border-white/[0.07] px-4 pb-4 pt-4">
         <Button className="w-full" onClick={onAdd}>
           <Plus size={15} />
