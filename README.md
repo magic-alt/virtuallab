@@ -21,7 +21,7 @@ Claude Code, Codex or other agents will attach to this model later; the workbenc
 
 The first slice is already designed for daily local use:
 
-- polished Tauri desktop shell
+- orange-accented Tauri desktop shell
 - persisted list of local repositories
 - native folder picker
 - native, read-only Git inspection
@@ -31,7 +31,11 @@ The first slice is already designed for daily local use:
 - Git worktree inventory
 - recent commit history
 - preview mode when running as a normal web page
-- architecture and safety boundary ready for PTY, review, verification and agents
+- native PowerShell/bash PTY with multi-terminal tabs
+- Git worktree create/select/remove workflow
+- structured build/test profiles with Run/Stop and streamed output
+- filesystem-driven repository refresh
+- architecture and safety boundary ready for review, verification and agents
 
 V0.2 turns the shell into an execution workbench: PTY terminals, isolated worktrees, structured build/test processes and filesystem-driven refresh live behind typed native commands.
 

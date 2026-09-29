@@ -35,6 +35,9 @@ pub fn watch_start(
         move |result| {
             if let Ok(event) = result {
                 for changed in event.paths {
+                    if is_ignored_path(&changed) {
+                        continue;
+                    }
                     let _ = app_for_events.emit(
                         "workbench://event",
                         WorkbenchEvent::new("fs.changed", id_for_events.clone())
@@ -72,4 +75,13 @@ pub fn watch_stop(state: State<'_, WatchManager>, id: String) -> Result<(), Stri
         .map_err(|_| "Watch manager lock poisoned".to_string())?
         .remove(&id);
     Ok(())
+}
+
+fn is_ignored_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str().to_string_lossy().as_ref(),
+            ".git" | "node_modules" | "target" | "dist" | ".virtuallab"
+        )
+    })
 }

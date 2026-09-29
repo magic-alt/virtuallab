@@ -283,7 +283,7 @@ pub fn process_spawn(
         }
     }
 
-    let mut command = Command::new(spec.program.trim());
+    let mut command = process_command(spec.program.trim());
     command
         .args(&spec.args)
         .current_dir(&spec.cwd)
@@ -465,4 +465,49 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(target_os = "windows")]
+fn process_command(program: &str) -> Command {
+    let resolved = resolve_windows_program(program).unwrap_or_else(|| program.to_string());
+    let lower = resolved.to_ascii_lowercase();
+
+    if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+        let mut command = Command::new("cmd.exe");
+        command
+            .arg("/d")
+            .arg("/s")
+            .arg("/c")
+            .arg(resolved);
+        command
+    } else {
+        Command::new(resolved)
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_command(program: &str) -> Command {
+    Command::new(program)
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_program(program: &str) -> Option<String> {
+    let path = std::path::Path::new(program);
+    if path.exists() {
+        return Some(program.to_string());
+    }
+
+    let output = Command::new("where")
+        .arg(program)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
 }
