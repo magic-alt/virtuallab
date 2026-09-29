@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const isWindows = process.platform === "win32";
@@ -80,6 +81,9 @@ export function runDoctor({ exitOnFailure = true } = {}) {
   return { ok, env: cargoResult.env };
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+const modulePath = path.resolve(fileURLToPath(import.meta.url));
+
+if (invokedPath === modulePath) {
   runDoctor();
 }
