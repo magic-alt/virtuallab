@@ -52,7 +52,7 @@ export function WorkbenchShell() {
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const activePathRef = useRef<string | null>(null);
-  const refreshTimer = useRef<number | undefined>();
+  const refreshTimer = useRef<number | undefined>(undefined);
 
   const loadSnapshot = useCallback(async (path: string) => {
     setLoading(true);
