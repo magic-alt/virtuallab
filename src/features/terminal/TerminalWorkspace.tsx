@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -115,7 +115,7 @@ export function TerminalWorkspace({
   }, [cwd]);
 
   const start = async () => {
-    if (!enabled) return;
+    if (!enabledRef.current) return;
 
     const id =
       globalThis.crypto?.randomUUID?.() ??
@@ -150,6 +150,18 @@ export function TerminalWorkspace({
       );
     }
   };
+
+  const handleAttach = useCallback((id: string, handle: TerminalHandle) => {
+    handles.current.set(id, handle);
+    for (const bytes of pending.current.get(id) ?? []) {
+      handle.terminal.write(new Uint8Array(bytes));
+    }
+    pending.current.set(id, []);
+  }, []);
+
+  const handleDetach = useCallback((id: string) => {
+    handles.current.delete(id);
+  }, []);
 
   return (
     <div className="mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#090704] shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
@@ -230,14 +242,8 @@ export function TerminalWorkspace({
               id={session.id}
               active={session.id === activeId}
               enabled={enabled && session.status !== "stopped"}
-              onAttach={(id, handle) => {
-                handles.current.set(id, handle);
-                for (const bytes of pending.current.get(id) ?? []) {
-                  handle.terminal.write(new Uint8Array(bytes));
-                }
-                pending.current.set(id, []);
-              }}
-              onDetach={(id) => handles.current.delete(id)}
+              onAttach={handleAttach}
+              onDetach={handleDetach}
             />
           ))
         )}
@@ -273,6 +279,11 @@ function TerminalSurface({
   onDetach: (id: string) => void;
 }) {
   const host = useRef<HTMLDivElement | null>(null);
+  const enabledRef = useRef(enabled);
+
+  useEffect(() => {
+    enabledRef.current = enabled;
+  }, [enabled]);
 
   useEffect(() => {
     if (!host.current) return;
@@ -309,7 +320,7 @@ function TerminalSurface({
     onAttach(id, { terminal, fit });
 
     const input = terminal.onData((data) => {
-      if (!enabled) return;
+      if (!enabledRef.current) return;
       void terminalWrite(id, new TextEncoder().encode(data)).catch(() => undefined);
     });
 
@@ -319,7 +330,7 @@ function TerminalSurface({
       resizeTimer = window.setTimeout(() => {
         try {
           fit.fit();
-          if (enabled) {
+          if (enabledRef.current) {
             void terminalResize(id, terminal.cols, terminal.rows).catch(() => undefined);
           }
         } catch {
@@ -336,7 +347,7 @@ function TerminalSurface({
       onDetach(id);
       terminal.dispose();
     };
-  }, [enabled, id, onAttach, onDetach]);
+  }, [id, onAttach, onDetach]);
 
   return (
     <div

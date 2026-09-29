@@ -194,7 +194,7 @@ function Overview({
 
       <Panel
         title="Control plane"
-        subtitle="The first release keeps the native boundary intentionally read-only."
+        subtitle="V0.2 separates interactive PTY, structured processes and reversible worktree mutation behind typed native commands."
         icon={<MonitorDot size={16} />}
       >
         <div className="grid grid-cols-3 gap-3">
@@ -205,10 +205,10 @@ function Overview({
             state="available"
           />
           <CapabilityCard
-            icon={<CircleDot size={16} />}
+            icon={<CheckCircle2 size={16} />}
             title="Workspace execution"
-            description="Embedded PTY and process supervisor are the next isolated adapter."
-            state="next"
+            description="Embedded PTY, process profiles, worktree lanes and filesystem refresh are active."
+            state="available"
           />
           <CapabilityCard
             icon={<CircleDot size={16} />}
