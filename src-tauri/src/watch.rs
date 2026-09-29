@@ -32,7 +32,7 @@ pub fn watch_start(
     let app_for_events = app.clone();
     let id_for_events = id.clone();
     let mut watcher = RecommendedWatcher::new(
-        move |result| {
+        move |result: notify::Result<notify::Event>| {
             if let Ok(event) = result {
                 for changed in event.paths {
                     if is_ignored_path(&changed) {
