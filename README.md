@@ -142,9 +142,9 @@ If Rust is not installed, install rustup first (for example `winget install Rust
 
 ## Control acceptance
 
-Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. Run:
+Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. The acceptance runner is Node-based and works on Windows, macOS and Linux. Run:
 
-```powershell
+ ```bash
 npm install
 npm run test:controls
 cargo test --manifest-path src-tauri/Cargo.toml

@@ -70,9 +70,15 @@ export function runDoctor({ exitOnFailure = true } = {}) {
   if (!ok) {
     console.error("\nVirtualLab desktop development requires Node.js, Git and the Rust toolchain.");
     if (!cargoResult.cargo) {
-      console.error("Windows quick install: winget install Rustlang.Rustup");
-      console.error("Then restart PowerShell and run: rustup default stable");
-      console.error("Expected Cargo location: %USERPROFILE%\\.cargo\\bin\\cargo.exe");
+      if (process.platform === "win32") {
+        console.error("Windows quick install: winget install Rustlang.Rustup");
+        console.error("Then restart PowerShell and run: rustup default stable");
+        console.error("Expected Cargo location: %USERPROFILE%\\.cargo\\bin\\cargo.exe");
+      } else {
+        console.error("Install rustup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh");
+        console.error('Then load the toolchain: source "$HOME/.cargo/env"');
+        console.error("Expected Cargo location: ~/.cargo/bin/cargo");
+      }
     }
     console.error("\nFrontend-only preview remains available with: npm run dev\n");
     if (exitOnFailure) process.exit(1);

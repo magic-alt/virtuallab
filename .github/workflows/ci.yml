@@ -44,7 +44,7 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml
 
   windows-native:
-    name: Windows desktop smoke (Node 26)
+    name: Windows desktop acceptance (Node 26)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +53,16 @@ jobs:
           node-version: "26"
       - uses: dtolnay/rust-toolchain@stable
       - run: npm install
-      - run: npm run doctor
-      - run: npm run test:controls
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: npm run acceptance:local
+
+  macos-native:
+    name: macOS desktop acceptance (Node 26)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run acceptance:local

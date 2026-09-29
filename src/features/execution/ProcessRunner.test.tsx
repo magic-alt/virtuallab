@@ -93,6 +93,19 @@ describe("ProcessRunner controls", () => {
   });
 
   it("disables run in web preview", () => {
+    useWorkbenchStore.setState({
+      profiles: [
+        {
+          id: "preview-build",
+          name: "Preview build",
+          kind: "build",
+          repositoryRoot: "preview",
+          program: "echo",
+          args: ["preview"],
+        },
+      ],
+    });
+
     render(<ProcessRunner cwd="preview" repositoryRoot="preview" enabled={false} />);
     expect(screen.getByRole("button", { name: /^run$/i })).toBeDisabled();
   });

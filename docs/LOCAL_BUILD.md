@@ -1,23 +1,23 @@
 # Local build guide
 
-## Windows quick path
+## Cross-platform quick path
 
-From PowerShell at the repository root:
+From Windows PowerShell, macOS Terminal, or Linux shell at the repository root:
 
-```powershell
+```bash
 npm install
 npm run doctor
 npm run acceptance:local
 npm run tauri:build
 ```
 
-`acceptance:local` runs TypeScript type checking, all frontend control tests, the production frontend build and Rust native tests before the release build.
+`acceptance:local` is a Node script and runs TypeScript type checking, all frontend control tests, the production frontend build and Rust native tests on Windows, macOS and Linux before the release build.
 
 ## Development modes
 
 ### Frontend preview only
 
-```powershell
+```bash
 npm run dev
 ```
 
@@ -25,7 +25,7 @@ This starts Vite at `http://localhost:1420/`. The command is expected to remain 
 
 ### Native desktop development
 
-```powershell
+```bash
 npm run tauri:dev
 ```
 
@@ -33,7 +33,7 @@ This runs Vite plus the Tauri/Rust host and opens the native VirtualLab window.
 
 ### Frontend production build
 
-```powershell
+```bash
 npm run typecheck
 npm run test:controls
 npm run build
@@ -43,7 +43,7 @@ Output: `dist/`.
 
 ### Native release build
 
-```powershell
+```bash
 npm run tauri:build
 ```
 
@@ -87,7 +87,7 @@ There are two different debug workflows in Tauri and they should not be confused
 
 ### Hot-reload development
 
-```powershell
+```bash
 npm run tauri:dev
 ```
 
@@ -107,7 +107,7 @@ The `target/debug/virtuallab.exe` produced by this development session is not th
 
 Use this when you want debug symbols/devtools behavior but still want an executable that can be launched without a Vite server:
 
-```powershell
+```bash
 npm run tauri:build:debug
 ```
 
@@ -120,7 +120,7 @@ Outputs:
 
 ### Standalone release build
 
-```powershell
+```bash
 npm run tauri:build
 ```
 
@@ -130,3 +130,28 @@ Outputs:
 - release bundles/installers: `src-tauri/target/release/bundle/`
 
 The wrapper script forwards additional Tauri CLI arguments, so commands such as the debug build use the same toolchain preflight as normal builds.
+
+
+## macOS prerequisites
+
+Install Xcode Command Line Tools:
+
+```bash
+xcode-select --install
+```
+
+Install Rust with rustup when Cargo/Rustc are missing:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+rustup default stable
+```
+
+Verify:
+
+```bash
+npm run doctor
+```
+
+On Apple Silicon, `rustc -vV` should normally report `host: aarch64-apple-darwin`.
