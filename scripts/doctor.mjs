@@ -77,6 +77,7 @@ export function runDoctor({ exitOnFailure = true } = {}) {
       } else {
         console.error("Install rustup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh");
         console.error('Then load the toolchain: source "$HOME/.cargo/env"');
+        console.error("Then install/select stable: rustup default stable");
         console.error("Expected Cargo location: ~/.cargo/bin/cargo");
       }
     }
