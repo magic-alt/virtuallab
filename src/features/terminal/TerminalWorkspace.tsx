@@ -115,7 +115,7 @@ export function TerminalWorkspace({
   }, [cwd]);
 
   const start = async () => {
-    if (!enabledRef.current) return;
+    if (!enabled) return;
 
     const id =
       globalThis.crypto?.randomUUID?.() ??
