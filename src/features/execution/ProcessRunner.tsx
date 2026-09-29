@@ -223,7 +223,7 @@ export function ProcessRunner({
         </div>
       </section>
 
-      <section className="flex min-h-[520px] flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[#090704]">
+      <section className="vl-editor-surface flex min-h-[520px] flex-col overflow-hidden rounded-2xl border border-white/[0.07]">
         <div className="flex h-11 shrink-0 items-center justify-between border-b border-white/[0.06] px-4">
           <div className="text-xs font-medium text-slate-300">Process output</div>
           {activeRun && <RunStatus run={activeRun} />}
@@ -303,7 +303,7 @@ function ProfileEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-[520px] rounded-2xl border border-orange-400/15 bg-[#120e0a] p-5 shadow-2xl">
+      <div className="vl-dialog w-[520px] rounded-2xl border p-5 shadow-2xl">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="m-0 text-base font-semibold text-slate-100">New run profile</h2>

@@ -164,7 +164,7 @@ export function TerminalWorkspace({
   }, []);
 
   return (
-    <div className="mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[#090704] shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
+    <div className="vl-editor-surface mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] shadow-[4px_4px_0_rgba(58,16,0,0.55)]">
       <div className="flex h-11 shrink-0 items-center border-b border-orange-400/10 bg-[#120b06] px-2">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {sessions.map((session) => (

@@ -57,7 +57,7 @@ export function WorkspaceContent({
 }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-white/[0.07] bg-[#100b07]/80 px-5">
+      <nav className="vl-tabs flex h-11 shrink-0 items-end gap-1 border-b px-5">
         {tabs.map((item) => {
           const active = item.id === tab;
           const counter = item.counter?.(snapshot) ?? null;
@@ -86,7 +86,7 @@ export function WorkspaceContent({
         })}
       </nav>
 
-      <main className="surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
+      <main className="vl-main surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && <Changes snapshot={snapshot} />}
         {tab === "terminal" && (

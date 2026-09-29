@@ -4,11 +4,11 @@ import {
   Command,
   Cpu,
   Layers3,
-  Search,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { WorkspaceSearch } from "@/features/search/WorkspaceSearch";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { NewWorkspaceDialog } from "@/features/workspace/NewWorkspaceDialog";
 import { ProjectSidebar } from "@/features/sidebar/ProjectSidebar";
@@ -51,6 +51,7 @@ export function WorkbenchShell() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
 
@@ -131,8 +132,8 @@ export function WorkbenchShell() {
       });
       setSnapshot(next);
       setTab("overview");
-    } catch {
-      // The visible error surface keeps the desktop action non-blocking.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -174,9 +175,9 @@ export function WorkbenchShell() {
   const native = isDesktopRuntime();
 
   return (
-    <div className="flex h-screen min-h-0 flex-col bg-[#0b0805] text-slate-100">
+    <div className="pixel-ui vl-workbench flex h-screen min-h-0 flex-col text-slate-100">
       <div
-        className="flex h-12 shrink-0 items-center border-b border-orange-400/[0.08] bg-[#0d0906]/95 px-4"
+        className="vl-topbar flex h-12 shrink-0 items-center border-b px-4"
         data-tauri-drag-region
       >
         <div className="flex items-center gap-2.5">
@@ -193,12 +194,8 @@ export function WorkbenchShell() {
           </div>
         </div>
 
-        <div className="mx-auto flex h-8 w-[380px] items-center gap-2 rounded-lg border border-orange-400/[0.08] bg-white/[0.025] px-3 text-xs text-stone-600">
-          <Search size={13} />
-          <span className="flex-1">Search workspaces and commands</span>
-          <span className="mono rounded border border-white/[0.08] bg-black/20 px-1.5 py-0.5 text-[9px]">
-            ⌘ K
-          </span>
+        <div className="mx-auto w-[420px]">
+          <WorkspaceSearch value={searchQuery} onChange={setSearchQuery} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -230,6 +227,8 @@ export function WorkbenchShell() {
           snapshot={snapshot}
           isPreview={isPreview}
           onAdd={addLocalRepository}
+          filterQuery={searchQuery}
+          repositoryActionsEnabled={native}
           onSelect={(id) => {
             setActiveRepository(id);
             setTab("overview");
@@ -241,7 +240,7 @@ export function WorkbenchShell() {
           workspaceActionsEnabled={native && Boolean(activeRepository)}
         />
 
-        <section className="flex min-w-0 flex-1 flex-col bg-[#0b0805]">
+        <section className="vl-stage flex min-w-0 flex-1 flex-col">
           <WorkspaceHeader
             snapshot={snapshot}
             isPreview={isPreview}
@@ -259,7 +258,7 @@ export function WorkbenchShell() {
             onTabChange={setTab}
           />
 
-          <footer className="flex h-7 shrink-0 items-center justify-between border-t border-orange-400/[0.06] bg-[#0d0906] px-3 text-[10px] text-stone-600">
+          <footer className="vl-footer flex h-7 shrink-0 items-center justify-between border-t px-3 text-[10px] text-stone-600">
             <div className="flex items-center gap-4">
               <span className="flex items-center gap-1.5">
                 <Command size={11} />

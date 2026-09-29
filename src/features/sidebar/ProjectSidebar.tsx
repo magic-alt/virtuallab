@@ -23,6 +23,8 @@ interface Props {
   onSelectWorkspace: (path: string) => void;
   onRemoveWorkspace: (path: string) => void;
   workspaceActionsEnabled: boolean;
+  repositoryActionsEnabled: boolean;
+  filterQuery: string;
 }
 
 export function ProjectSidebar({
@@ -37,11 +39,26 @@ export function ProjectSidebar({
   onSelectWorkspace,
   onRemoveWorkspace,
   workspaceActionsEnabled,
+  repositoryActionsEnabled,
+  filterQuery,
 }: Props) {
+  const query = filterQuery.trim().toLowerCase();
+  const visibleRepositories = query
+    ? repositories.filter((repository) =>
+        `${repository.name} ${repository.path}`.toLowerCase().includes(query),
+      )
+    : repositories;
+  const visibleWorktrees = (query
+    ? snapshot.worktrees.filter((worktree) =>
+        `${worktree.branch ?? ""} ${worktree.path}`.toLowerCase().includes(query),
+      )
+    : snapshot.worktrees
+  ).slice(0, 6);
+
   return (
-    <aside className="flex min-h-0 w-[286px] shrink-0 flex-col border-r border-white/[0.07] bg-[#100b07]/96">
+    <aside className="vl-sidebar flex min-h-0 w-[286px] shrink-0 flex-col border-r">
       <div className="border-b border-white/[0.07] px-4 pb-4 pt-4">
-        <Button className="w-full" onClick={onAdd}>
+        <Button className="w-full" disabled={!repositoryActionsEnabled} onClick={onAdd} title={repositoryActionsEnabled ? "Add local Git repository" : "Desktop runtime required"}>
           <Plus size={15} />
           Add repository
         </Button>
@@ -51,10 +68,7 @@ export function ProjectSidebar({
         <SectionLabel icon={<FolderGit2 size={13} />} label="Local repositories" />
 
         {repositories.length === 0 ? (
-          <button
-            className="mt-2 w-full rounded-xl border border-orange-400/15 bg-orange-400/[0.07] p-3 text-left"
-            type="button"
-          >
+          <div className="mt-2 w-full rounded-xl border border-orange-300/30 bg-orange-950/20 p-3 text-left">
             <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
               <div className="flex size-7 items-center justify-center rounded-lg bg-orange-500/15 text-orange-300">
                 <Boxes size={14} />
@@ -64,10 +78,10 @@ export function ProjectSidebar({
             <p className="mt-2 text-xs leading-5 text-slate-500">
               Add a local Git repository to replace preview data with live repository state.
             </p>
-          </button>
+          </div>
         ) : (
           <div className="mt-2 space-y-1">
-            {repositories.map((repository) => {
+            {visibleRepositories.map((repository) => {
               const active = repository.id === activeRepositoryId;
               return (
                 <div
@@ -122,7 +136,7 @@ export function ProjectSidebar({
             </button>
           </div>
           <div className="mt-2 space-y-1.5">
-            {snapshot.worktrees.slice(0, 6).map((worktree, index) => (
+            {visibleWorktrees.map((worktree, index) => (
               <div
                 key={`${worktree.path}-${index}`}
                 className="group flex items-center gap-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"

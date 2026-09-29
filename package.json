@@ -10,7 +10,11 @@
     "tauri": "tauri",
     "tauri:dev": "node scripts/tauri-run.mjs dev",
     "tauri:build": "node scripts/tauri-run.mjs build",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "test": "vitest run",
+    "test:controls": "vitest run src/**/*.test.tsx",
+    "test:watch": "vitest",
+    "acceptance:local": "powershell -ExecutionPolicy Bypass -File scripts/native-acceptance.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
@@ -33,6 +37,11 @@
     "@vitejs/plugin-react": "^5.0.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.9.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.4"
   }
 }
