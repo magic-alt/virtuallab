@@ -85,15 +85,16 @@ export function WorkbenchShell() {
   useEffect(() => {
     if (!isDesktopRuntime() || !activeRepository || !snapshot.root) return;
 
+    const watchId = `${WATCH_ID}:${snapshot.root}`;
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
 
-    void watchStart(WATCH_ID, snapshot.root).catch((err) => {
+    void watchStart(watchId, snapshot.root).catch((err) => {
       if (!disposed) setError(err instanceof Error ? err.message : String(err));
     });
 
     void listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
-      if (payload.eventType !== "fs.changed" || payload.id !== WATCH_ID) return;
+      if (payload.eventType !== "fs.changed" || payload.id !== watchId) return;
       window.clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => {
         const path = activePathRef.current;
@@ -108,7 +109,7 @@ export function WorkbenchShell() {
       disposed = true;
       window.clearTimeout(refreshTimer.current);
       unlisten?.();
-      void watchStop(WATCH_ID).catch(() => undefined);
+      void watchStop(watchId).catch(() => undefined);
     };
   }, [activeRepository, loadSnapshot, snapshot.root]);
 
