@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:controls": "vitest run",
     "test:watch": "vitest",
-    "acceptance:local": "powershell -ExecutionPolicy Bypass -File scripts/native-acceptance.ps1"
+    "acceptance:local": "powershell -ExecutionPolicy Bypass -File scripts/native-acceptance.ps1",
+    "tauri:build:debug": "node scripts/tauri-run.mjs build --debug"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

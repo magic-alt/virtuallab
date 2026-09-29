@@ -197,3 +197,28 @@ If Rust is available but linking fails, install the Visual Studio Build Tools **
 Run profiles are repository-scoped. A command configured for one repository is not shown or executed when another repository is active. The process working directory remains the selected workspace/worktree, so the same repository profile can be reused across its worktrees.
 
 V0.2 intentionally ships with no universal build/test defaults because commands such as `npm run build` or `cargo check --manifest-path src-tauri/Cargo.toml` are project-specific.
+
+
+### Standalone debug executable
+
+`npm run tauri:dev` is a development session. The executable created under `src-tauri/target/debug/virtuallab.exe` during that session expects the Vite dev server configured by `build.devUrl`, so launching that dev-session executable after the Vite server has stopped can show a blank window.
+
+For a directly launchable debug executable with frontend assets embedded, build with:
+
+```powershell
+npm run tauri:build:debug
+```
+
+Then run:
+
+```powershell
+.\src-tauri\target\debug\virtuallab.exe
+```
+
+Debug bundles/installers are generated under `src-tauri/target/debug/bundle/`.
+
+For the normal standalone release build use:
+
+```powershell
+npm run tauri:build
+```

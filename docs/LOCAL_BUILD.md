@@ -79,3 +79,54 @@ The script is now cross-platform:
 ```
 vitest run
 ```
+
+
+## Dev executable vs standalone executable
+
+There are two different debug workflows in Tauri and they should not be confused.
+
+### Hot-reload development
+
+```powershell
+npm run tauri:dev
+```
+
+This launches:
+
+```text
+Vite dev server :1420
+        +
+Tauri/Rust debug host
+        ↓
+VirtualLab window loads build.devUrl
+```
+
+The `target/debug/virtuallab.exe` produced by this development session is not the artifact to distribute or launch later by itself. Development mode uses `build.devUrl`, so if Vite is no longer running the WebView has no frontend page to load and the window can appear blank.
+
+### Standalone debug build
+
+Use this when you want debug symbols/devtools behavior but still want an executable that can be launched without a Vite server:
+
+```powershell
+npm run tauri:build:debug
+```
+
+This is equivalent to Tauri `build --debug`. It runs the frontend production build and embeds `frontendDist` into the desktop application.
+
+Outputs:
+
+- standalone debug executable: `src-tauri/target/debug/virtuallab.exe`
+- debug bundles/installers: `src-tauri/target/debug/bundle/`
+
+### Standalone release build
+
+```powershell
+npm run tauri:build
+```
+
+Outputs:
+
+- standalone release executable: `src-tauri/target/release/virtuallab.exe`
+- release bundles/installers: `src-tauri/target/release/bundle/`
+
+The wrapper script forwards additional Tauri CLI arguments, so commands such as the debug build use the same toolchain preflight as normal builds.
