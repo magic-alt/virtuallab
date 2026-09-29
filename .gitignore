@@ -1,0 +1,18 @@
+# Node / frontend
+node_modules/
+dist/
+.vite/
+*.log
+
+# Rust / Tauri
+src-tauri/target/
+target/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local workbench state
+.virtuallab/
