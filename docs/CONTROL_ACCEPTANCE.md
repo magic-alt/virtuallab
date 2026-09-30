@@ -35,9 +35,77 @@ npm run acceptance:local
 npm run acceptance:local -- --launch
 ```
 
-`acceptance:local` is implemented in Node and is cross-platform. The first command runs automated checks and prints the desktop checklist. The second also launches the Tauri desktop runtime for the native-control portion.
+`acceptance:local` is implemented in Node and is cross-platform. It invokes npm through npm's JavaScript CLI with `shell: false`, so Node 26 does not emit DEP0190 shell/argument warnings. The first command runs automated checks and prints the desktop checklist. The second also launches the Tauri desktop runtime for the native-control portion.
 
 A PR should not claim a native control is fully accepted until the corresponding desktop checklist item has been exercised on at least one supported OS.
 
 
 CI repeats the automated gate on Windows, macOS and Linux. Node and Rust dependency graphs are locked by `package-lock.json` and `src-tauri/Cargo.lock`; CI uses `npm ci` and Cargo `--locked`.
+
+
+## V0.3 Phase A — local diff
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| Changes | changed-file selection | `ChangesReview.test.tsx` | select modified/staged files and verify patch changes |
+| Changes | Worktree / Staged modes | `ChangesReview.test.tsx` + Rust diff fixtures | compare unstaged vs staged content |
+| Changes | Base ref mode | Rust base-ref fixture | enter a valid base ref and load committed branch diff |
+| Git diff | rename / delete / Unicode-space paths | Rust `git.rs` fixtures | inspect representative project changes |
+| Git diff | binary fallback | Rust binary fixture | binary file shows explicit non-text state |
+| Git diff | bounded large output | Rust large-patch fixture | large file shows `truncated` rather than freezing the UI |
+| Git diff | safety boundary | path/worktree/ref validation tests | no arbitrary shell or Git write operation |
+
+
+## V0.3 Phase A manual desktop procedure
+
+Use a disposable Git repository so staged, unstaged, rename, binary and large-diff cases can be exercised without contaminating a real project.
+
+### Windows PowerShell fixture
+
+```powershell
+$root = "D:\Temp\virtuallab-v03-acceptance"
+Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $root | Out-Null
+Set-Location $root
+
+git init
+git config user.email "virtuallab@example.invalid"
+git config user.name "VirtualLab Acceptance"
+
+"base" | Set-Content README.md
+"keep" | Set-Content "space file.txt"
+git add .
+git commit -m "base"
+git branch -M main
+
+git switch -c feat/review-fixture
+git mv "space file.txt" "新 file.txt"
+git commit -m "committed rename"
+
+[IO.File]::WriteAllBytes("$root\blob.bin", [byte[]](0,1,2,3))
+git add blob.bin
+git commit -m "binary base"
+
+"base`nunstaged" | Set-Content README.md
+"staged" | Set-Content "staged file.txt"
+git add "staged file.txt"
+
+[IO.File]::WriteAllBytes("$root\blob.bin", [byte[]](0,9,8,7))
+
+("x" * 700000) | Set-Content "$root\large.txt"
+git add large.txt
+```
+
+Open this repository in VirtualLab and verify:
+
+1. **Worktree** — `README.md` renders an unstaged patch; `blob.bin` shows the binary fallback.
+2. **Staged** — `staged file.txt` appears; `large.txt` displays `truncated` without freezing the UI.
+3. **Base** — enter `main`, click **Load base files**, and verify the committed rename and binary addition can be selected even if there are no corresponding working-tree edits.
+4. **Rename / Unicode / spaces** — the committed rename is represented as `space file.txt → 新 file.txt`, without quoting/path corruption.
+5. During every operation, drag the window and switch tabs; Windows must not show **Not Responding**.
+
+The repository is disposable. Remove it after acceptance with:
+
+```powershell
+Remove-Item -Recurse -Force "D:\Temp\virtuallab-v03-acceptance"
+```

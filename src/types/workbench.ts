@@ -9,6 +9,7 @@ export type ChangeKind =
 
 export interface ChangeEntry {
   path: string;
+  oldPath?: string | null;
   indexStatus: string;
   worktreeStatus: string;
   kind: ChangeKind;
@@ -113,4 +114,32 @@ export interface CheckResult {
   source: CheckSource;
   observedAtMs: number;
   exitCode?: number | null;
+}
+
+
+export type DiffMode = "worktree" | "index" | "base";
+
+export interface DiffRequest {
+  repositoryRoot: string;
+  workspaceRoot: string;
+  path?: string | null;
+  mode: DiffMode;
+  baseRef?: string | null;
+}
+
+export interface DiffFileSummary {
+  path: string;
+  oldPath?: string | null;
+  status: string;
+}
+
+export interface DiffResponse {
+  mode: DiffMode;
+  baseRef?: string | null;
+  path?: string | null;
+  files: DiffFileSummary[];
+  patch: string;
+  binary: boolean;
+  truncated: boolean;
+  returnedBytes: number;
 }

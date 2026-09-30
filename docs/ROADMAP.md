@@ -36,16 +36,16 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.3 — Review and GitHub
 
-**Status: READY / IN PROGRESS** — V0.1/V0.2 closeout is complete on `main`; implementation is tracked by issue #4 on branch `feat/v0.3-review-github`.
+**Status: READY / IN PROGRESS** — V0.1/V0.2 closeout is complete on `main`; implementation is tracked by issue #4 on branch `feat/v0.3-git-diff-foundation`.
 
 Goal: make the workspace a complete local review lane before introducing agent harnesses.
 
 ### A. Local diff/review foundation
 
-- [ ] typed read-only Git diff command (worktree/index/base-ref modes)
-- [ ] changed-file selection → diff surface
+- [x] typed read-only Git diff command (worktree/index/base-ref modes)
+- [x] changed-file selection → bounded plain-text diff surface (Monaco next)
 - [ ] Monaco diff viewer with unified/side-by-side modes
-- [ ] large/binary diff fallback and size limits
+- [x] large/binary diff fallback and size limits
 - [ ] local inline review draft model
 - [ ] review draft persistence per workspace
 
@@ -68,7 +68,7 @@ Goal: make the workspace a complete local review lane before introducing agent h
 
 ### V0.3 quality gate
 
-- [ ] Git diff parser/adapter tests including rename/binary/large-file cases
+- [x] Git diff parser/adapter tests including rename/binary/large-file cases
 - [ ] Monaco/review UI control tests
 - [ ] GitHub adapter fixtures + offline/error cases
 - [ ] Windows/macOS/Linux acceptance remains green
