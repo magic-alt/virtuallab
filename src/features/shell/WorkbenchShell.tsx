@@ -39,6 +39,7 @@ export function WorkbenchShell() {
     addRepository,
     removeRepository,
     setActiveRepository,
+    saveWorkspaceState,
   } = useWorkbenchStore();
 
   const activeRepository = useMemo(
@@ -80,8 +81,35 @@ export function WorkbenchShell() {
       setError(null);
       return;
     }
-    void loadSnapshot(activeRepository.path).catch(() => undefined);
-  }, [activeRepository, loadSnapshot]);
+    const saved = useWorkbenchStore.getState().workspaceStates[activeRepository.id];
+    const preferredPath = saved?.activeWorktreePath || activeRepository.path;
+    const preferredTab = saved?.activeTab ?? "overview";
+
+    setTab(preferredTab);
+    void loadSnapshot(preferredPath)
+      .then((next) => {
+        saveWorkspaceState({
+          repositoryId: activeRepository.id,
+          activeWorktreePath: next.root,
+          activeTab: preferredTab,
+          updatedAt: Date.now(),
+        });
+      })
+      .catch(() => {
+        if (preferredPath === activeRepository.path) return;
+        void loadSnapshot(activeRepository.path)
+          .then((next) => {
+            saveWorkspaceState({
+              repositoryId: activeRepository.id,
+              activeWorktreePath: next.root,
+              activeTab: "overview",
+              updatedAt: Date.now(),
+            });
+            setTab("overview");
+          })
+          .catch(() => undefined);
+      });
+  }, [activeRepository, loadSnapshot, saveWorkspaceState]);
 
   useEffect(() => {
     if (!isDesktopRuntime() || !activeRepository || !snapshot.root) return;
@@ -131,6 +159,12 @@ export function WorkbenchShell() {
         path: next.root,
         lastOpenedAt: Date.now(),
       });
+      saveWorkspaceState({
+        repositoryId: id,
+        activeWorktreePath: next.root,
+        activeTab: "overview",
+        updatedAt: Date.now(),
+      });
       setSnapshot(next);
       setTab("overview");
     } catch (err) {
@@ -150,7 +184,13 @@ export function WorkbenchShell() {
       baseRef,
       targetPath,
     );
-    await loadSnapshot(created.path);
+    const next = await loadSnapshot(created.path);
+    saveWorkspaceState({
+      repositoryId: activeRepository.id,
+      activeWorktreePath: next.root,
+      activeTab: "overview",
+      updatedAt: Date.now(),
+    });
     setTab("overview");
   };
 
@@ -166,7 +206,14 @@ export function WorkbenchShell() {
         await loadSnapshot(activeRepository.path);
       }
       await removeWorktree(activeRepository.path, path);
-      await loadSnapshot(activeRepository.path);
+      const next = await loadSnapshot(activeRepository.path);
+      saveWorkspaceState({
+        repositoryId: activeRepository.id,
+        activeWorktreePath: next.root,
+        activeTab: "overview",
+        updatedAt: Date.now(),
+      });
+      setTab("overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -232,11 +279,22 @@ export function WorkbenchShell() {
           repositoryActionsEnabled={native}
           onSelect={(id) => {
             setActiveRepository(id);
-            setTab("overview");
           }}
           onRemove={removeRepository}
           onNewWorkspace={() => setWorkspaceDialog(true)}
-          onSelectWorkspace={(path) => void loadSnapshot(path).catch(() => undefined)}
+          onSelectWorkspace={(path) => {
+            if (!activeRepository) return;
+            void loadSnapshot(path)
+              .then((next) => {
+                saveWorkspaceState({
+                  repositoryId: activeRepository.id,
+                  activeWorktreePath: next.root,
+                  activeTab: tab,
+                  updatedAt: Date.now(),
+                });
+              })
+              .catch(() => undefined);
+          }}
           onRemoveWorkspace={(path) => void deleteWorkspace(path)}
           workspaceActionsEnabled={native && Boolean(activeRepository)}
         />
@@ -257,7 +315,17 @@ export function WorkbenchShell() {
             profileRepositoryRoot={activeRepository?.path ?? snapshot.root}
             tab={tab}
             isPreview={isPreview}
-            onTabChange={setTab}
+            onTabChange={(nextTab) => {
+              setTab(nextTab);
+              if (!activeRepository) return;
+              saveWorkspaceState({
+                repositoryId: activeRepository.id,
+                activeWorktreePath:
+                  activePathRef.current ?? snapshot.root ?? activeRepository.path,
+                activeTab: nextTab,
+                updatedAt: Date.now(),
+              });
+            }}
           />
 
           <footer className="vl-footer flex h-7 shrink-0 items-center justify-between border-t px-3 text-[10px] text-stone-600">

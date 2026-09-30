@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
 import { isDesktopRuntime } from "@/lib/backend";
+import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
   RepositorySnapshot,
@@ -277,66 +278,64 @@ function Checks({
   snapshot: RepositorySnapshot;
   isPreview: boolean;
 }) {
-  const checks = [
-    {
-      label: "Repository recognized",
-      detail: "Git rev-parse resolved a repository root.",
-      ok: !isPreview,
-    },
-    {
-      label: "Worktree inventory",
-      detail: `${snapshot.worktrees.length} workspace lane(s) detected.`,
-      ok: !isPreview && snapshot.worktrees.length > 0,
-    },
-    {
-      label: "Origin remote",
-      detail: snapshot.remoteUrl ?? "No origin remote configured.",
-      ok: !isPreview && Boolean(snapshot.remoteUrl),
-    },
-    {
-      label: "Working tree",
-      detail:
-        snapshot.dirtyCount === 0
-          ? "No local changes."
-          : `${snapshot.dirtyCount} change(s) need review.`,
-      ok: !isPreview && snapshot.dirtyCount === 0,
-      warning: !isPreview && snapshot.dirtyCount > 0,
-    },
-  ];
+  const checks = repositoryCheckResults(snapshot, isPreview);
 
   return (
     <div className="mx-auto max-w-[980px]">
       <Panel
         title="Local readiness checks"
-        subtitle="These checks describe current repository state; they are not release gates yet."
+        subtitle="Normalized V0.2 check results; durable evidence and release gates arrive in V0.4."
         icon={<ListChecks size={16} />}
       >
         <div className="space-y-2">
-          {checks.map((check) => (
-            <div
-              key={check.label}
-              className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3"
-            >
+          {checks.map((check) => {
+            const passing = check.status === "pass";
+            const warning = check.status === "warn";
+            const failing = check.status === "fail";
+
+            return (
               <div
-                className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-lg",
-                  check.ok
-                    ? "bg-emerald-400/10 text-emerald-300"
-                    : check.warning
-                      ? "bg-amber-400/10 text-amber-300"
-                      : "bg-white/[0.04] text-slate-600",
-                )}
+                key={check.id}
+                className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3"
               >
-                {check.ok ? <CheckCircle2 size={16} /> : <TriangleAlert size={16} />}
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-slate-200">{check.label}</div>
-                <div className="mt-1 truncate text-[11px] text-slate-600" title={check.detail}>
-                  {check.detail}
+                <div
+                  className={cn(
+                    "flex size-8 shrink-0 items-center justify-center rounded-lg",
+                    passing
+                      ? "bg-emerald-400/10 text-emerald-300"
+                      : warning
+                        ? "bg-amber-400/10 text-amber-300"
+                        : failing
+                          ? "bg-rose-400/10 text-rose-300"
+                          : "bg-white/[0.04] text-slate-600",
+                  )}
+                >
+                  {passing ? <CheckCircle2 size={16} /> : <TriangleAlert size={16} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-medium text-slate-200">{check.label}</div>
+                    <Badge
+                      tone={
+                        passing
+                          ? "green"
+                          : warning
+                            ? "orange"
+                            : failing
+                              ? "red"
+                              : "neutral"
+                      }
+                    >
+                      {check.status.replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 truncate text-[11px] text-slate-600" title={check.detail}>
+                    {check.detail}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Panel>
     </div>
