@@ -131,3 +131,14 @@ The Changes review surface must use the available workbench viewport rather than
 - scroll to the last changed line; bottom content must not be hidden behind the footer/path row
 - long files must scroll inside Monaco, while the outer Changes page should not create a competing editor-height scrollbar
 - the left changed-file list must scroll independently and remain aligned with the right review panel
+
+
+### Phase B visual line wrapping acceptance
+
+Long source/document lines must adapt to the available Monaco pane width without mutating repository content.
+
+- in **Side by side**, narrow the desktop window and confirm long lines wrap independently inside both panes instead of disappearing beyond the right edge
+- in **Unified**, narrow the desktop window and confirm long deleted/added lines wrap to the visible editor width
+- resizing wider again must reflow the visual wrapping automatically
+- wrapping is presentation-only: line numbers/diff identity remain tied to the original logical lines and no working-tree/index content changes are allowed
+- after interacting with wrapped text, `git diff` must be identical to the pre-review state

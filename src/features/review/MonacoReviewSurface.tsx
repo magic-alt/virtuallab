@@ -34,8 +34,11 @@ export function MonacoReviewSurface({
           renderOverviewRuler: false,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
-          wordWrap: "off",
-          diffWordWrap: "off",
+          // Visual wrapping only: long lines adapt to the current review pane
+          // width without changing either Git side or the working-tree file.
+          wordWrap: "on",
+          diffWordWrap: "on",
+          wrappingIndent: "same",
           ignoreTrimWhitespace: false,
           fontFamily:
             '"Cascadia Code", "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Consolas, monospace',
