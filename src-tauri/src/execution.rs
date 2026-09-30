@@ -83,9 +83,25 @@ pub struct ProcessSpec {
 }
 
 #[tauri::command]
-pub fn terminal_spawn(
+pub async fn terminal_spawn(
     app: AppHandle,
     state: State<'_, TerminalManager>,
+    id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        terminal_spawn_blocking(app, manager, id, cwd, cols, rows)
+    })
+    .await
+    .map_err(|error| format!("Terminal startup task failed: {error}"))?
+}
+
+fn terminal_spawn_blocking(
+    app: AppHandle,
+    state: TerminalManager,
     id: String,
     cwd: String,
     cols: u16,
@@ -261,9 +277,20 @@ pub fn terminal_stop(
 }
 
 #[tauri::command]
-pub fn process_spawn(
+pub async fn process_spawn(
     app: AppHandle,
     state: State<'_, ProcessManager>,
+    spec: ProcessSpec,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || process_spawn_blocking(app, manager, spec))
+        .await
+        .map_err(|error| format!("Process startup task failed: {error}"))?
+}
+
+fn process_spawn_blocking(
+    app: AppHandle,
+    state: ProcessManager,
     spec: ProcessSpec,
 ) -> Result<(), String> {
     if spec.program.trim().is_empty() {

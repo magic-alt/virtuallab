@@ -55,27 +55,62 @@ export function WorkbenchShell() {
   const [searchQuery, setSearchQuery] = useState("");
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
+  const snapshotLoadsRef = useRef(new Map<string, Promise<RepositorySnapshot>>());
+  const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
+  const latestSnapshotRequestRef = useRef<string | null>(null);
 
-  const loadSnapshot = useCallback(async (path: string) => {
+  const loadSnapshot = useCallback((path: string): Promise<RepositorySnapshot> => {
+    const key = normalizePath(path);
+    latestSnapshotRequestRef.current = key;
+
+    const existing = snapshotLoadsRef.current.get(key);
+    if (existing) return existing;
+
+    const cached = snapshotCacheRef.current.get(key);
+    if (
+      cached &&
+      normalizePath(activePathRef.current ?? "") !== key
+    ) {
+      // Switching back to a known repository/worktree should be visually
+      // immediate; a native refresh still runs in the background.
+      activePathRef.current = cached.root;
+      setSnapshot(cached);
+    }
+
     setLoading(true);
     setError(null);
-    try {
-      const next = await inspectRepository(path);
-      activePathRef.current = next.root;
-      setSnapshot(next);
-      return next;
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
-      setError(message);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
+
+    const request = inspectRepository(path)
+      .then((next) => {
+        snapshotCacheRef.current.set(key, next);
+        if (latestSnapshotRequestRef.current === key) {
+          activePathRef.current = next.root;
+          setSnapshot(next);
+        }
+        return next;
+      })
+      .catch((err) => {
+        if (latestSnapshotRequestRef.current === key) {
+          const message =
+            err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
+          setError(message);
+        }
+        throw err;
+      })
+      .finally(() => {
+        snapshotLoadsRef.current.delete(key);
+        if (snapshotLoadsRef.current.size === 0) {
+          setLoading(false);
+        }
+      });
+
+    snapshotLoadsRef.current.set(key, request);
+    return request;
   }, []);
 
   useEffect(() => {
     if (!activeRepository) {
+      latestSnapshotRequestRef.current = null;
       activePathRef.current = null;
       setSnapshot(PREVIEW_SNAPSHOT);
       setError(null);
@@ -112,7 +147,15 @@ export function WorkbenchShell() {
   }, [activeRepository, loadSnapshot, saveWorkspaceState]);
 
   useEffect(() => {
-    if (!isDesktopRuntime() || !activeRepository || !snapshot.root) return;
+    if (
+      !isDesktopRuntime() ||
+      !activeRepository ||
+      !snapshot.root ||
+      !activePathRef.current ||
+      normalizePath(activePathRef.current) !== normalizePath(snapshot.root)
+    ) {
+      return;
+    }
 
     const watchId = `${WATCH_ID}:${snapshot.root}`;
     let unlisten: UnlistenFn | undefined;
@@ -350,4 +393,9 @@ export function WorkbenchShell() {
       )}
     </div>
   );
+}
+
+
+function normalizePath(path: string) {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
 }

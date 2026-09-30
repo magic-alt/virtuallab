@@ -46,8 +46,14 @@ pub struct CommitSummary {
 }
 
 #[tauri::command]
-pub fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
-    let root = git(&path, &["rev-parse", "--show-toplevel"])?;
+pub async fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_repository_blocking(path))
+        .await
+        .map_err(|error| format!("Repository inspection task failed: {error}"))?
+}
+
+fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, String> {
+    let root = git_read(&path, &["rev-parse", "--show-toplevel"])?;
     let root = root.trim().to_string();
 
     if root.is_empty() {
@@ -60,10 +66,10 @@ pub fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
         .unwrap_or("repository")
         .to_string();
 
-    let branch = git(&root, &["branch", "--show-current"])?
+    let branch = git_read(&root, &["branch", "--show-current"])?
         .trim()
         .to_string();
-    let head_sha = git(&root, &["rev-parse", "--short=10", "HEAD"])?
+    let head_sha = git_read(&root, &["rev-parse", "--short=10", "HEAD"])?
         .trim()
         .to_string();
 
@@ -73,11 +79,21 @@ pub fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
         branch
     };
 
-    let remote_url = git_optional(&root, &["remote", "get-url", "origin"])
+    let remote_url = git_read_optional(&root, &["remote", "get-url", "origin"])
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let status = git(&root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+    // Do not recursively expand every file under untracked directories. On large
+    // build/source trees that can turn a status refresh into seconds of disk I/O.
+    let status = git_read(
+        &root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+        ],
+    )?;
     let mut changes = Vec::new();
     let mut staged_count = 0usize;
     let mut unstaged_count = 0usize;
@@ -113,8 +129,8 @@ pub fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
         });
     }
 
-    let worktrees = parse_worktrees(&git(&root, &["worktree", "list", "--porcelain"])?);
-    let recent_commits = parse_commits(&git(
+    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    let recent_commits = parse_commits(&git_read(
         &root,
         &["log", "-n", "8", "--format=%h%x1f%s%x1f%ct"],
     )?);
@@ -221,9 +237,32 @@ fn git(repo: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn git_optional(repo: &str, args: &[&str]) -> Option<String> {
-    git(repo, args).ok()
+fn git_read(repo: &str, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .map_err(|error| format!("Failed to launch git: {error}"))?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout)
+            .map_err(|error| format!("Git output was not valid UTF-8: {error}"))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            format!("Git command failed with {}", output.status)
+        } else {
+            stderr
+        })
+    }
 }
+
+fn git_read_optional(repo: &str, args: &[&str]) -> Option<String> {
+    git_read(repo, args).ok()
+}
+
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -233,7 +272,20 @@ pub struct WorkspaceMutationResult {
 }
 
 #[tauri::command]
-pub fn create_worktree(
+pub async fn create_worktree(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+) -> Result<WorkspaceMutationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        create_worktree_blocking(repository_root, branch, base_ref, target_path)
+    })
+    .await
+    .map_err(|error| format!("Worktree creation task failed: {error}"))?
+}
+
+fn create_worktree_blocking(
     repository_root: String,
     branch: String,
     base_ref: Option<String>,
@@ -295,7 +347,15 @@ pub fn create_worktree(
 }
 
 #[tauri::command]
-pub fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+pub async fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        remove_worktree_blocking(repository_root, worktree_path)
+    })
+    .await
+    .map_err(|error| format!("Worktree removal task failed: {error}"))?
+}
+
+fn remove_worktree_blocking(repository_root: String, worktree_path: String) -> Result<(), String> {
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -390,6 +450,25 @@ mod tests {
     }
 
     #[test]
+    fn read_only_git_command_works_on_fixture() {
+        let sandbox = unique_root("read-git");
+        let repo = sandbox.join("repo");
+        fs::create_dir_all(&repo).expect("repo directory");
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "fixture\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+
+        let head = git_read(repo.to_string_lossy().as_ref(), &["rev-parse", "--short", "HEAD"])
+            .expect("read-only git");
+        assert!(!head.trim().is_empty());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
     fn change_kind_classifies_porcelain_states() {
         assert_eq!(change_kind('?', '?'), "untracked");
         assert_eq!(change_kind('M', ' '), "modified");
@@ -409,6 +488,29 @@ mod tests {
         ));
     }
 
+
+    #[test]
+    fn inspect_repository_reports_fixture_without_async_runtime() {
+        let sandbox = unique_root("inspect");
+        let repo = sandbox.join("repo");
+        fs::create_dir_all(&repo).expect("repo directory");
+
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "fixture\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+
+        let snapshot =
+            inspect_repository_blocking(repo.to_string_lossy().to_string()).expect("inspect repo");
+        assert_eq!(snapshot.dirty_count, 0);
+        assert!(!snapshot.head_sha.is_empty());
+        assert_eq!(snapshot.worktrees.len(), 1);
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
     #[test]
     fn create_and_remove_worktree_round_trip() {
         let sandbox = unique_root("worktree");
@@ -423,7 +525,7 @@ mod tests {
         git_ok(&repo, &["add", "README.md"]);
         git_ok(&repo, &["commit", "-m", "fixture"]);
 
-        let created = create_worktree(
+        let created = create_worktree_blocking(
             repo.to_string_lossy().to_string(),
             "feat/control-test".to_string(),
             Some("HEAD".to_string()),
@@ -437,7 +539,7 @@ mod tests {
             .expect("branch lookup");
         assert_eq!(branch.trim(), "feat/control-test");
 
-        remove_worktree(
+        remove_worktree_blocking(
             repo.to_string_lossy().to_string(),
             target.to_string_lossy().to_string(),
         )
