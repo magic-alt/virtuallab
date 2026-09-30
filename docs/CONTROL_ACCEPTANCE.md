@@ -154,3 +154,43 @@ Monaco diff wrapping must be symmetric in side-by-side mode.
 - switch **Side by side → Unified → Side by side** and confirm left-pane wrapping remains active after the layout round trip
 - resize the desktop window narrower/wider and confirm both panes reflow without horizontal content loss
 - this is visual-only; verify repository/index content and `git diff` remain unchanged
+
+
+## V0.3 local review drafts
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| Monaco | original/modified line selection | component wiring + store tests | click a line in either diff pane and verify LEFT/RIGHT + line badge |
+| Changes | Save draft | `ChangesReview.test.tsx` | enter text, save, switch files, return and verify draft remains |
+| Changes | workspace persistence | `workbench.test.ts` | restart VirtualLab and confirm draft remains attached to the same worktree |
+| Changes | stale HEAD handling | `workbench.test.ts` | create draft, advance HEAD, Refresh; draft changes from active → stale |
+| Changes | remove draft | store mutation + visible control | remove one draft without modifying source/index |
+
+Drafts are local data. Creating, editing, selecting or deleting a local draft performs no network write and never mutates the reviewed file.
+
+## V0.3 GitHub integration
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| GitHub | capability detection | Rust adapter tests + `GithubPanel.test.tsx` | authenticated `gh auth status` shows connected |
+| GitHub | local-only fallback | Rust offline/auth fixture + UI test | rename/remove `gh` from PATH or sign out; Changes still works |
+| GitHub | PR context | Rust JSON fixture + UI test | load PR URL; verify number/title/base/head/files/check summary |
+| GitHub | issue context | Rust JSON fixture | load issue URL; verify number/title/state/labels |
+| GitHub | repository guard | Rust URL/repository tests | URL from another repository is refused |
+| GitHub | persisted reference | store test | switch workspace and back; last successful PR/issue reference remains |
+| GitHub | review comment mutation | UI explicit-confirm test + typed native request | Post remains disabled for stale/mismatched/non-PR drafts |
+| GitHub | explicit confirmation | `GithubPanel.test.tsx` | click Post, inspect confirmation text, cancel once and verify no request |
+
+### GitHub manual acceptance
+
+1. Ensure `gh --version` and `gh auth status --hostname github.com` succeed in the same desktop environment.
+2. Open a GitHub-backed workspace and select the **GitHub** tab. It must show **connected** and the origin `owner/repo`.
+3. Paste a PR URL from the same repository. Verify title/state/base/head, changed files and check summary.
+4. Paste an issue URL from the same repository. Verify issue metadata and labels.
+5. Paste a PR/issue URL from another repository. VirtualLab must refuse it rather than silently switching repository context.
+6. Create a local line draft in **Changes**, return to **GitHub**, and verify it appears without any network write.
+7. For a matching PR HEAD, click **Post**. The confirmation dialog must appear before the native mutation is invoked. Cancel first and verify nothing is posted.
+8. Confirm once on a disposable review comment; the draft must become **posted** and retain the returned GitHub URL.
+9. Sign out of `gh` or temporarily make it unavailable, press **Detect**, and verify **local only** mode while Changes/Monaco/local drafts remain usable.
+
+The GitHub adapter exposes no merge, reset, clean, force-push or release command in V0.3.

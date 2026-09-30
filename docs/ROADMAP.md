@@ -36,27 +36,27 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.3 — Review and GitHub
 
-**Status: READY / IN PROGRESS** — V0.1/V0.2 closeout is complete on `main`; implementation is tracked by issue #4 on branch `feat/v0.3-git-diff-foundation`.
+**Status: IN PROGRESS** — local diff/Monaco review is merged on `main`; A/B completion is developed on `feat/v0.3-review-drafts-github` and tracked by issue #4.
 
 Goal: make the workspace a complete local review lane before introducing agent harnesses.
 
 ### A. Local diff/review foundation
 
 - [x] typed read-only Git diff command (worktree/index/base-ref modes)
-- [x] changed-file selection → bounded plain-text diff surface (Monaco next)
+- [x] changed-file selection → bounded diff surface
 - [x] Monaco read-only diff viewer with unified/side-by-side modes
 - [x] large/binary diff fallback and size limits
-- [ ] local inline review draft model
-- [ ] review draft persistence per workspace
+- [x] local inline review draft model
+- [x] review draft persistence per workspace
 
 ### B. GitHub integration
 
-- [ ] GitHub adapter boundary with capability detection
-- [ ] `gh` CLI adapter baseline using existing local authentication
-- [ ] PR metadata, changed files and check/status summary
-- [ ] issue/PR URL → repository/workspace context
-- [ ] explicit user action for posting review comments
-- [ ] graceful local-only mode when GitHub/`gh` is unavailable
+- [x] GitHub adapter boundary with capability detection
+- [x] `gh` CLI adapter baseline using existing local authentication
+- [x] PR metadata, changed files and check/status summary
+- [x] issue/PR URL → repository/workspace context
+- [x] explicit user action for posting review comments
+- [x] graceful local-only mode when GitHub/`gh` is unavailable
 
 ### C. Review loop
 
@@ -70,10 +70,10 @@ Goal: make the workspace a complete local review lane before introducing agent h
 
 - [x] Git diff parser/adapter tests including rename/binary/large-file cases
 - [x] Monaco/review UI control tests
-- [ ] GitHub adapter fixtures + offline/error cases
+- [x] GitHub adapter fixtures + offline/error cases
 - [ ] Windows/macOS/Linux acceptance remains green
-- [ ] all network mutations require an explicit user gesture
-- [ ] architecture and control-acceptance docs updated
+- [x] all network mutations require an explicit user gesture
+- [x] architecture and control-acceptance docs updated
 
 See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 
