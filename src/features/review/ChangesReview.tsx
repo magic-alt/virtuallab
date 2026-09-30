@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { LoaderCircle, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -11,6 +11,14 @@ import type {
   DiffResponse,
   RepositorySnapshot,
 } from "@/types/workbench";
+
+const MonacoReviewSurface = lazy(() =>
+  import("./MonacoReviewSurface").then((module) => ({
+    default: module.MonacoReviewSurface,
+  })),
+);
+
+type ReviewLayout = "unified" | "side-by-side";
 
 interface ReviewFile {
   path: string;
@@ -31,6 +39,7 @@ export function ChangesReview({
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [mode, setMode] = useState<DiffMode>("worktree");
+  const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
   const [baseRef, setBaseRef] = useState("main");
   const [baseFiles, setBaseFiles] = useState<DiffFileSummary[]>([]);
   const [result, setResult] = useState<DiffResponse | null>(null);
@@ -52,19 +61,20 @@ export function ChangesReview({
           ? change.indexStatus !== " " && change.indexStatus !== "?"
           : change.worktreeStatus !== " " && change.kind !== "untracked",
       )
-      .map(localReviewFile);
+      .map((change) => localReviewFile(change, mode));
   }, [baseFiles, mode, snapshot.changes]);
 
-  const loadFile = async (path: string) => {
+  const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
-    setSelectedPath(path);
+    setSelectedPath(file.path);
     setLoading(true);
     setError(null);
     try {
       const next = await gitDiff({
         repositoryRoot,
         workspaceRoot,
-        path,
+        path: file.path,
+        oldPath: file.oldPath ?? null,
         mode,
         baseRef: mode === "base" ? baseRef.trim() || null : null,
       });
@@ -88,6 +98,7 @@ export function ChangesReview({
         repositoryRoot,
         workspaceRoot,
         path: null,
+        oldPath: null,
         mode: "base",
         baseRef: baseRef.trim(),
       });
@@ -107,19 +118,28 @@ export function ChangesReview({
     setError(null);
   };
 
+  const textualResult =
+    result &&
+    !result.binary &&
+    result.originalText != null &&
+    result.modifiedText != null;
+
   return (
-    <div className="mx-auto max-w-[1320px] space-y-3">
+    <div className="mx-auto max-w-[1480px] space-y-3">
       <div className="flex flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2.5">
-        {(["worktree", "index", "base"] as DiffMode[]).map((item) => (
-          <Button
-            key={item}
-            size="sm"
-            variant={mode === item ? "primary" : "ghost"}
-            onClick={() => changeMode(item)}
-          >
-            {item === "index" ? "Staged" : item === "base" ? "Base" : "Worktree"}
-          </Button>
-        ))}
+        <div className="flex items-center gap-1">
+          {(["worktree", "index", "base"] as DiffMode[]).map((item) => (
+            <Button
+              key={item}
+              size="sm"
+              variant={mode === item ? "primary" : "ghost"}
+              onClick={() => changeMode(item)}
+            >
+              {item === "index" ? "Staged" : item === "base" ? "Base" : "Worktree"}
+            </Button>
+          ))}
+        </div>
+
         {mode === "base" && (
           <>
             <input
@@ -139,26 +159,44 @@ export function ChangesReview({
             </Button>
           </>
         )}
-        <div className="ml-auto flex items-center gap-2">
-          {result?.binary && <Badge tone="orange">binary</Badge>}
-          {result?.truncated && <Badge tone="orange">truncated</Badge>}
-          {result && <Badge tone="neutral">{result.returnedBytes} B</Badge>}
+
+        <div className="ml-auto flex items-center gap-1 border-l border-white/[0.08] pl-2">
+          <Button
+            aria-pressed={layout === "unified"}
+            size="sm"
+            variant={layout === "unified" ? "primary" : "ghost"}
+            onClick={() => setLayout("unified")}
+          >
+            Unified
+          </Button>
+          <Button
+            aria-pressed={layout === "side-by-side"}
+            size="sm"
+            variant={layout === "side-by-side" ? "primary" : "ghost"}
+            onClick={() => setLayout("side-by-side")}
+          >
+            Side by side
+          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-[320px_1fr] gap-4">
+      <div className="grid min-h-0 grid-cols-[minmax(250px,320px)_minmax(0,1fr)] gap-4">
         <section className="overflow-hidden border border-white/[0.07] bg-[#15100c]/92">
           <div className="border-b border-white/[0.06] px-4 py-3">
             <div className="text-sm font-medium text-slate-200">
-              {mode === "base" ? "Base changed files" : mode === "index" ? "Staged files" : "Worktree files"}
+              {mode === "base"
+                ? "Base changed files"
+                : mode === "index"
+                  ? "Staged files"
+                  : "Worktree files"}
             </div>
             <div className="mt-1 text-[11px] text-slate-600">
               {mode === "base"
                 ? "Load a base ref, then select a committed change."
-                : "Select a tracked file to load a bounded read-only Git diff."}
+                : "Select a tracked file for read-only Monaco review."}
             </div>
           </div>
-          <div className="scrollbar-thin max-h-[620px] overflow-y-auto">
+          <div className="scrollbar-thin max-h-[680px] overflow-y-auto">
             {files.length === 0 ? (
               <div className="p-5 text-xs leading-5 text-slate-600">
                 {mode === "base"
@@ -174,52 +212,62 @@ export function ChangesReview({
                   file={file}
                   active={file.path === selectedPath}
                   disabled={!enabled}
-                  onSelect={() => void loadFile(file.path)}
+                  onSelect={() => void loadFile(file)}
                 />
               ))
             )}
           </div>
         </section>
 
-        <section className="vl-editor-surface flex min-h-[560px] min-w-0 flex-col overflow-hidden border border-white/[0.07]">
+        <section className="vl-editor-surface flex min-h-[620px] min-w-0 flex-col overflow-hidden border border-white/[0.07]">
+          <div className="flex min-h-10 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
+            <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
+              {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? "No file selected"}
+            </div>
+            {result?.binary && <Badge tone="orange">binary</Badge>}
+            {(result?.truncated || result?.contentTruncated) && (
+              <Badge tone="orange">truncated</Badge>
+            )}
+            {result && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
+          </div>
+
           <div className="min-h-0 flex-1">
             {loading ? (
-              <div className="flex h-full min-h-72 items-center justify-center gap-2 text-xs text-slate-500">
-                <LoaderCircle className="animate-spin" size={15} />
-                Loading Git diff…
-              </div>
+              <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
-              <div className="m-4 flex gap-2 border border-rose-400/20 bg-rose-400/[0.06] p-3 text-xs text-rose-200">
-                <TriangleAlert size={14} />
-                {error}
-              </div>
+              <ReviewMessage icon="error" title="Diff load failed" detail={error} />
             ) : result?.binary ? (
-              <div className="flex h-full min-h-72 items-center justify-center text-center">
-                <div>
-                  <div className="text-sm text-slate-200">Binary diff</div>
-                  <div className="mt-1 text-xs text-slate-600">
-                    Text rendering is intentionally disabled for binary content.
-                  </div>
-                </div>
-              </div>
+              <ReviewMessage
+                title="Binary diff"
+                detail="Text rendering is intentionally disabled for binary content."
+              />
+            ) : textualResult ? (
+              <Suspense fallback={<ReviewMessage icon="spinner" title="Loading Monaco…" />}>
+                <MonacoReviewSurface
+                  original={result.originalText ?? ""}
+                  modified={result.modifiedText ?? ""}
+                  path={result.path ?? selectedPath ?? "diff.txt"}
+                  layout={layout}
+                />
+              </Suspense>
             ) : result ? (
-              <pre className="mono scrollbar-thin h-full max-h-[620px] overflow-auto whitespace-pre p-4 text-[11px] leading-5 text-slate-300">
-                {result.patch || "No textual diff for this file in the selected mode."}
-              </pre>
+              <ReviewMessage
+                title="No textual diff"
+                detail="The selected file has no textual change in this diff mode."
+              />
             ) : (
-              <div className="flex h-full min-h-72 items-center justify-center text-center">
-                <div>
-                  <div className="text-sm text-slate-300">
-                    {mode === "base" && files.length === 0 ? "Load base files" : "Select a changed file"}
-                  </div>
-                  <div className="mt-1 text-xs text-slate-600">
-                    V0.3 Phase A uses the typed native Git diff adapter; Monaco replaces this renderer next.
-                  </div>
-                </div>
-              </div>
+              <ReviewMessage
+                title={mode === "base" && files.length === 0 ? "Load base files" : "Select a changed file"}
+                detail="Monaco review is read-only. Choose unified or side-by-side layout above."
+              />
             )}
           </div>
 
+          {(result?.truncated || result?.contentTruncated) && (
+            <div className="border-t border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[11px] text-amber-200">
+              Large diff content was bounded before rendering. Review the complete file in an external editor if needed.
+            </div>
+          )}
           <div className="mono border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600">
             {selectedPath ?? workspaceRoot}
           </div>
@@ -229,14 +277,12 @@ export function ChangesReview({
   );
 }
 
-function localReviewFile(change: ChangeEntry): ReviewFile {
+function localReviewFile(change: ChangeEntry, mode: DiffMode): ReviewFile {
+  const status = mode === "index" ? change.indexStatus.trim() : change.worktreeStatus.trim();
   return {
     path: change.path,
     oldPath: change.oldPath,
-    status:
-      change.indexStatus.trim() ||
-      change.worktreeStatus.trim() ||
-      (change.kind === "untracked" ? "?" : "·"),
+    status: status || (change.kind === "untracked" ? "?" : "·"),
   };
 }
 
@@ -252,7 +298,6 @@ function FileRow({
   onSelect: () => void;
 }) {
   const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
-
   return (
     <button
       aria-label={label}
@@ -271,5 +316,30 @@ function FileRow({
         {label}
       </span>
     </button>
+  );
+}
+
+function ReviewMessage({
+  icon,
+  title,
+  detail,
+}: {
+  icon?: "spinner" | "error";
+  title: string;
+  detail?: string;
+}) {
+  return (
+    <div className="flex h-full min-h-[560px] items-center justify-center p-6 text-center">
+      <div className="max-w-lg">
+        {icon === "spinner" && (
+          <LoaderCircle className="mx-auto mb-3 animate-spin text-orange-300" size={18} />
+        )}
+        {icon === "error" && (
+          <TriangleAlert className="mx-auto mb-3 text-rose-300" size={18} />
+        )}
+        <div className="text-sm text-slate-200">{title}</div>
+        {detail && <div className="mt-2 text-xs leading-5 text-slate-600">{detail}</div>}
+      </div>
+    </div>
   );
 }

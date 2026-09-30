@@ -109,3 +109,14 @@ The repository is disposable. Remove it after acceptance with:
 ```powershell
 Remove-Item -Recurse -Force "D:\Temp\virtuallab-v03-acceptance"
 ```
+
+
+## V0.3 Phase B — Monaco review
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| Changes | local bundled Monaco | production build + `ChangesReview.test.tsx` | disconnect network and confirm selected text diff still opens |
+| Changes | side-by-side / unified toggle | `ChangesReview.test.tsx` | switch layouts without another Git request |
+| Changes | language detection | `reviewLanguage.test.ts` | TS/Rust/JSON/Markdown files use matching syntax mode |
+| Changes | read-only editor | Monaco options | typing must not modify original or modified panes |
+| Changes | loading/error/empty/binary/truncated states | `ChangesReview.test.tsx` | exercise representative states and keep UI responsive |

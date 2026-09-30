@@ -44,7 +44,7 @@ Goal: make the workspace a complete local review lane before introducing agent h
 
 - [x] typed read-only Git diff command (worktree/index/base-ref modes)
 - [x] changed-file selection → bounded plain-text diff surface (Monaco next)
-- [ ] Monaco diff viewer with unified/side-by-side modes
+- [x] Monaco read-only diff viewer with unified/side-by-side modes
 - [x] large/binary diff fallback and size limits
 - [ ] local inline review draft model
 - [ ] review draft persistence per workspace
@@ -69,7 +69,7 @@ Goal: make the workspace a complete local review lane before introducing agent h
 ### V0.3 quality gate
 
 - [x] Git diff parser/adapter tests including rename/binary/large-file cases
-- [ ] Monaco/review UI control tests
+- [x] Monaco/review UI control tests
 - [ ] GitHub adapter fixtures + offline/error cases
 - [ ] Windows/macOS/Linux acceptance remains green
 - [ ] all network mutations require an explicit user gesture
