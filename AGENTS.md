@@ -21,7 +21,8 @@ At minimum:
 
 - frontend typecheck
 - frontend production build
-- Rust `cargo check` on Linux
-- Windows desktop smoke (`npm run doctor` + Rust `cargo check`)
+- locked dependency installation
+- Rust `cargo check --locked` on Linux
+- Windows/macOS/Linux local acceptance runner
 - no new arbitrary-shell execution path
 - docs updated for architectural changes

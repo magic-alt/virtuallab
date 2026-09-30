@@ -82,10 +82,10 @@ Prerequisites:
   - macOS: Xcode Command Line Tools
   - Linux: WebKitGTK development packages
 
-Install dependencies:
+Install locked dependencies:
 
 ```bash
-npm install
+npm ci
 ```
 
 Run the desktop workbench:
@@ -106,8 +106,9 @@ The web preview shows representative data; native repository picking and Git ins
 
 ```bash
 npm run typecheck
+npm run test:controls
 npm run build
-cargo check --manifest-path src-tauri/Cargo.toml
+cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
 
 ## Product direction
@@ -145,9 +146,9 @@ If Rust is not installed, install rustup first (for example `winget install Rust
 Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. The acceptance runner is Node-based and works on Windows, macOS and Linux. Run:
 
  ```bash
-npm install
+npm ci
 npm run test:controls
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 npm run acceptance:local
 ```
 
@@ -159,7 +160,7 @@ The control-to-test mapping is documented in [docs/CONTROL_ACCEPTANCE.md](docs/C
 Frontend-only preview:
 
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
@@ -230,3 +231,8 @@ For the normal standalone release build use:
 ```powershell
 npm run tauri:build
 ```
+
+
+## V0.3 preparation
+
+V0.1/V0.2 closeout locks Node/Rust dependencies, restores repository/worktree/tab context, normalizes check results and runs the shared acceptance gate on Windows, macOS and Linux. The next implementation contract is [V0.3 Review and GitHub](docs/V0.3_REVIEW_GITHUB.md).

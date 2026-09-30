@@ -26,7 +26,7 @@ Rust native core
   ├─ workspace service
   ├─ PTY/process supervisor
   ├─ filesystem watcher
-  └─ persistence              (next)
+  └─ persisted workspace context
           │
           ├─ git
           ├─ PowerShell/bash
@@ -115,3 +115,16 @@ Interactive terminals and build/test processes are separate execution paths:
 - **Filesystem watcher:** emits debounced UI refresh signals while ignoring generated-heavy directories such as `.git`, `node_modules`, `target` and `dist`.
 
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
+
+
+## V0.2 persisted workspace context
+
+The local Zustand store persists one workspace context per repository: active worktree path, active tab and update timestamp. Repository switching restores that context. If a remembered worktree no longer exists, VirtualLab falls back to the primary repository and Overview. Runtime PTY/process objects are deliberately not persisted.
+
+## V0.2 normalized checks
+
+Repository readiness and process outcomes share a typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. V0.2 uses this for local readiness semantics; V0.4 will add durable evidence, history and release-gate policy.
+
+## V0.3 review boundary
+
+V0.3 starts read-oriented: Git diff retrieval and GitHub PR/check metadata are read-only adapters. Inline review drafts may be edited locally before network mutation. Posting comments, changing PR state and merge/release remain explicit user actions.

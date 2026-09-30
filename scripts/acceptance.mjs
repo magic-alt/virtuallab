@@ -5,25 +5,23 @@ const args = new Set(process.argv.slice(2));
 const launch = args.has("--launch");
 const isWindows = process.platform === "win32";
 
-function commandName(name) {
-  if (!isWindows) return name;
-  if (name === "npm") return "npm.cmd";
-  return name;
+function runCommand(command, commandArgs, env) {
+  return spawnSync(command, commandArgs, {
+    stdio: "inherit",
+    env,
+    shell: isWindows && command === "npm",
+  });
 }
 
 function runStep(name, command, commandArgs, env) {
-  console.log(`\n== ${name} ==`);
-  const result = spawnSync(commandName(command), commandArgs, {
-    stdio: "inherit",
-    env,
-    shell: false,
-  });
+  console.log("\n== " + name + " ==");
+  const result = runCommand(command, commandArgs, env);
 
   if (result.error) {
-    throw new Error(`${name} failed to start: ${result.error.message}`);
+    throw new Error(name + " failed to start: " + result.error.message);
   }
   if (result.status !== 0) {
-    throw new Error(`${name} failed with exit code ${result.status}`);
+    throw new Error(name + " failed with exit code " + String(result.status));
   }
 }
 
@@ -39,11 +37,11 @@ try {
   runStep(
     "Rust native tests",
     "cargo",
-    ["test", "--manifest-path", "src-tauri/Cargo.toml"],
+    ["test", "--locked", "--manifest-path", "src-tauri/Cargo.toml"],
     doctor.env,
   );
 } catch (error) {
-  console.error(`\n${error instanceof Error ? error.message : String(error)}`);
+  console.error("\n" + (error instanceof Error ? error.message : String(error)));
   process.exit(1);
 }
 
@@ -58,17 +56,13 @@ console.log("[ ] Terminal: Start/New tab, tab switch, typing, Ctrl+C, resize and
 console.log("[ ] Run: repository-scoped Build/Test profile Run streams output; Stop terminates; add/remove profile works.");
 console.log("[ ] Changes/Checks/History/Overview tabs render and switch correctly.");
 console.log("[ ] Filesystem edits update repository status without manual refresh.");
-console.log("\nRecord failures with command/output and workspace path before merging PR #2.");
+console.log("\nRecord failures with command/output and workspace path before merging the closeout PR.");
 
 if (launch) {
   console.log("\nLaunching Tauri dev runtime...");
-  const result = spawnSync(commandName("npm"), ["run", "tauri:dev"], {
-    stdio: "inherit",
-    env: doctor.env,
-    shell: false,
-  });
+  const result = runCommand("npm", ["run", "tauri:dev"], doctor.env);
   if (result.error) {
-    console.error(`Failed to launch Tauri: ${result.error.message}`);
+    console.error("Failed to launch Tauri: " + result.error.message);
     process.exit(1);
   }
   process.exit(result.status ?? 1);

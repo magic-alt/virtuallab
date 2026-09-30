@@ -12,8 +12,10 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { processSpawn, processStop } from "@/lib/backend";
+import { processCheckResult } from "@/lib/checks";
 import { useWorkbenchStore } from "@/stores/workbench";
 import type {
+  CheckResult,
   ProcessProfile,
   ProcessProfileKind,
   WorkbenchEvent,
@@ -22,9 +24,12 @@ import type {
 interface RunRecord {
   id: string;
   profileId: string;
+  profileName: string;
+  profileKind: ProcessProfileKind;
   status: "running" | "passed" | "failed" | "stopped";
   output: string;
   exitCode?: number | null;
+  checkResult: CheckResult;
 }
 
 export function ProcessRunner({
@@ -68,15 +73,34 @@ export function ProcessRunner({
           }
 
           if (payload.eventType === "process.exited") {
+            const checkResult = processCheckResult({
+              id: run.id,
+              label: run.profileName,
+              kind: run.profileKind,
+              exitCode: payload.exitCode,
+              observedAtMs: payload.timestampMs,
+            });
             return {
               ...run,
-              status: payload.exitCode === 0 ? "passed" : "failed",
+              status: checkResult.status === "pass" ? "passed" : "failed",
               exitCode: payload.exitCode,
+              checkResult,
             };
           }
 
           if (payload.eventType === "process.stop_requested") {
-            return { ...run, status: "stopped" };
+            return {
+              ...run,
+              status: "stopped",
+              checkResult: processCheckResult({
+                id: run.id,
+                label: run.profileName,
+                kind: run.profileKind,
+                exitCode: run.exitCode,
+                stopped: true,
+                observedAtMs: payload.timestampMs,
+              }),
+            };
           }
 
           return run;
@@ -116,8 +140,16 @@ export function ProcessRunner({
       {
         id,
         profileId: profile.id,
+        profileName: profile.name,
+        profileKind: profile.kind,
         status: "running",
         output: `$ ${profile.program} ${profile.args.join(" ")}\n\n`,
+        checkResult: processCheckResult({
+          id,
+          label: profile.name,
+          kind: profile.kind,
+          exitCode: null,
+        }),
       },
     ]);
     setActiveRunId(id);
@@ -136,6 +168,12 @@ export function ProcessRunner({
             ? {
                 ...run,
                 status: "failed",
+                checkResult: processCheckResult({
+                  id: run.id,
+                  label: run.profileName,
+                  kind: run.profileKind,
+                  exitCode: -1,
+                }),
                 output:
                   run.output +
                   `\n[VirtualLab] ${err instanceof Error ? err.message : String(err)}\n`,

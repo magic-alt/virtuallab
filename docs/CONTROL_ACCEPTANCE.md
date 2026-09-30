@@ -30,7 +30,7 @@ Every visible interactive control must be backed by an automated test or an expl
 From Windows PowerShell, macOS Terminal, or Linux shell:
 
 ```bash
-npm install
+npm ci
 npm run acceptance:local
 npm run acceptance:local -- --launch
 ```
@@ -38,3 +38,6 @@ npm run acceptance:local -- --launch
 `acceptance:local` is implemented in Node and is cross-platform. The first command runs automated checks and prints the desktop checklist. The second also launches the Tauri desktop runtime for the native-control portion.
 
 A PR should not claim a native control is fully accepted until the corresponding desktop checklist item has been exercised on at least one supported OS.
+
+
+CI repeats the automated gate on Windows, macOS and Linux. Node and Rust dependency graphs are locked by `package-lock.json` and `src-tauri/Cargo.lock`; CI uses `npm ci` and Cargo `--locked`.
