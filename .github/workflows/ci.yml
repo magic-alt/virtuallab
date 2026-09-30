@@ -61,6 +61,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run acceptance:local
+      - name: Build standalone Windows release host
+        run: npm run tauri:build -- --no-bundle
 
   macos-native:
     name: macOS desktop acceptance (Node 26)
