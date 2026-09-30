@@ -94,3 +94,23 @@ export type WorkspaceTab =
   | "run"
   | "checks"
   | "history";
+
+export interface WorkspacePersistedState {
+  repositoryId: string;
+  activeWorktreePath: string;
+  activeTab: WorkspaceTab;
+  updatedAt: number;
+}
+
+export type CheckStatus = "pass" | "warn" | "fail" | "running" | "not_run";
+export type CheckSource = "repository" | "process";
+
+export interface CheckResult {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+  source: CheckSource;
+  observedAtMs: number;
+  exitCode?: number | null;
+}

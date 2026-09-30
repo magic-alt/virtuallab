@@ -1,0 +1,33 @@
+name: Dependency lock capture
+
+on:
+  push:
+    branches: ["feat/v0.2-closeout-v0.3-prep"]
+
+permissions:
+  contents: read
+
+jobs:
+  locks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate lockfiles
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+      - name: Print lockfiles for closeout
+        shell: bash
+        run: |
+          echo "PACKAGE_LOCK_BEGIN"
+          base64 -w 0 package-lock.json
+          echo
+          echo "PACKAGE_LOCK_END"
+          echo "CARGO_LOCK_BEGIN"
+          base64 -w 0 src-tauri/Cargo.lock
+          echo
+          echo "CARGO_LOCK_END"
