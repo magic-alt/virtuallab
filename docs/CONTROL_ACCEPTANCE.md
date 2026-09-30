@@ -142,3 +142,15 @@ Long source/document lines must adapt to the available Monaco pane width without
 - resizing wider again must reflow the visual wrapping automatically
 - wrapping is presentation-only: line numbers/diff identity remain tied to the original logical lines and no working-tree/index content changes are allowed
 - after interacting with wrapped text, `git diff` must be identical to the pre-review state
+
+
+### Phase B side-by-side original-pane wrapping regression
+
+Monaco diff wrapping must be symmetric in side-by-side mode.
+
+- select a file with long logical lines and switch to **Side by side**
+- narrow the workbench until wrapping is required
+- confirm the **left/original** pane wraps to its own visible width, matching the already-wrapped right/modified pane
+- switch **Side by side → Unified → Side by side** and confirm left-pane wrapping remains active after the layout round trip
+- resize the desktop window narrower/wider and confirm both panes reflow without horizontal content loss
+- this is visual-only; verify repository/index content and `git diff` remain unchanged
