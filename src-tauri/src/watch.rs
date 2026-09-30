@@ -14,9 +14,21 @@ pub struct WatchManager {
 }
 
 #[tauri::command]
-pub fn watch_start(
+pub async fn watch_start(
     app: AppHandle,
     state: State<'_, WatchManager>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || watch_start_blocking(app, manager, id, path))
+        .await
+        .map_err(|error| format!("Filesystem watcher startup task failed: {error}"))?
+}
+
+fn watch_start_blocking(
+    app: AppHandle,
+    state: WatchManager,
     id: String,
     path: String,
 ) -> Result<(), String> {
@@ -24,13 +36,16 @@ pub fn watch_start(
         return Err(format!("Watch path does not exist: {path}"));
     }
 
-    {
+    // Recursive watcher teardown may block on the OS. Never drop a watcher while
+    // holding the shared manager mutex.
+    let previous = {
         let mut watchers = state
             .watchers
             .lock()
             .map_err(|_| "Watch manager lock poisoned".to_string())?;
-        watchers.remove(&id);
-    }
+        watchers.remove(&id)
+    };
+    drop(previous);
 
     let app_for_events = app.clone();
     let id_for_events = id.clone();
@@ -88,12 +103,20 @@ pub fn watch_start(
 }
 
 #[tauri::command]
-pub fn watch_stop(state: State<'_, WatchManager>, id: String) -> Result<(), String> {
-    state
+pub async fn watch_stop(state: State<'_, WatchManager>, id: String) -> Result<(), String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || watch_stop_blocking(manager, id))
+        .await
+        .map_err(|error| format!("Filesystem watcher stop task failed: {error}"))?
+}
+
+fn watch_stop_blocking(state: WatchManager, id: String) -> Result<(), String> {
+    let watcher = state
         .watchers
         .lock()
         .map_err(|_| "Watch manager lock poisoned".to_string())?
         .remove(&id);
+    drop(watcher);
     Ok(())
 }
 
