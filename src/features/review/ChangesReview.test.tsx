@@ -4,12 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChangesReview } from "./ChangesReview";
 import type { RepositorySnapshot } from "@/types/workbench";
 
-const backend = vi.hoisted(() => ({
-  gitDiff: vi.fn(),
-}));
+const backend = vi.hoisted(() => ({ gitDiff: vi.fn() }));
 
-vi.mock("@/lib/backend", () => ({
-  gitDiff: backend.gitDiff,
+vi.mock("@/lib/backend", () => ({ gitDiff: backend.gitDiff }));
+vi.mock("./MonacoReviewSurface", () => ({
+  MonacoReviewSurface: ({ path, layout }: { path: string; layout: string }) => (
+    <div data-testid="monaco-review">{path}:{layout}</div>
+  ),
 }));
 
 const snapshot: RepositorySnapshot = {
@@ -35,11 +36,15 @@ function response(overrides = {}) {
     mode: "worktree",
     baseRef: null,
     path: "src/a.ts",
+    oldPath: null,
     files: [{ path: "src/a.ts", oldPath: null, status: "M" }],
     patch: "@@ -1 +1 @@\n-old\n+new",
     binary: false,
     truncated: false,
     returnedBytes: 24,
+    originalText: "old\n",
+    modifiedText: "new\n",
+    contentTruncated: false,
     ...overrides,
   };
 }
@@ -50,115 +55,91 @@ describe("ChangesReview", () => {
     backend.gitDiff.mockResolvedValue(response());
   });
 
-  it("loads a typed worktree diff for the selected file", async () => {
+  it("loads a typed worktree diff and renders Monaco", async () => {
     const user = userEvent.setup();
-    render(
-      <ChangesReview
-        snapshot={snapshot}
-        repositoryRoot="D:/repo"
-        workspaceRoot="D:/repo"
-        enabled
-      />,
-    );
-
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "src/a.ts" }));
-
     expect(backend.gitDiff).toHaveBeenCalledWith({
       repositoryRoot: "D:/repo",
       workspaceRoot: "D:/repo",
       path: "src/a.ts",
+      oldPath: null,
       mode: "worktree",
       baseRef: null,
     });
-    expect(await screen.findByText("+new", { exact: false })).toBeInTheDocument();
+    expect(await screen.findByTestId("monaco-review")).toHaveTextContent("src/a.ts:side-by-side");
   });
 
-  it("filters and loads the staged file list in index mode", async () => {
+  it("keeps the Monaco review area flex-sized instead of fixed-height", async () => {
     const user = userEvent.setup();
-    render(
-      <ChangesReview
-        snapshot={snapshot}
-        repositoryRoot="D:/repo"
-        workspaceRoot="D:/repo"
-        enabled
-      />,
-    );
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await screen.findByTestId("monaco-review");
 
+    expect(screen.getByTestId("changes-review-root")).toHaveClass("h-full", "w-full", "flex");
+    expect(screen.getByTestId("changes-review-grid")).toHaveClass("min-h-0", "flex-1");
+    expect(screen.getByTestId("changes-file-list")).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(screen.getByTestId("changes-review-editor")).toHaveClass("min-h-0", "overflow-hidden");
+    expect(screen.getByTestId("changes-review-editor-body")).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+  });
+
+  it("switches Monaco layout without reloading Git", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    expect(await screen.findByTestId("monaco-review")).toHaveTextContent("side-by-side");
+    const calls = backend.gitDiff.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Unified" }));
+    expect(screen.getByTestId("monaco-review")).toHaveTextContent("unified");
+    expect(backend.gitDiff).toHaveBeenCalledTimes(calls);
+  });
+
+  it("filters staged files", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "Staged" }));
     expect(screen.queryByRole("button", { name: "src/a.ts" })).not.toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "src/b.ts" }));
-    expect(backend.gitDiff).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        path: "src/b.ts",
-        mode: "index",
-      }),
-    );
+    expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({ path: "src/b.ts", mode: "index" }));
   });
 
-  it("discovers base-ref files before loading a selected committed diff", async () => {
+  it("discovers base files and sends rename identity", async () => {
     backend.gitDiff
-      .mockResolvedValueOnce(
-        response({
-          mode: "base",
-          baseRef: "main",
-          path: null,
-          files: [{ path: "src/committed.ts", oldPath: null, status: "M" }],
-          patch: "combined",
-        }),
-      )
-      .mockResolvedValueOnce(
-        response({
-          mode: "base",
-          baseRef: "main",
-          path: "src/committed.ts",
-          files: [{ path: "src/committed.ts", oldPath: null, status: "M" }],
-          patch: "+committed",
-        }),
-      );
-
+      .mockResolvedValueOnce(response({
+        mode: "base", baseRef: "main", path: null,
+        files: [{ path: "src/new.ts", oldPath: "src/old.ts", status: "R100" }],
+        patch: "", originalText: null, modifiedText: null,
+      }))
+      .mockResolvedValueOnce(response({
+        mode: "base", baseRef: "main", path: "src/new.ts", oldPath: "src/old.ts",
+        files: [{ path: "src/new.ts", oldPath: "src/old.ts", status: "R100" }],
+      }));
     const user = userEvent.setup();
-    render(
-      <ChangesReview
-        snapshot={{ ...snapshot, dirtyCount: 0, changes: [] }}
-        repositoryRoot="D:/repo"
-        workspaceRoot="D:/repo"
-        enabled
-      />,
-    );
-
+    render(<ChangesReview snapshot={{...snapshot, changes: [], dirtyCount: 0}} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "Base" }));
     await user.click(screen.getByRole("button", { name: "Load base files" }));
-
-    expect(backend.gitDiff).toHaveBeenNthCalledWith(1, {
-      repositoryRoot: "D:/repo",
-      workspaceRoot: "D:/repo",
-      path: null,
-      mode: "base",
-      baseRef: "main",
+    await user.click(screen.getByRole("button", { name: "src/old.ts → src/new.ts" }));
+    expect(backend.gitDiff).toHaveBeenLastCalledWith({
+      repositoryRoot:"D:/repo", workspaceRoot:"D:/repo", path:"src/new.ts", oldPath:"src/old.ts", mode:"base", baseRef:"main"
     });
+  });
 
-    await user.click(screen.getByRole("button", { name: "src/committed.ts" }));
-    expect(backend.gitDiff).toHaveBeenNthCalledWith(2, {
-      repositoryRoot: "D:/repo",
-      workspaceRoot: "D:/repo",
-      path: "src/committed.ts",
-      mode: "base",
-      baseRef: "main",
-    });
+  it("shows explicit binary and truncated states", async () => {
+    backend.gitDiff.mockResolvedValueOnce(response({binary:true, originalText:null, modifiedText:null}));
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    expect(await screen.findByText("Binary diff")).toBeInTheDocument();
+
+    backend.gitDiff.mockResolvedValueOnce(response({truncated:true, contentTruncated:true}));
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    expect(await screen.findByText("truncated")).toBeInTheDocument();
+    expect(screen.getByText(/Large diff content was bounded/)).toBeInTheDocument();
   });
 
   it("does not invoke native diff in preview mode", async () => {
     const user = userEvent.setup();
-    render(
-      <ChangesReview
-        snapshot={snapshot}
-        repositoryRoot="preview"
-        workspaceRoot="preview"
-        enabled={false}
-      />,
-    );
-
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="preview" workspaceRoot="preview" enabled={false} />);
     await user.click(screen.getByRole("button", { name: "src/a.ts" }));
     expect(backend.gitDiff).not.toHaveBeenCalled();
   });

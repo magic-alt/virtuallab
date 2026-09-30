@@ -75,4 +75,10 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - run: npm run acceptance:local
+      - name: Run desktop acceptance
+        run: npm run acceptance:local
+        env:
+          # Monaco's production bundle can exceed Node's ~2 GiB default heap
+          # on the arm64 macOS runner while Vite transforms worker/language
+          # modules. Keep this scoped to the build-bearing acceptance step.
+          NODE_OPTIONS: --max-old-space-size=4096

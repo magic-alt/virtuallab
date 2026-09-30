@@ -123,6 +123,7 @@ export interface DiffRequest {
   repositoryRoot: string;
   workspaceRoot: string;
   path?: string | null;
+  oldPath?: string | null;
   mode: DiffMode;
   baseRef?: string | null;
 }
@@ -137,9 +138,13 @@ export interface DiffResponse {
   mode: DiffMode;
   baseRef?: string | null;
   path?: string | null;
+  oldPath?: string | null;
   files: DiffFileSummary[];
   patch: string;
   binary: boolean;
   truncated: boolean;
   returnedBytes: number;
+  originalText?: string | null;
+  modifiedText?: string | null;
+  contentTruncated: boolean;
 }

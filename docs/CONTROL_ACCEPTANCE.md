@@ -109,3 +109,48 @@ The repository is disposable. Remove it after acceptance with:
 ```powershell
 Remove-Item -Recurse -Force "D:\Temp\virtuallab-v03-acceptance"
 ```
+
+
+## V0.3 Phase B — Monaco review
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| Changes | local bundled Monaco | production build + `ChangesReview.test.tsx` | disconnect network and confirm selected text diff still opens |
+| Changes | side-by-side / unified toggle | `ChangesReview.test.tsx` | switch layouts without another Git request |
+| Changes | language detection | `reviewLanguage.test.ts` | TS/Rust/JSON/Markdown files use matching syntax mode |
+| Changes | read-only editor | Monaco options | typing must not modify original or modified panes |
+| Changes | loading/error/empty/binary/truncated states | `ChangesReview.test.tsx` | exercise representative states and keep UI responsive |
+
+
+### Phase B responsive layout acceptance
+
+The Changes review surface must use the available workbench viewport rather than a fixed Monaco height.
+
+- maximize and restore the desktop window; the file list and Monaco diff should resize with the workbench
+- in both **Side by side** and **Unified**, the editor must remain fully visible between the file header and bottom path/status rows
+- scroll to the last changed line; bottom content must not be hidden behind the footer/path row
+- long files must scroll inside Monaco, while the outer Changes page should not create a competing editor-height scrollbar
+- the left changed-file list must scroll independently and remain aligned with the right review panel
+
+
+### Phase B visual line wrapping acceptance
+
+Long source/document lines must adapt to the available Monaco pane width without mutating repository content.
+
+- in **Side by side**, narrow the desktop window and confirm long lines wrap independently inside both panes instead of disappearing beyond the right edge
+- in **Unified**, narrow the desktop window and confirm long deleted/added lines wrap to the visible editor width
+- resizing wider again must reflow the visual wrapping automatically
+- wrapping is presentation-only: line numbers/diff identity remain tied to the original logical lines and no working-tree/index content changes are allowed
+- after interacting with wrapped text, `git diff` must be identical to the pre-review state
+
+
+### Phase B side-by-side original-pane wrapping regression
+
+Monaco diff wrapping must be symmetric in side-by-side mode.
+
+- select a file with long logical lines and switch to **Side by side**
+- narrow the workbench until wrapping is required
+- confirm the **left/original** pane wraps to its own visible width, matching the already-wrapped right/modified pane
+- switch **Side by side → Unified → Side by side** and confirm left-pane wrapping remains active after the layout round trip
+- resize the desktop window narrower/wider and confirm both panes reflow without horizontal content loss
+- this is visual-only; verify repository/index content and `git diff` remain unchanged
