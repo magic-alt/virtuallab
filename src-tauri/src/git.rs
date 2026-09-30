@@ -53,7 +53,7 @@ pub async fn inspect_repository(path: String) -> Result<RepositorySnapshot, Stri
 }
 
 fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, String> {
-    let root = git(&path, &["rev-parse", "--show-toplevel"])?;
+    let root = git_read(&path, &["rev-parse", "--show-toplevel"])?;
     let root = root.trim().to_string();
 
     if root.is_empty() {
@@ -263,9 +263,6 @@ fn git_read_optional(repo: &str, args: &[&str]) -> Option<String> {
     git_read(repo, args).ok()
 }
 
-fn git_optional(repo: &str, args: &[&str]) -> Option<String> {
-    git(repo, args).ok()
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
