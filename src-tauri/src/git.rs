@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path};
 use std::process::{Command, Stdio};
@@ -331,6 +332,7 @@ pub struct DiffRequest {
     repository_root: String,
     workspace_root: String,
     path: Option<String>,
+    old_path: Option<String>,
     mode: DiffMode,
     base_ref: Option<String>,
 }
@@ -349,11 +351,15 @@ pub struct DiffResponse {
     mode: DiffMode,
     base_ref: Option<String>,
     path: Option<String>,
+    old_path: Option<String>,
     files: Vec<DiffFileSummary>,
     patch: String,
     binary: bool,
     truncated: bool,
     returned_bytes: usize,
+    original_text: Option<String>,
+    modified_text: Option<String>,
+    content_truncated: bool,
 }
 
 #[tauri::command]
@@ -380,6 +386,13 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
         .filter(|value| !value.is_empty())
         .map(validate_relative_path)
         .transpose()?;
+    let old_path = request
+        .old_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(validate_relative_path)
+        .transpose()?;
 
     let base_ref = match request.mode {
         DiffMode::Base => {
@@ -401,7 +414,12 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
         _ => None,
     };
 
-    let args = diff_args(request.mode, base_ref.as_deref(), path.as_deref())?;
+    let args = diff_args(
+        request.mode,
+        base_ref.as_deref(),
+        path.as_deref(),
+        old_path.as_deref(),
+    )?;
 
     let mut metadata_args = args.clone();
     let metadata_index = 4;
@@ -437,15 +455,49 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
     }
     let returned_bytes = patch.len();
 
+    let selected_file = path.as_deref().and_then(|selected| {
+        files.iter().find(|file| {
+            file.path == selected || file.old_path.as_deref() == Some(selected)
+        })
+    });
+    let selected_old_path = old_path
+        .or_else(|| selected_file.and_then(|file| file.old_path.clone()));
+    let selected_status = selected_file
+        .map(|file| file.status.as_str())
+        .unwrap_or("");
+
+    let (original_text, modified_text, content_truncated) =
+        if let Some(selected_path) = path.as_deref() {
+            if binary {
+                (None, None, false)
+            } else {
+                let (original, modified, was_truncated) = read_review_sides(
+                    &workspace_root,
+                    request.mode,
+                    base_ref.as_deref(),
+                    selected_path,
+                    selected_old_path.as_deref(),
+                    selected_status,
+                )?;
+                (Some(original), Some(modified), was_truncated)
+            }
+        } else {
+            (None, None, false)
+        };
+
     Ok(DiffResponse {
         mode: request.mode,
         base_ref,
         path,
+        old_path: selected_old_path,
         files,
         patch,
         binary,
         truncated,
         returned_bytes,
+        original_text,
+        modified_text,
+        content_truncated,
     })
 }
 
@@ -453,6 +505,7 @@ fn diff_args(
     mode: DiffMode,
     base_ref: Option<&str>,
     path: Option<&str>,
+    old_path: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let mut args = vec![
         "diff".to_string(),
@@ -474,10 +527,140 @@ fn diff_args(
 
     if let Some(path) = path {
         args.push("--".to_string());
+        if let Some(old_path) = old_path.filter(|old_path| *old_path != path) {
+            args.push(old_path.to_string());
+        }
         args.push(path.to_string());
     }
 
     Ok(args)
+}
+
+
+fn read_review_sides(
+    workspace_root: &str,
+    mode: DiffMode,
+    base_ref: Option<&str>,
+    path: &str,
+    old_path: Option<&str>,
+    status: &str,
+) -> Result<(String, String, bool), String> {
+    let status_code = status.chars().next().unwrap_or('M');
+    let previous_path = old_path.unwrap_or(path);
+
+    let (original, original_truncated) = match mode {
+        DiffMode::Worktree => {
+            if status_code == 'A' {
+                (Vec::new(), false)
+            } else {
+                read_git_text_limited(workspace_root, &format!(":{previous_path}"), MAX_DIFF_BYTES)?
+            }
+        }
+        DiffMode::Index => {
+            if status_code == 'A' {
+                (Vec::new(), false)
+            } else {
+                read_git_text_limited(
+                    workspace_root,
+                    &format!("HEAD:{previous_path}"),
+                    MAX_DIFF_BYTES,
+                )?
+            }
+        }
+        DiffMode::Base => {
+            if status_code == 'A' {
+                (Vec::new(), false)
+            } else {
+                let base = base_ref.ok_or_else(|| "Base diff requires baseRef".to_string())?;
+                let merge_base = git_read(workspace_root, &["merge-base", base, "HEAD"])?
+                    .trim()
+                    .to_string();
+                read_git_text_limited(
+                    workspace_root,
+                    &format!("{merge_base}:{previous_path}"),
+                    MAX_DIFF_BYTES,
+                )?
+            }
+        }
+    };
+
+    let (modified, modified_truncated) = match mode {
+        DiffMode::Worktree => {
+            if status_code == 'D' {
+                (Vec::new(), false)
+            } else {
+                read_workspace_file_limited(workspace_root, path, MAX_DIFF_BYTES)?
+            }
+        }
+        DiffMode::Index => {
+            if status_code == 'D' {
+                (Vec::new(), false)
+            } else {
+                read_git_text_limited(workspace_root, &format!(":{path}"), MAX_DIFF_BYTES)?
+            }
+        }
+        DiffMode::Base => {
+            if status_code == 'D' {
+                (Vec::new(), false)
+            } else {
+                read_git_text_limited(
+                    workspace_root,
+                    &format!("HEAD:{path}"),
+                    MAX_DIFF_BYTES,
+                )?
+            }
+        }
+    };
+
+    Ok((
+        String::from_utf8_lossy(&original).to_string(),
+        String::from_utf8_lossy(&modified).to_string(),
+        original_truncated || modified_truncated,
+    ))
+}
+
+fn read_git_text_limited(repo: &str, spec: &str, limit: usize) -> Result<(Vec<u8>, bool), String> {
+    git_read_limited(
+        repo,
+        &[
+            "show",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--format=",
+            spec,
+        ],
+        limit,
+    )
+}
+
+fn read_workspace_file_limited(
+    workspace_root: &str,
+    relative_path: &str,
+    limit: usize,
+) -> Result<(Vec<u8>, bool), String> {
+    let root = std::fs::canonicalize(workspace_root)
+        .map_err(|error| format!("Failed to resolve workspace root: {error}"))?;
+    let candidate = root.join(relative_path);
+    let resolved = std::fs::canonicalize(&candidate)
+        .map_err(|error| format!("Failed to resolve workspace file {relative_path}: {error}"))?;
+
+    if !resolved.starts_with(&root) {
+        return Err("Diff file resolves outside the workspace".to_string());
+    }
+
+    let mut file = File::open(&resolved)
+        .map_err(|error| format!("Failed to open workspace file {relative_path}: {error}"))?;
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    file.by_ref()
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read workspace file {relative_path}: {error}"))?;
+
+    let truncated = bytes.len() > limit;
+    if truncated {
+        bytes.truncate(limit);
+    }
+    Ok((bytes, truncated))
 }
 
 fn validate_ref(value: &str) -> Result<(), String> {
@@ -923,6 +1106,7 @@ mod tests {
             repository_root: repo.to_string_lossy().to_string(),
             workspace_root: repo.to_string_lossy().to_string(),
             path: path.map(ToOwned::to_owned),
+            old_path: None,
             mode,
             base_ref: base_ref.map(ToOwned::to_owned),
         })
@@ -936,6 +1120,11 @@ mod tests {
         let worktree = diff_request(&repo, DiffMode::Worktree, Some("README.md"), None);
         assert!(worktree.patch.contains("+line two"));
         assert_eq!(worktree.files[0].status, "M");
+        assert_eq!(worktree.original_text.as_deref(), Some("line one\n"));
+        assert!(worktree
+            .modified_text
+            .as_deref()
+            .is_some_and(|text| text.contains("line two")));
 
         fs::write(repo.join("新 file.txt"), "hello\n").expect("unicode file");
         git_ok(&repo, &["add", "新 file.txt"]);
@@ -943,6 +1132,8 @@ mod tests {
         assert!(index.patch.contains("hello"));
         assert_eq!(index.files[0].path, "新 file.txt");
         assert_eq!(index.files[0].status, "A");
+        assert_eq!(index.original_text.as_deref(), Some(""));
+        assert_eq!(index.modified_text.as_deref(), Some("hello\n"));
 
         let _ = fs::remove_dir_all(sandbox);
     }
@@ -1008,6 +1199,7 @@ mod tests {
             repository_root: repo.to_string_lossy().to_string(),
             workspace_root: repo.to_string_lossy().to_string(),
             path: Some("../outside.txt".to_string()),
+            old_path: None,
             mode: DiffMode::Worktree,
             base_ref: None,
         });
@@ -1020,6 +1212,7 @@ mod tests {
             repository_root: repo.to_string_lossy().to_string(),
             workspace_root: other.to_string_lossy().to_string(),
             path: None,
+            old_path: None,
             mode: DiffMode::Worktree,
             base_ref: None,
         });
