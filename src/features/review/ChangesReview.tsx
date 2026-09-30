@@ -125,8 +125,8 @@ export function ChangesReview({
     result.modifiedText != null;
 
   return (
-    <div className="mx-auto max-w-[1480px] space-y-3">
-      <div className="flex flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2.5">
+    <div className="flex h-full min-h-[560px] w-full flex-col gap-3" data-testid="changes-review-root">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2.5">
         <div className="flex items-center gap-1">
           {(["worktree", "index", "base"] as DiffMode[]).map((item) => (
             <Button
@@ -180,9 +180,9 @@ export function ChangesReview({
         </div>
       </div>
 
-      <div className="grid min-h-0 grid-cols-[minmax(250px,320px)_minmax(0,1fr)] gap-4">
-        <section className="overflow-hidden border border-white/[0.07] bg-[#15100c]/92">
-          <div className="border-b border-white/[0.06] px-4 py-3">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,340px)_minmax(0,1fr)] gap-4" data-testid="changes-review-grid">
+        <section className="flex min-h-0 flex-col overflow-hidden border border-white/[0.07] bg-[#15100c]/92">
+          <div className="shrink-0 border-b border-white/[0.06] px-4 py-3">
             <div className="text-sm font-medium text-slate-200">
               {mode === "base"
                 ? "Base changed files"
@@ -196,7 +196,7 @@ export function ChangesReview({
                 : "Select a tracked file for read-only Monaco review."}
             </div>
           </div>
-          <div className="scrollbar-thin max-h-[680px] overflow-y-auto">
+          <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="changes-file-list">
             {files.length === 0 ? (
               <div className="p-5 text-xs leading-5 text-slate-600">
                 {mode === "base"
@@ -219,7 +219,7 @@ export function ChangesReview({
           </div>
         </section>
 
-        <section className="vl-editor-surface flex min-h-[620px] min-w-0 flex-col overflow-hidden border border-white/[0.07]">
+        <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
           <div className="flex min-h-10 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
             <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
               {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? "No file selected"}
@@ -231,7 +231,7 @@ export function ChangesReview({
             {result && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
           </div>
 
-          <div className="min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-hidden" data-testid="changes-review-editor-body">
             {loading ? (
               <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
@@ -329,7 +329,7 @@ function ReviewMessage({
   detail?: string;
 }) {
   return (
-    <div className="flex h-full min-h-[560px] items-center justify-center p-6 text-center">
+    <div className="flex h-full min-h-0 items-center justify-center p-6 text-center">
       <div className="max-w-lg">
         {icon === "spinner" && (
           <LoaderCircle className="mx-auto mb-3 animate-spin text-orange-300" size={18} />

@@ -16,9 +16,10 @@ export function MonacoReviewSurface({
   const language = reviewLanguage(path);
 
   return (
-    <div className="h-[620px] min-h-[620px]" data-testid="monaco-diff-surface">
+    <div className="h-full min-h-0 w-full" data-testid="monaco-diff-surface">
       <DiffEditor
         height="100%"
+        width="100%"
         language={language}
         original={original}
         modified={modified}

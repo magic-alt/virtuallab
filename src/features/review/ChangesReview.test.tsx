@@ -70,6 +70,19 @@ describe("ChangesReview", () => {
     expect(await screen.findByTestId("monaco-review")).toHaveTextContent("src/a.ts:side-by-side");
   });
 
+  it("keeps the Monaco review area flex-sized instead of fixed-height", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await screen.findByTestId("monaco-review");
+
+    expect(screen.getByTestId("changes-review-root")).toHaveClass("h-full", "w-full", "flex");
+    expect(screen.getByTestId("changes-review-grid")).toHaveClass("min-h-0", "flex-1");
+    expect(screen.getByTestId("changes-file-list")).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(screen.getByTestId("changes-review-editor")).toHaveClass("min-h-0", "overflow-hidden");
+    expect(screen.getByTestId("changes-review-editor-body")).toHaveClass("min-h-0", "flex-1", "overflow-hidden");
+  });
+
   it("switches Monaco layout without reloading Git", async () => {
     const user = userEvent.setup();
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);

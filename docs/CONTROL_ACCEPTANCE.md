@@ -120,3 +120,14 @@ Remove-Item -Recurse -Force "D:\Temp\virtuallab-v03-acceptance"
 | Changes | language detection | `reviewLanguage.test.ts` | TS/Rust/JSON/Markdown files use matching syntax mode |
 | Changes | read-only editor | Monaco options | typing must not modify original or modified panes |
 | Changes | loading/error/empty/binary/truncated states | `ChangesReview.test.tsx` | exercise representative states and keep UI responsive |
+
+
+### Phase B responsive layout acceptance
+
+The Changes review surface must use the available workbench viewport rather than a fixed Monaco height.
+
+- maximize and restore the desktop window; the file list and Monaco diff should resize with the workbench
+- in both **Side by side** and **Unified**, the editor must remain fully visible between the file header and bottom path/status rows
+- scroll to the last changed line; bottom content must not be hidden behind the footer/path row
+- long files must scroll inside Monaco, while the outer Changes page should not create a competing editor-height scrollbar
+- the left changed-file list must scroll independently and remain aligned with the right review panel
