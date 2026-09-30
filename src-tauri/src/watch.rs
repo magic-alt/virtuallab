@@ -3,7 +3,10 @@ use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
+
+const WATCH_EMIT_MIN_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Clone, Default)]
 pub struct WatchManager {
@@ -31,19 +34,36 @@ pub fn watch_start(
 
     let app_for_events = app.clone();
     let id_for_events = id.clone();
+    let last_emit = Arc::new(Mutex::new(None::<Instant>));
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<notify::Event>| {
-            if let Ok(event) = result {
-                for changed in event.paths {
-                    if is_ignored_path(&changed) {
-                        continue;
+            let Ok(event) = result else {
+                return;
+            };
+
+            let Some(changed) = event.paths.into_iter().find(|path| !is_ignored_path(path)) else {
+                return;
+            };
+
+            let now = Instant::now();
+            let should_emit = last_emit
+                .lock()
+                .map(|mut last| {
+                    if emit_due(*last, now) {
+                        *last = Some(now);
+                        true
+                    } else {
+                        false
                     }
-                    let _ = app_for_events.emit(
-                        "workbench://event",
-                        WorkbenchEvent::new("fs.changed", id_for_events.clone())
-                            .path(changed.to_string_lossy().to_string()),
-                    );
-                }
+                })
+                .unwrap_or(false);
+
+            if should_emit {
+                let _ = app_for_events.emit(
+                    "workbench://event",
+                    WorkbenchEvent::new("fs.changed", id_for_events.clone())
+                        .path(changed.to_string_lossy().to_string()),
+                );
             }
         },
         Config::default(),
@@ -77,6 +97,11 @@ pub fn watch_stop(state: State<'_, WatchManager>, id: String) -> Result<(), Stri
     Ok(())
 }
 
+fn emit_due(last: Option<Instant>, now: Instant) -> bool {
+    last.map(|instant| now.saturating_duration_since(instant) >= WATCH_EMIT_MIN_INTERVAL)
+        .unwrap_or(true)
+}
+
 fn is_ignored_path(path: &Path) -> bool {
     path.components().any(|component| {
         matches!(
@@ -90,6 +115,17 @@ fn is_ignored_path(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watcher_events_are_rate_limited() {
+        let now = Instant::now();
+        assert!(emit_due(None, now));
+        assert!(!emit_due(Some(now), now + Duration::from_millis(50)));
+        assert!(emit_due(
+            Some(now),
+            now + WATCH_EMIT_MIN_INTERVAL + Duration::from_millis(1),
+        ));
+    }
 
     #[test]
     fn generated_directories_are_ignored() {

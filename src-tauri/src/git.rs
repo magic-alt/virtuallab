@@ -46,7 +46,13 @@ pub struct CommitSummary {
 }
 
 #[tauri::command]
-pub fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
+pub async fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_repository_blocking(path))
+        .await
+        .map_err(|error| format!("Repository inspection task failed: {error}"))?
+}
+
+fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, String> {
     let root = git(&path, &["rev-parse", "--show-toplevel"])?;
     let root = root.trim().to_string();
 
@@ -233,7 +239,20 @@ pub struct WorkspaceMutationResult {
 }
 
 #[tauri::command]
-pub fn create_worktree(
+pub async fn create_worktree(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+) -> Result<WorkspaceMutationResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        create_worktree_blocking(repository_root, branch, base_ref, target_path)
+    })
+    .await
+    .map_err(|error| format!("Worktree creation task failed: {error}"))?
+}
+
+fn create_worktree_blocking(
     repository_root: String,
     branch: String,
     base_ref: Option<String>,
@@ -295,7 +314,15 @@ pub fn create_worktree(
 }
 
 #[tauri::command]
-pub fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+pub async fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        remove_worktree_blocking(repository_root, worktree_path)
+    })
+    .await
+    .map_err(|error| format!("Worktree removal task failed: {error}"))?
+}
+
+fn remove_worktree_blocking(repository_root: String, worktree_path: String) -> Result<(), String> {
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -409,6 +436,29 @@ mod tests {
         ));
     }
 
+
+    #[test]
+    fn inspect_repository_reports_fixture_without_async_runtime() {
+        let sandbox = unique_root("inspect");
+        let repo = sandbox.join("repo");
+        fs::create_dir_all(&repo).expect("repo directory");
+
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "fixture\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+
+        let snapshot =
+            inspect_repository_blocking(repo.to_string_lossy().to_string()).expect("inspect repo");
+        assert_eq!(snapshot.dirty_count, 0);
+        assert!(!snapshot.head_sha.is_empty());
+        assert_eq!(snapshot.worktrees.len(), 1);
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
     #[test]
     fn create_and_remove_worktree_round_trip() {
         let sandbox = unique_root("worktree");
@@ -423,7 +473,7 @@ mod tests {
         git_ok(&repo, &["add", "README.md"]);
         git_ok(&repo, &["commit", "-m", "fixture"]);
 
-        let created = create_worktree(
+        let created = create_worktree_blocking(
             repo.to_string_lossy().to_string(),
             "feat/control-test".to_string(),
             Some("HEAD".to_string()),
@@ -437,7 +487,7 @@ mod tests {
             .expect("branch lookup");
         assert_eq!(branch.trim(), "feat/control-test");
 
-        remove_worktree(
+        remove_worktree_blocking(
             repo.to_string_lossy().to_string(),
             target.to_string_lossy().to_string(),
         )

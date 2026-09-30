@@ -21,6 +21,9 @@ import type {
   WorkbenchEvent,
 } from "@/types/workbench";
 
+const OUTPUT_FLUSH_MS = 40;
+const OUTPUT_LIMIT = 180_000;
+
 interface RunRecord {
   id: string;
   profileId: string;
@@ -54,23 +57,55 @@ export function ProcessRunner({
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [showEditor, setShowEditor] = useState(false);
   const outputRef = useRef<HTMLPreElement | null>(null);
+  const pendingOutputRef = useRef(new Map<string, string>());
+  const outputFlushTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
 
+    const flushPendingOutput = () => {
+      outputFlushTimerRef.current = undefined;
+      if (pendingOutputRef.current.size === 0) return;
+
+      const batch = new Map(pendingOutputRef.current);
+      pendingOutputRef.current.clear();
+      setRuns((items) =>
+        items.map((run) => {
+          const chunk = batch.get(run.id);
+          return chunk
+            ? { ...run, output: (run.output + chunk).slice(-OUTPUT_LIMIT) }
+            : run;
+        }),
+      );
+    };
+
+    const queueOutput = (id: string, chunk: string) => {
+      const current = pendingOutputRef.current.get(id) ?? "";
+      pendingOutputRef.current.set(id, (current + chunk).slice(-OUTPUT_LIMIT));
+      if (outputFlushTimerRef.current === undefined) {
+        outputFlushTimerRef.current = window.setTimeout(flushPendingOutput, OUTPUT_FLUSH_MS);
+      }
+    };
+
     void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (!payload.eventType.startsWith("process.")) return;
+
+      if (payload.eventType === "process.output") {
+        const prefix = payload.stream === "stderr" ? "[stderr] " : "";
+        queueOutput(payload.id, prefix + (payload.data ?? ""));
+        return;
+      }
+
+      const pending = pendingOutputRef.current.get(payload.id) ?? "";
+      pendingOutputRef.current.delete(payload.id);
 
       setRuns((items) =>
         items.map((run) => {
           if (run.id !== payload.id) return run;
-
-          if (payload.eventType === "process.output") {
-            const prefix = payload.stream === "stderr" ? "[stderr] " : "";
-            const output = (run.output + prefix + (payload.data ?? "")).slice(-180_000);
-            return { ...run, output };
-          }
+          const output = pending
+            ? (run.output + pending).slice(-OUTPUT_LIMIT)
+            : run.output;
 
           if (payload.eventType === "process.exited") {
             const checkResult = processCheckResult({
@@ -82,6 +117,7 @@ export function ProcessRunner({
             });
             return {
               ...run,
+              output,
               status: checkResult.status === "pass" ? "passed" : "failed",
               exitCode: payload.exitCode,
               checkResult,
@@ -91,6 +127,7 @@ export function ProcessRunner({
           if (payload.eventType === "process.stop_requested") {
             return {
               ...run,
+              output,
               status: "stopped",
               checkResult: processCheckResult({
                 id: run.id,
@@ -103,7 +140,7 @@ export function ProcessRunner({
             };
           }
 
-          return run;
+          return { ...run, output };
         }),
       );
     })).then((fn) => {
@@ -114,6 +151,11 @@ export function ProcessRunner({
 
     return () => {
       disposed = true;
+      if (outputFlushTimerRef.current !== undefined) {
+        window.clearTimeout(outputFlushTimerRef.current);
+        outputFlushTimerRef.current = undefined;
+      }
+      pendingOutputRef.current.clear();
       unlisten?.();
     };
   }, []);

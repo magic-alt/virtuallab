@@ -21,8 +21,8 @@ Every visible interactive control must be backed by an automated test or an expl
 | Run | profile Run/Stop | `ProcessRunner.test.tsx` | real command execution |
 | Run | repository profile isolation | `ProcessRunner.test.tsx` | switch between two repositories and verify profiles never leak |
 | Run | add/remove/close profile | `ProcessRunner.test.tsx` | persistence after restart |
-| Watcher | generated-dir filter | Rust `watch.rs` unit test | source edit auto-refresh |
-| Git | create/remove worktree | Rust `git.rs` real temporary-repo test | real project worktree |
+| Watcher | generated-dir filter + event rate limit | Rust `watch.rs` unit tests | source edit auto-refresh without event storms |
+| Git | inspect/create/remove worktree | Rust `git.rs` real temporary-repo tests; blocking Git is offloaded from the Tauri UI thread | real project worktree |
 | Execution | event payload | Rust `execution.rs` unit test | streamed output in UI |
 
 ## Local gate
