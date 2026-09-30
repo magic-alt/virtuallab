@@ -26,7 +26,7 @@ export function WorkspaceHeader({
   const clean = snapshot.dirtyCount === 0;
 
   return (
-    <header className="border-b border-white/[0.07] bg-[#0a101a]/82 px-6 py-4 backdrop-blur-xl">
+    <header className="vl-header border-b px-6 py-4">
       <div className="flex items-start justify-between gap-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -57,7 +57,7 @@ export function WorkspaceHeader({
               </span>
             </span>
 
-            <span className="mono text-[11px] text-slate-650">{snapshot.headSha}</span>
+            <span className="mono text-[11px] text-slate-600">{snapshot.headSha}</span>
           </div>
         </div>
 

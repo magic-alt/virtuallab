@@ -23,9 +23,9 @@ React / TypeScript UI
           ▼
 Rust native core
   ├─ git service
-  ├─ workspace service        (next)
-  ├─ PTY/process supervisor   (next)
-  ├─ filesystem watcher       (next)
+  ├─ workspace service
+  ├─ PTY/process supervisor
+  ├─ filesystem watcher
   └─ persistence              (next)
           │
           ├─ git
@@ -45,16 +45,18 @@ Rust native core
 
 Planned adapters:
 
-- xterm.js for embedded PTY terminal
-- Monaco diff/editor for review
-- event stream for build/test/agent activity
+- xterm.js for embedded PTY terminals
+- structured `workbench://event` stream for process/filesystem lifecycle
+- Monaco diff/editor for review (V0.3)
 
 ## Native stack
 
 - Tauri 2
 - Rust 2021
 - Tauri dialog plugin
-- Git CLI through `std::process::Command` in V0.1
+- Git CLI through `std::process::Command`
+- portable-pty for PowerShell/bash sessions
+- notify for workspace change observation
 
 Git is intentionally CLI-backed at first. It matches developer machines, supports worktree semantics well and avoids prematurely coupling the product to libgit2 behavior.
 
@@ -102,3 +104,14 @@ The native layer must distinguish:
 - **hardware / release:** flash, enable motor/power stage, merge/release
 
 Destructive and hardware/release operations must never execute from an implicit agent decision.
+
+## V0.2 execution boundary
+
+Interactive terminals and build/test processes are separate execution paths:
+
+- **Terminal:** true PTY, interactive input, resize and Ctrl+C. Intended for human-driven shells and future agent harnesses.
+- **Process profile:** structured executable + argument vector + working directory. Intended for repeatable build/test/check commands; it does not accept a shell command string.
+- **Worktree mutation:** branch validation plus clean-only worktree removal. Primary worktree removal is refused.
+- **Filesystem watcher:** emits debounced UI refresh signals while ignoring generated-heavy directories such as `.git`, `node_modules`, `target` and `dist`.
+
+On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.

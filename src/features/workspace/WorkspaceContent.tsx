@@ -8,11 +8,15 @@ import {
   History,
   ListChecks,
   MonitorDot,
+  PlayCircle,
   TerminalSquare,
   TriangleAlert,
   Workflow,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { ProcessRunner } from "@/features/execution/ProcessRunner";
+import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
+import { isDesktopRuntime } from "@/lib/backend";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
   RepositorySnapshot,
@@ -21,6 +25,7 @@ import type {
 
 interface Props {
   snapshot: RepositorySnapshot;
+  profileRepositoryRoot: string;
   tab: WorkspaceTab;
   isPreview: boolean;
   onTabChange: (tab: WorkspaceTab) => void;
@@ -40,19 +45,21 @@ const tabs: Array<{
     counter: (snapshot) => snapshot.dirtyCount || null,
   },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
+  { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
   { id: "history", label: "History", icon: <History size={14} /> },
 ];
 
 export function WorkspaceContent({
   snapshot,
+  profileRepositoryRoot,
   tab,
   isPreview,
   onTabChange,
 }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-white/[0.07] bg-[#090e17]/80 px-5">
+      <nav className="vl-tabs flex h-11 shrink-0 items-end gap-1 border-b px-5">
         {tabs.map((item) => {
           const active = item.id === tab;
           const counter = item.counter?.(snapshot) ?? null;
@@ -74,17 +81,26 @@ export function WorkspaceContent({
                 </span>
               )}
               {active && (
-                <span className="absolute inset-x-2 bottom-0 h-px bg-blue-400 shadow-[0_0_18px_rgba(96,165,250,0.8)]" />
+                <span className="absolute inset-x-2 bottom-0 h-px bg-orange-400 shadow-[0_0_18px_rgba(251,146,60,0.78)]" />
               )}
             </button>
           );
         })}
       </nav>
 
-      <main className="surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
+      <main className="vl-main surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && <Changes snapshot={snapshot} />}
-        {tab === "terminal" && <TerminalPlaceholder snapshot={snapshot} />}
+        {tab === "terminal" && (
+          <TerminalWorkspace cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
+        )}
+        {tab === "run" && (
+          <ProcessRunner
+            cwd={snapshot.root}
+            repositoryRoot={profileRepositoryRoot}
+            enabled={!isPreview && isDesktopRuntime()}
+          />
+        )}
         {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
         {tab === "history" && <HistoryView snapshot={snapshot} />}
       </main>
@@ -141,7 +157,7 @@ function Overview({
                 key={`${worktree.path}-${index}`}
                 className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-3"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#0a101a] text-blue-300">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-[#120d09] text-orange-300">
                   <GitBranch size={15} />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -152,7 +168,7 @@ function Overview({
                     {compactPath(worktree.path, 74)}
                   </div>
                 </div>
-                <Badge tone={index === 0 ? "blue" : "neutral"}>
+                <Badge tone={index === 0 ? "orange" : "neutral"}>
                   {index === 0 ? "primary" : "isolated"}
                 </Badge>
               </div>
@@ -169,7 +185,7 @@ function Overview({
             <div className="absolute bottom-3 left-[7px] top-3 w-px bg-white/[0.07]" />
             {snapshot.recentCommits.slice(0, 6).map((commit) => (
               <div key={commit.sha} className="relative flex gap-3 py-2">
-                <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#0c131f] bg-slate-600" />
+                <span className="mt-1.5 size-[15px] shrink-0 rounded-full border-[4px] border-[#15100c] bg-slate-600" />
                 <div className="min-w-0">
                   <div className="truncate text-xs text-slate-300">{commit.subject}</div>
                   <div className="mono mt-1 text-[10px] text-slate-600">
@@ -184,7 +200,7 @@ function Overview({
 
       <Panel
         title="Control plane"
-        subtitle="The first release keeps the native boundary intentionally read-only."
+        subtitle="V0.2 separates interactive PTY, structured processes and reversible worktree mutation behind typed native commands."
         icon={<MonitorDot size={16} />}
       >
         <div className="grid grid-cols-3 gap-3">
@@ -195,10 +211,10 @@ function Overview({
             state="available"
           />
           <CapabilityCard
-            icon={<CircleDot size={16} />}
+            icon={<CheckCircle2 size={16} />}
             title="Workspace execution"
-            description="Embedded PTY and process supervisor are the next isolated adapter."
-            state="next"
+            description="Embedded PTY, process profiles, worktree lanes and filesystem refresh are active."
+            state="available"
           />
           <CapabilityCard
             icon={<CircleDot size={16} />}
@@ -250,41 +266,6 @@ function Changes({ snapshot }: { snapshot: RepositorySnapshot }) {
           </div>
         )}
       </Panel>
-    </div>
-  );
-}
-
-function TerminalPlaceholder({ snapshot }: { snapshot: RepositorySnapshot }) {
-  return (
-    <div className="mx-auto max-w-[1120px]">
-      <div className="soft-shadow overflow-hidden rounded-2xl border border-white/[0.08] bg-[#05080e]">
-        <div className="flex h-10 items-center justify-between border-b border-white/[0.07] bg-white/[0.025] px-4">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
-            <TerminalSquare size={14} />
-            Workspace terminal
-          </div>
-          <Badge tone="blue">PTY adapter · V0.2</Badge>
-        </div>
-        <div className="mono min-h-[430px] p-5 text-[12px] leading-6">
-          <div className="text-slate-600"># Native PTY execution is intentionally not enabled in V0.1.</div>
-          <div className="mt-5 text-emerald-300">virtuallab</div>
-          <div className="text-slate-500">{compactPath(snapshot.root, 100)}</div>
-          <div className="mt-5 text-slate-500">$ git status --short</div>
-          {snapshot.changes.length === 0 ? (
-            <div className="text-slate-700"># clean</div>
-          ) : (
-            snapshot.changes.slice(0, 8).map((change) => (
-              <div key={change.path} className="text-slate-400">
-                {change.indexStatus}{change.worktreeStatus} {change.path}
-              </div>
-            ))
-          )}
-          <div className="mt-7 flex items-center gap-2 text-blue-300">
-            <span className="animate-pulse">▋</span>
-            <span className="text-slate-600">xterm.js + portable PTY lands behind this surface next.</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -373,7 +354,7 @@ function HistoryView({ snapshot }: { snapshot: RepositorySnapshot }) {
         <div className="divide-y divide-white/[0.055]">
           {snapshot.recentCommits.map((commit) => (
             <div key={commit.sha} className="flex items-center gap-4 py-3">
-              <div className="mono w-20 shrink-0 text-[11px] text-blue-300">{commit.sha}</div>
+              <div className="mono w-20 shrink-0 text-[11px] text-orange-300">{commit.sha}</div>
               <div className="min-w-0 flex-1 truncate text-xs text-slate-300">{commit.subject}</div>
               <div className="shrink-0 text-[10px] text-slate-600">
                 {formatCommitTime(commit.timestamp)}
@@ -400,7 +381,7 @@ function Metric({
   tone?: "neutral" | "green" | "amber";
 }) {
   return (
-    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92 p-4">
+    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92 p-4">
       <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-600">
         {label}
       </div>
@@ -437,7 +418,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#0c131f]/92">
+    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92">
       <div className="flex items-start gap-3 border-b border-white/[0.06] px-4 py-3.5">
         <div className="mt-0.5 text-slate-500">{icon}</div>
         <div>
@@ -467,7 +448,7 @@ function CapabilityCard({
         <span className={state === "available" ? "text-emerald-300" : "text-slate-600"}>
           {icon}
         </span>
-        <Badge tone={state === "available" ? "green" : state === "next" ? "blue" : "neutral"}>
+        <Badge tone={state === "available" ? "green" : state === "next" ? "orange" : "neutral"}>
           {state}
         </Badge>
       </div>
@@ -480,7 +461,7 @@ function CapabilityCard({
 function ChangeMark({ kind }: { kind: string }) {
   const map: Record<string, { text: string; classes: string }> = {
     added: { text: "A", classes: "bg-emerald-400/10 text-emerald-300 border-emerald-400/15" },
-    modified: { text: "M", classes: "bg-blue-400/10 text-blue-300 border-blue-400/15" },
+    modified: { text: "M", classes: "bg-orange-400/10 text-orange-300 border-orange-400/15" },
     deleted: { text: "D", classes: "bg-rose-400/10 text-rose-300 border-rose-400/15" },
     renamed: { text: "R", classes: "bg-violet-400/10 text-violet-300 border-violet-400/15" },
     untracked: { text: "?", classes: "bg-amber-400/10 text-amber-300 border-amber-400/15" },

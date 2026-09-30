@@ -17,11 +17,11 @@ Repository
 
 Claude Code, Codex or other agents will attach to this model later; the workbench remains useful without them.
 
-## Current status — V0.1 foundation
+## Current status — V0.2 workspace execution
 
 The first slice is already designed for daily local use:
 
-- polished Tauri desktop shell
+- orange-accented Tauri desktop shell
 - persisted list of local repositories
 - native folder picker
 - native, read-only Git inspection
@@ -31,9 +31,13 @@ The first slice is already designed for daily local use:
 - Git worktree inventory
 - recent commit history
 - preview mode when running as a normal web page
-- architecture and safety boundary ready for PTY, review, verification and agents
+- native PowerShell/bash PTY with multi-terminal tabs
+- Git worktree create/select/remove workflow
+- structured build/test profiles with Run/Stop and streamed output
+- filesystem-driven repository refresh
+- architecture and safety boundary ready for review, verification and agents
 
-The embedded terminal surface is deliberately non-executing in V0.1. PTY/process execution lands in V0.2 behind a reviewed native boundary.
+V0.2 turns the shell into an execution workbench: PTY terminals, isolated worktrees, structured build/test processes and filesystem-driven refresh live behind typed native commands.
 
 ## Technology stack
 
@@ -121,3 +125,108 @@ V0.5 adds agent harnesses. The invariant remains:
 ## Safety posture
 
 Read-only inspection is the default. Destructive Git operations, firmware flashing, motor/power-stage enable and release/merge actions will require explicit human approval gates.
+
+### Windows: `cargo metadata ... program not found`
+
+VirtualLab's desktop runtime requires the Rust toolchain because Tauri compiles a native Rust host. The repository now wraps `tauri:dev` with a preflight that also discovers `%USERPROFILE%\\.cargo\\bin\\cargo.exe` when Cargo is installed but missing from the current Conda/PowerShell PATH.
+
+Run:
+
+```powershell
+npm run doctor
+npm run tauri:dev
+```
+
+If Rust is not installed, install rustup first (for example `winget install Rustlang.Rustup`), restart PowerShell, then run `rustup default stable` and retry.
+
+
+## Control acceptance
+
+Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. The acceptance runner is Node-based and works on Windows, macOS and Linux. Run:
+
+ ```bash
+npm install
+npm run test:controls
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run acceptance:local
+```
+
+The control-to-test mapping is documented in [docs/CONTROL_ACCEPTANCE.md](docs/CONTROL_ACCEPTANCE.md).
+
+
+## Local cross-platform build
+
+Frontend-only preview:
+
+```powershell
+npm install
+npm run dev
+```
+
+Production frontend build:
+
+```powershell
+npm run typecheck
+npm run test:controls
+npm run build
+```
+
+The frontend output is written to `dist/`.
+
+Native Tauri development:
+
+```powershell
+npm run doctor
+npm run tauri:dev
+```
+
+Native release build:
+
+```powershell
+npm run acceptance:local
+npm run tauri:build
+```
+
+Build outputs are under `src-tauri/target/{debug|release}/`; platform bundles are under the corresponding `bundle/` directory.
+
+Windows native builds require the Visual Studio Build Tools **Desktop development with C++** workload and WebView2. macOS native builds require Xcode Command Line Tools.
+
+
+### Build/test profile scope
+
+Run profiles are repository-scoped. A command configured for one repository is not shown or executed when another repository is active. The process working directory remains the selected workspace/worktree, so the same repository profile can be reused across its worktrees.
+
+V0.2 intentionally ships with no universal build/test defaults because commands such as `npm run build` or `cargo check --manifest-path src-tauri/Cargo.toml` are project-specific.
+
+
+### Standalone debug executable
+
+`npm run tauri:dev` is a development session. The executable created under `src-tauri/target/debug/virtuallab.exe` during that session expects the Vite dev server configured by `build.devUrl`, so launching that dev-session executable after the Vite server has stopped can show a blank window.
+
+For a directly launchable debug executable with frontend assets embedded, build with:
+
+```powershell
+npm run tauri:build:debug
+```
+
+Then run the generated standalone debug application for your platform:
+
+```powershell
+# Windows
+.\src-tauri\target\debug\virtuallab.exe
+```
+
+```bash
+# macOS / Linux binary path
+./src-tauri/target/debug/virtuallab
+```
+
+On macOS, the bundled app is also available under `src-tauri/target/debug/bundle/macos/` when generated.
+
+Debug bundles/installers are generated under `src-tauri/target/debug/bundle/`.
+
+For the normal standalone release build use:
+
+```powershell
+npm run tauri:build
+```

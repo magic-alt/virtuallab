@@ -17,13 +17,18 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.2 — Workspace execution
 
-- embedded xterm.js PTY
-- process supervisor and streamed output
-- create/remove Git worktrees
-- workspace state machine
-- configurable build/test commands
-- filesystem watcher
-- structured check results
+- [x] embedded xterm.js PTY
+- [x] PowerShell/bash native PTY
+- [x] multi-terminal tabs, resize and Ctrl+C
+- [x] process supervisor and streamed output
+- [x] create/remove Git worktrees
+- [x] New Workspace flow
+- [ ] persisted workspace state machine
+- [x] configurable build/test process profiles
+- [x] Run/Stop lifecycle
+- [x] filesystem watcher with generated-directory filtering
+- [x] structured process/filesystem events
+- [ ] richer structured check-result normalization
 
 ## V0.3 — Review and GitHub
 
@@ -59,3 +64,13 @@ Goal: useful on day one without any AI dependency.
 - custom LLM agent loop
 - replacing IDEs
 - automatic destructive Git or hardware operations
+
+
+## V0.2 quality gate
+
+- [x] frontend control wiring tests
+- [x] Git worktree create/remove native round-trip test
+- [x] filesystem ignore-filter unit test
+- [x] structured execution event unit test
+- [x] local Windows acceptance script
+- [x] Linux + Windows CI runs frontend tests and Rust tests

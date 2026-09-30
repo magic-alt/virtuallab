@@ -224,3 +224,226 @@ fn git(repo: &str, args: &[&str]) -> Result<String, String> {
 fn git_optional(repo: &str, args: &[&str]) -> Option<String> {
     git(repo, args).ok()
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceMutationResult {
+    path: String,
+    branch: String,
+}
+
+#[tauri::command]
+pub fn create_worktree(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+) -> Result<WorkspaceMutationResult, String> {
+    let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+
+    let branch = branch.trim().to_string();
+    if branch.is_empty() {
+        return Err("Workspace branch must not be empty".to_string());
+    }
+
+    git(&repository_root, &["check-ref-format", "--branch", branch.as_str()])?;
+
+    let target = match target_path
+        .map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => std::path::PathBuf::from(path),
+        None => default_worktree_path(&repository_root, &branch)?,
+    };
+
+    if target.exists() {
+        return Err(format!(
+            "Workspace target already exists: {}",
+            target.to_string_lossy()
+        ));
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create workspace parent directory: {error}"))?;
+    }
+
+    let target_string = target.to_string_lossy().to_string();
+    let base_ref = base_ref
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "HEAD".to_string());
+
+    git(
+        &repository_root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            branch.as_str(),
+            target_string.as_str(),
+            base_ref.as_str(),
+        ],
+    )?;
+
+    Ok(WorkspaceMutationResult {
+        path: target_string,
+        branch,
+    })
+}
+
+#[tauri::command]
+pub fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+    let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    let inventory = parse_worktrees(&git(
+        &repository_root,
+        &["worktree", "list", "--porcelain"],
+    )?);
+
+    if inventory.is_empty() {
+        return Err("Repository has no registered worktrees".to_string());
+    }
+
+    let requested = canonical_or_original(std::path::Path::new(worktree_path.trim()));
+    let primary = canonical_or_original(std::path::Path::new(&inventory[0].path));
+
+    if requested == primary {
+        return Err("Refusing to remove the repository primary worktree".to_string());
+    }
+
+    let registered = inventory.iter().any(|item| {
+        canonical_or_original(std::path::Path::new(&item.path)) == requested
+    });
+    if !registered {
+        return Err("Requested path is not a registered worktree".to_string());
+    }
+
+    let worktree_string = requested.to_string_lossy().to_string();
+    git(
+        &repository_root,
+        &["worktree", "remove", worktree_string.as_str()],
+    )?;
+    Ok(())
+}
+
+fn default_worktree_path(repository_root: &str, branch: &str) -> Result<std::path::PathBuf, String> {
+    let root = std::path::Path::new(repository_root);
+    let parent = root
+        .parent()
+        .ok_or_else(|| "Repository root has no parent directory".to_string())?;
+    let repository_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("repository");
+
+    let slug: String = branch
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    Ok(parent
+        .join(".virtuallab-workspaces")
+        .join(repository_name)
+        .join(slug))
+}
+
+fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_root(name: &str) -> std::path::PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "virtuallab-{name}-{}-{stamp}",
+            std::process::id()
+        ))
+    }
+
+    fn git_ok(repo: &std::path::Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .expect("git should start");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    #[test]
+    fn change_kind_classifies_porcelain_states() {
+        assert_eq!(change_kind('?', '?'), "untracked");
+        assert_eq!(change_kind('M', ' '), "modified");
+        assert_eq!(change_kind('A', ' '), "added");
+        assert_eq!(change_kind('D', ' '), "deleted");
+        assert_eq!(change_kind('R', ' '), "renamed");
+        assert_eq!(change_kind('U', 'U'), "conflicted");
+    }
+
+    #[test]
+    fn default_worktree_path_sanitizes_branch_separators() {
+        let root = unique_root("path").join("repo");
+        let path = default_worktree_path(root.to_string_lossy().as_ref(), "feat/pixel ui")
+            .expect("path should resolve");
+        assert!(path.ends_with(
+            std::path::Path::new("repo").join("feat-pixel-ui")
+        ));
+    }
+
+    #[test]
+    fn create_and_remove_worktree_round_trip() {
+        let sandbox = unique_root("worktree");
+        let repo = sandbox.join("repo");
+        let target = sandbox.join("workspace");
+        fs::create_dir_all(&repo).expect("repo directory");
+
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "fixture\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+
+        let created = create_worktree(
+            repo.to_string_lossy().to_string(),
+            "feat/control-test".to_string(),
+            Some("HEAD".to_string()),
+            Some(target.to_string_lossy().to_string()),
+        )
+        .expect("create worktree");
+
+        assert_eq!(created.branch, "feat/control-test");
+        assert!(target.is_dir());
+        let branch = git(target.to_string_lossy().as_ref(), &["branch", "--show-current"])
+            .expect("branch lookup");
+        assert_eq!(branch.trim(), "feat/control-test");
+
+        remove_worktree(
+            repo.to_string_lossy().to_string(),
+            target.to_string_lossy().to_string(),
+        )
+        .expect("remove worktree");
+        assert!(!target.exists());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+}

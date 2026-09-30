@@ -10,10 +10,10 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants: Record<ButtonVariant, string> = {
   primary:
-    "border border-blue-400/30 bg-blue-500/90 text-white shadow-[0_10px_30px_rgba(59,130,246,0.16)] hover:bg-blue-400",
+    "border border-[#ff9b28] bg-[#e86400] text-[#fff3de] shadow-[2px_2px_0_#5a1c00] hover:bg-[#ff7900] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none",
   outline:
-    "border border-white/10 bg-white/[0.035] text-slate-200 hover:border-white/20 hover:bg-white/[0.07]",
-  ghost: "border border-transparent text-slate-400 hover:bg-white/[0.05] hover:text-slate-100",
+    "border border-[#db6500] bg-[#6d2400] text-[#ffe6c4] shadow-[2px_2px_0_#4b1700] hover:border-[#ff9b28] hover:bg-[#7f2c00] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none",
+  ghost: "border border-transparent text-[#efb06f] hover:border-[#d86600] hover:bg-[#6d2400] hover:text-[#fff0d2]",
 };
 
 export function Button({
@@ -27,7 +27,7 @@ export function Button({
     <button
       type={type}
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition disabled:pointer-events-none disabled:opacity-45",
+        "inline-flex items-center justify-center gap-2 rounded-lg font-semibold uppercase tracking-[0.03em] transition disabled:pointer-events-none disabled:opacity-40",
         size === "sm" ? "h-8 px-2.5 text-xs" : "h-9 px-3.5 text-sm",
         variants[variant],
         className,

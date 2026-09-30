@@ -49,9 +49,48 @@ export interface RepositoryRecord {
   lastOpenedAt: number;
 }
 
+export interface WorkspaceMutationResult {
+  path: string;
+  branch: string;
+}
+
+export type ProcessProfileKind = "build" | "test";
+
+export interface ProcessProfile {
+  id: string;
+  name: string;
+  kind: ProcessProfileKind;
+  repositoryRoot: string;
+  program: string;
+  args: string[];
+}
+
+export interface ProcessSpec {
+  id: string;
+  cwd: string;
+  program: string;
+  args: string[];
+}
+
+export interface WorkbenchEvent {
+  eventType: string;
+  id: string;
+  stream?: string | null;
+  data?: string | null;
+  exitCode?: number | null;
+  path?: string | null;
+  timestampMs: number;
+}
+
+export interface TerminalOutput {
+  id: string;
+  data: number[];
+}
+
 export type WorkspaceTab =
   | "overview"
   | "changes"
   | "terminal"
+  | "run"
   | "checks"
   | "history";

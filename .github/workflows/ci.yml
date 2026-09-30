@@ -10,15 +10,20 @@ permissions:
 
 jobs:
   frontend:
-    name: Frontend typecheck and build
+    name: Frontend Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "26"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
       - run: npm install
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
 
   rust:
@@ -36,3 +41,28 @@ jobs:
             patchelf
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  windows-native:
+    name: Windows desktop acceptance (Node 26)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run acceptance:local
+
+  macos-native:
+    name: macOS desktop acceptance (Node 26)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run acceptance:local
