@@ -8,6 +8,9 @@ vi.mock("@/features/terminal/TerminalWorkspace", () => ({
 vi.mock("@/features/execution/ProcessRunner", () => ({
   ProcessRunner: () => <div data-testid="runner-mock" />,
 }));
+vi.mock("@/features/github/GithubPanel", () => ({
+  GithubPanel: () => <div data-testid="github-mock" />,
+}));
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceContent } from "./WorkspaceContent";
 
@@ -25,13 +28,14 @@ describe("WorkspaceContent navigation", () => {
       />,
     );
 
-    for (const tab of ["Overview", "Changes", "Terminal", "Run", "Checks", "History"]) {
+    for (const tab of ["Overview", "Changes", "GitHub", "Terminal", "Run", "Checks", "History"]) {
       await user.click(screen.getByRole("button", { name: new RegExp(tab, "i") }));
     }
 
     expect(onTabChange.mock.calls.map(([tab]) => tab)).toEqual([
       "overview",
       "changes",
+      "github",
       "terminal",
       "run",
       "checks",

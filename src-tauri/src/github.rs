@@ -393,10 +393,11 @@ fn load_issue(
     repository: &str,
     number: u64,
 ) -> Result<GithubIssue, String> {
+    let number_text = number.to_string();
     let args = [
         "issue",
         "view",
-        &number.to_string(),
+        number_text.as_str(),
         "--repo",
         repository,
         "--json",

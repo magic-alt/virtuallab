@@ -5,6 +5,7 @@ import {
   FileCode2,
   GitBranch,
   GitCommitHorizontal,
+  GitPullRequest,
   History,
   ListChecks,
   MonitorDot,
@@ -16,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
+import { GithubPanel } from "@/features/github/GithubPanel";
 import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
 import { isDesktopRuntime } from "@/lib/backend";
 import { repositoryCheckResults } from "@/lib/checks";
@@ -46,6 +48,7 @@ const tabs: Array<{
     icon: <FileCode2 size={14} />,
     counter: (snapshot) => snapshot.dirtyCount || null,
   },
+  { id: "github", label: "GitHub", icon: <GitPullRequest size={14} /> },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
@@ -96,6 +99,13 @@ export function WorkspaceContent({
           <ChangesReview
             snapshot={snapshot}
             repositoryRoot={profileRepositoryRoot}
+            workspaceRoot={snapshot.root}
+            enabled={!isPreview && isDesktopRuntime()}
+          />
+        )}
+        {tab === "github" && (
+          <GithubPanel
+            snapshot={snapshot}
             workspaceRoot={snapshot.root}
             enabled={!isPreview && isDesktopRuntime()}
           />
