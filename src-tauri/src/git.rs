@@ -594,15 +594,22 @@ fn git_read_limited(repo: &str, args: &[&str], limit: usize) -> Result<(Vec<u8>,
             break;
         }
 
-        let remaining = limit.saturating_sub(output.len());
-        if read > remaining {
-            output.extend_from_slice(&buffer[..remaining]);
+        if output.len() < limit {
+            let remaining = limit - output.len();
+            let kept = remaining.min(read);
+            output.extend_from_slice(&buffer[..kept]);
+            if kept < read {
+                truncated = true;
+            }
+        } else {
             truncated = true;
-            let _ = child.kill();
-            break;
         }
 
-        output.extend_from_slice(&buffer[..read]);
+        // Do not kill Git as soon as the UI byte limit is reached. On Windows,
+        // terminating git.exe while its stdout/stderr pipes are active can leave
+        // pipe handles alive long enough for child.wait()/stderr join to stall.
+        // Continue draining stdout while discarding excess bytes; memory remains
+        // bounded and Git exits normally on every supported desktop platform.
     }
 
     let status = child
@@ -611,7 +618,7 @@ fn git_read_limited(repo: &str, args: &[&str], limit: usize) -> Result<(Vec<u8>,
     let stderr = stderr_thread.join().unwrap_or_default();
     let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
 
-    if !status.success() && !truncated {
+    if !status.success() {
         return Err(if stderr.is_empty() {
             format!("Git command failed with {status}")
         } else {
