@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { ChangesReview } from "./ChangesReview";
 import type { RepositorySnapshot } from "@/types/workbench";
 
@@ -8,8 +9,21 @@ const backend = vi.hoisted(() => ({ gitDiff: vi.fn() }));
 
 vi.mock("@/lib/backend", () => ({ gitDiff: backend.gitDiff }));
 vi.mock("./MonacoReviewSurface", () => ({
-  MonacoReviewSurface: ({ path, layout }: { path: string; layout: string }) => (
-    <div data-testid="monaco-review">{path}:{layout}</div>
+  MonacoReviewSurface: ({
+    path,
+    layout,
+    onReviewLineSelect,
+  }: {
+    path: string;
+    layout: string;
+    onReviewLineSelect?: (selection: { line: number; side: "LEFT" | "RIGHT" }) => void;
+  }) => (
+    <div>
+      <div data-testid="monaco-review">{path}:{layout}</div>
+      <button onClick={() => onReviewLineSelect?.({ line: 12, side: "RIGHT" })} type="button">
+        Select review line
+      </button>
+    </div>
   ),
 }));
 
@@ -53,6 +67,7 @@ describe("ChangesReview", () => {
   beforeEach(() => {
     backend.gitDiff.mockReset();
     backend.gitDiff.mockResolvedValue(response());
+    useWorkbenchStore.setState({ reviewStates: {} });
   });
 
   it("loads a typed worktree diff and renders Monaco", async () => {
@@ -68,6 +83,30 @@ describe("ChangesReview", () => {
       baseRef: null,
     });
     expect(await screen.findByTestId("monaco-review")).toHaveTextContent("src/a.ts:side-by-side");
+  });
+
+  it("creates and persists a line-scoped local review draft", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await user.click(await screen.findByRole("button", { name: "Select review line" }));
+    await user.type(screen.getByRole("textbox", { name: "Review draft body" }), "Please tighten this guard.");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+
+    const drafts =
+      useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey("D:/repo")]?.drafts ?? [];
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toEqual(
+      expect.objectContaining({
+        path: "src/a.ts",
+        line: 12,
+        side: "RIGHT",
+        headSha: "1234567890",
+        body: "Please tighten this guard.",
+        status: "active",
+      }),
+    );
+    expect(screen.getByText("Please tighten this guard.")).toBeInTheDocument();
   });
 
   it("keeps the Monaco review area flex-sized instead of fixed-height", async () => {

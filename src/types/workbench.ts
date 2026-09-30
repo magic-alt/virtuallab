@@ -91,6 +91,7 @@ export interface TerminalOutput {
 export type WorkspaceTab =
   | "overview"
   | "changes"
+  | "github"
   | "terminal"
   | "run"
   | "checks"
@@ -100,6 +101,36 @@ export interface WorkspacePersistedState {
   repositoryId: string;
   activeWorktreePath: string;
   activeTab: WorkspaceTab;
+  updatedAt: number;
+}
+
+export type ReviewDraftSide = "LEFT" | "RIGHT";
+export type ReviewDraftStatus = "active" | "stale" | "posted";
+
+export interface ReviewLineSelection {
+  line: number;
+  side: ReviewDraftSide;
+}
+
+export interface ReviewDraft {
+  id: string;
+  workspaceRoot: string;
+  headSha: string;
+  path: string;
+  line: number;
+  side: ReviewDraftSide;
+  body: string;
+  status: ReviewDraftStatus;
+  createdAt: number;
+  updatedAt: number;
+  postedAt?: number | null;
+  postedUrl?: string | null;
+}
+
+export interface WorkspaceReviewState {
+  workspaceRoot: string;
+  drafts: ReviewDraft[];
+  githubReference?: string | null;
   updatedAt: number;
 }
 
@@ -115,7 +146,6 @@ export interface CheckResult {
   observedAtMs: number;
   exitCode?: number | null;
 }
-
 
 export type DiffMode = "worktree" | "index" | "base";
 
@@ -147,4 +177,80 @@ export interface DiffResponse {
   originalText?: string | null;
   modifiedText?: string | null;
   contentTruncated: boolean;
+}
+
+export interface GithubCapabilities {
+  installed: boolean;
+  authenticated: boolean;
+  repository?: string | null;
+  mode: "connected" | "local_only";
+  detail: string;
+}
+
+export interface GithubCheck {
+  name: string;
+  status: string;
+  conclusion?: string | null;
+  url?: string | null;
+}
+
+export interface GithubCheckSummary {
+  total: number;
+  success: number;
+  pending: number;
+  failure: number;
+  neutral: number;
+  checks: GithubCheck[];
+}
+
+export interface GithubChangedFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface GithubPullRequest {
+  number: number;
+  title: string;
+  state: string;
+  url: string;
+  baseRef: string;
+  headRef: string;
+  headSha: string;
+  isDraft: boolean;
+  author?: string | null;
+  changedFiles: GithubChangedFile[];
+  checks: GithubCheckSummary;
+}
+
+export interface GithubIssue {
+  number: number;
+  title: string;
+  state: string;
+  url: string;
+  author?: string | null;
+  labels: string[];
+}
+
+export interface GithubContext {
+  capabilities: GithubCapabilities;
+  reference?: string | null;
+  pullRequest?: GithubPullRequest | null;
+  issue?: GithubIssue | null;
+}
+
+export interface GithubPostReviewCommentRequest {
+  workspaceRoot: string;
+  repository: string;
+  prNumber: number;
+  commitId: string;
+  path: string;
+  line: number;
+  side: ReviewDraftSide;
+  body: string;
+}
+
+export interface GithubPostReviewCommentResponse {
+  id: number;
+  url: string;
 }

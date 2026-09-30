@@ -1,49 +1,79 @@
 import { DiffEditor } from "@monaco-editor/react";
 import { useCallback, useEffect, useRef } from "react";
 import "./monacoEnvironment";
-import type { editor } from "monaco-editor";
+import type { editor, IDisposable } from "monaco-editor";
 import { enforceDiffPaneWrapping } from "./diffPaneWrapping";
 import { reviewLanguage } from "./reviewLanguage";
+import type { ReviewLineSelection } from "@/types/workbench";
 
 export function MonacoReviewSurface({
   original,
   modified,
   path,
   layout,
+  onReviewLineSelect,
 }: {
   original: string;
   modified: string;
   path: string;
   layout: "unified" | "side-by-side";
+  onReviewLineSelect?: (selection: ReviewLineSelection) => void;
 }) {
   const language = reviewLanguage(path);
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const listenersRef = useRef<IDisposable[]>([]);
+  const selectionCallbackRef = useRef(onReviewLineSelect);
+  selectionCallbackRef.current = onReviewLineSelect;
 
   const applyWrapping = useCallback((instance: editor.IStandaloneDiffEditor) => {
     enforceDiffPaneWrapping(instance);
+  }, []);
+
+  const bindReviewSelection = useCallback((instance: editor.IStandaloneDiffEditor) => {
+    listenersRef.current.forEach((listener) => listener.dispose());
+    listenersRef.current = [
+      instance.getOriginalEditor().onDidChangeCursorSelection(({ selection }) => {
+        selectionCallbackRef.current?.({
+          line: selection.positionLineNumber,
+          side: "LEFT",
+        });
+      }),
+      instance.getModifiedEditor().onDidChangeCursorSelection(({ selection }) => {
+        selectionCallbackRef.current?.({
+          line: selection.positionLineNumber,
+          side: "RIGHT",
+        });
+      }),
+    ];
   }, []);
 
   const handleMount = useCallback(
     (instance: editor.IStandaloneDiffEditor) => {
       diffEditorRef.current = instance;
       applyWrapping(instance);
+      bindReviewSelection(instance);
     },
-    [applyWrapping],
+    [applyWrapping, bindReviewSelection],
   );
 
   useEffect(() => {
     const instance = diffEditorRef.current;
     if (!instance) return;
 
-    // @monaco-editor/react updates the diff options when the layout toggle
-    // changes. Re-apply wrapping on the next frame so both inner editors see
-    // the final side-by-side/inline geometry.
     const frame = window.requestAnimationFrame(() => {
       applyWrapping(instance);
     });
 
     return () => window.cancelAnimationFrame(frame);
   }, [applyWrapping, layout]);
+
+  useEffect(
+    () => () => {
+      listenersRef.current.forEach((listener) => listener.dispose());
+      listenersRef.current = [];
+    },
+    [],
+  );
 
   return (
     <div className="h-full min-h-0 w-full" data-testid="monaco-diff-surface">
@@ -65,8 +95,6 @@ export function MonacoReviewSurface({
           renderOverviewRuler: false,
           minimap: { enabled: false },
           scrollBeyondLastLine: false,
-          // Visual wrapping only: long lines adapt to the current review pane
-          // width without changing either Git side or the working-tree file.
           wordWrap: "on",
           diffWordWrap: "on",
           wrappingIndent: "same",

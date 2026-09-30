@@ -1,15 +1,18 @@
-import { lazy, Suspense, useMemo, useState } from "react";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { gitDiff } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import type {
   ChangeEntry,
   DiffFileSummary,
   DiffMode,
   DiffResponse,
   RepositorySnapshot,
+  ReviewDraft,
+  ReviewLineSelection,
 } from "@/types/workbench";
 
 const MonacoReviewSurface = lazy(() =>
@@ -37,7 +40,17 @@ export function ChangesReview({
   workspaceRoot: string;
   enabled: boolean;
 }) {
+  const reviewState = useWorkbenchStore(
+    (state) => state.reviewStates[reviewWorkspaceKey(workspaceRoot)],
+  );
+  const addReviewDraft = useWorkbenchStore((state) => state.addReviewDraft);
+  const removeReviewDraft = useWorkbenchStore((state) => state.removeReviewDraft);
+  const markReviewDraftsStale = useWorkbenchStore((state) => state.markReviewDraftsStale);
+
+  const drafts = reviewState?.drafts ?? [];
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedReviewLine, setSelectedReviewLine] = useState<ReviewLineSelection | null>(null);
+  const [draftBody, setDraftBody] = useState("");
   const [mode, setMode] = useState<DiffMode>("worktree");
   const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
   const [baseRef, setBaseRef] = useState("main");
@@ -45,6 +58,10 @@ export function ChangesReview({
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    markReviewDraftsStale(workspaceRoot, snapshot.headSha);
+  }, [markReviewDraftsStale, snapshot.headSha, workspaceRoot]);
 
   const files = useMemo<ReviewFile[]>(() => {
     if (mode === "base") {
@@ -67,6 +84,8 @@ export function ChangesReview({
   const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
     setSelectedPath(file.path);
+    setSelectedReviewLine(null);
+    setDraftBody("");
     setLoading(true);
     setError(null);
     try {
@@ -92,6 +111,7 @@ export function ChangesReview({
     setLoading(true);
     setError(null);
     setSelectedPath(null);
+    setSelectedReviewLine(null);
     setResult(null);
     try {
       const next = await gitDiff({
@@ -114,8 +134,34 @@ export function ChangesReview({
   const changeMode = (nextMode: DiffMode) => {
     setMode(nextMode);
     setSelectedPath(null);
+    setSelectedReviewLine(null);
+    setDraftBody("");
     setResult(null);
     setError(null);
+  };
+
+  const saveDraft = () => {
+    const body = draftBody.trim();
+    const path = result?.path ?? selectedPath;
+    if (!body || !path || !selectedReviewLine) return;
+
+    const now = Date.now();
+    const draft: ReviewDraft = {
+      id:
+        globalThis.crypto?.randomUUID?.() ??
+        `review-${now}-${Math.random().toString(16).slice(2)}`,
+      workspaceRoot,
+      headSha: snapshot.headSha,
+      path,
+      line: selectedReviewLine.line,
+      side: selectedReviewLine.side,
+      body,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    addReviewDraft(draft);
+    setDraftBody("");
   };
 
   const textualResult =
@@ -161,6 +207,9 @@ export function ChangesReview({
         )}
 
         <div className="ml-auto flex items-center gap-1 border-l border-white/[0.08] pl-2">
+          <Badge tone={drafts.some((draft) => draft.status === "stale") ? "amber" : "neutral"}>
+            {drafts.length} drafts
+          </Badge>
           <Button
             aria-pressed={layout === "unified"}
             size="sm"
@@ -217,6 +266,52 @@ export function ChangesReview({
               ))
             )}
           </div>
+
+          <div className="max-h-48 shrink-0 overflow-y-auto border-t border-white/[0.06]">
+            <div className="flex items-center justify-between px-3 py-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                Local review drafts
+              </span>
+              <span className="mono text-[10px] text-slate-600">{drafts.length}</span>
+            </div>
+            {drafts.length === 0 ? (
+              <div className="px-3 pb-3 text-[10px] leading-4 text-slate-600">
+                Select a Monaco line to create a workspace-local draft.
+              </div>
+            ) : (
+              drafts.map((draft) => (
+                <div key={draft.id} className="border-t border-white/[0.04] px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="mono min-w-0 flex-1 truncate text-[10px] text-slate-400">
+                      {draft.path}:{draft.line} {draft.side}
+                    </span>
+                    <Badge
+                      tone={
+                        draft.status === "posted"
+                          ? "green"
+                          : draft.status === "stale"
+                            ? "amber"
+                            : "neutral"
+                      }
+                    >
+                      {draft.status}
+                    </Badge>
+                    <button
+                      aria-label={`Remove draft ${draft.path} line ${draft.line}`}
+                      className="text-slate-600 hover:text-rose-300"
+                      onClick={() => removeReviewDraft(workspaceRoot, draft.id)}
+                      type="button"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">
+                    {draft.body}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </section>
 
         <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
@@ -224,6 +319,11 @@ export function ChangesReview({
             <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
               {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? "No file selected"}
             </div>
+            {selectedReviewLine && (
+              <Badge tone="orange">
+                {selectedReviewLine.side} L{selectedReviewLine.line}
+              </Badge>
+            )}
             {result?.binary && <Badge tone="orange">binary</Badge>}
             {(result?.truncated || result?.contentTruncated) && (
               <Badge tone="orange">truncated</Badge>
@@ -248,6 +348,7 @@ export function ChangesReview({
                   modified={result.modifiedText ?? ""}
                   path={result.path ?? selectedPath ?? "diff.txt"}
                   layout={layout}
+                  onReviewLineSelect={setSelectedReviewLine}
                 />
               </Suspense>
             ) : result ? (
@@ -262,6 +363,30 @@ export function ChangesReview({
               />
             )}
           </div>
+
+          {selectedReviewLine && textualResult && (
+            <div className="shrink-0 border-t border-orange-400/15 bg-orange-400/[0.035] px-3 py-2">
+              <div className="flex items-center gap-2">
+                <MessageSquarePlus size={13} className="text-orange-300" />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.07em] text-orange-200">
+                  Local draft · {selectedReviewLine.side} line {selectedReviewLine.line}
+                </span>
+                <span className="ml-auto text-[10px] text-slate-600">HEAD {snapshot.headSha}</span>
+              </div>
+              <div className="mt-2 flex items-end gap-2">
+                <textarea
+                  aria-label="Review draft body"
+                  className="field min-h-16 flex-1 resize-y py-2 text-xs"
+                  placeholder="Write a local review comment. Nothing is posted until you explicitly confirm it in GitHub."
+                  value={draftBody}
+                  onChange={(event) => setDraftBody(event.target.value)}
+                />
+                <Button disabled={!draftBody.trim()} onClick={saveDraft} size="sm">
+                  Save draft
+                </Button>
+              </div>
+            </div>
+          )}
 
           {(result?.truncated || result?.contentTruncated) && (
             <div className="border-t border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[11px] text-amber-200">

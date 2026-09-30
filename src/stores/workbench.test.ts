@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { useWorkbenchStore } from "./workbench";
+import { reviewWorkspaceKey, useWorkbenchStore } from "./workbench";
 
 describe("workbench persisted store", () => {
   beforeEach(() => {
@@ -9,6 +9,7 @@ describe("workbench persisted store", () => {
       activeRepositoryId: null,
       profiles: [],
       workspaceStates: {},
+      reviewStates: {},
     });
   });
 
@@ -60,6 +61,42 @@ describe("workbench persisted store", () => {
     expect(raw).toContain("changes");
   });
 
+  it("persists review drafts per workspace and marks old HEAD drafts stale", () => {
+    const workspaceRoot = "D:/Project/.virtuallab-workspaces/virtuallab/review";
+    useWorkbenchStore.getState().addReviewDraft({
+      id: "draft-1",
+      workspaceRoot,
+      headSha: "abc123",
+      path: "src/a.ts",
+      line: 12,
+      side: "RIGHT",
+      body: "Check this guard.",
+      status: "active",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const key = reviewWorkspaceKey(workspaceRoot);
+    expect(useWorkbenchStore.getState().reviewStates[key]?.drafts[0]).toEqual(
+      expect.objectContaining({ id: "draft-1", status: "active" }),
+    );
+    expect(window.localStorage.getItem("virtuallab-workbench-v2")).toContain("Check this guard.");
+
+    useWorkbenchStore.getState().markReviewDraftsStale(workspaceRoot, "def456");
+    expect(useWorkbenchStore.getState().reviewStates[key]?.drafts[0].status).toBe("stale");
+  });
+
+  it("persists the GitHub reference with the workspace review state", () => {
+    const workspaceRoot = "D:/Project/virtuallab";
+    useWorkbenchStore
+      .getState()
+      .setGithubReference(workspaceRoot, "https://github.com/magic-alt/virtuallab/pull/7");
+    expect(
+      useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(workspaceRoot)]
+        ?.githubReference,
+    ).toContain("/pull/7");
+  });
+
   it("removes persisted workspace state with its repository", () => {
     useWorkbenchStore.setState({
       repositories: [
@@ -79,9 +116,18 @@ describe("workbench persisted store", () => {
           updatedAt: 1,
         },
       },
+      reviewStates: {
+        [reviewWorkspaceKey("D:/Project/virtuallab")]: {
+          workspaceRoot: "D:/Project/virtuallab",
+          drafts: [],
+          githubReference: "pr:7",
+          updatedAt: 1,
+        },
+      },
     });
 
     useWorkbenchStore.getState().removeRepository("repo-1");
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toBeUndefined();
+    expect(Object.keys(useWorkbenchStore.getState().reviewStates)).toHaveLength(0);
   });
 });
