@@ -1,15 +1,39 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { runDoctor } from "./doctor.mjs";
 
 const args = new Set(process.argv.slice(2));
 const launch = args.has("--launch");
-const isWindows = process.platform === "win32";
+
+function resolveNpmCli() {
+  const candidates = [
+    process.env.npm_execpath,
+    path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+  ].filter(Boolean);
+
+  const npmCli = candidates.find((candidate) => existsSync(candidate));
+  if (!npmCli) {
+    throw new Error(
+      "Unable to resolve npm-cli.js. Run this through 'npm run acceptance:local' or ensure npm is installed beside Node.js.",
+    );
+  }
+  return npmCli;
+}
 
 function runCommand(command, commandArgs, env) {
+  if (command === "npm") {
+    return spawnSync(process.execPath, [resolveNpmCli(), ...commandArgs], {
+      stdio: "inherit",
+      env,
+      shell: false,
+    });
+  }
+
   return spawnSync(command, commandArgs, {
     stdio: "inherit",
     env,
-    shell: isWindows && command === "npm",
+    shell: false,
   });
 }
 
@@ -56,7 +80,14 @@ console.log("[ ] Terminal: Start/New tab, tab switch, typing, Ctrl+C, resize and
 console.log("[ ] Run: repository-scoped Build/Test profile Run streams output; Stop terminates; add/remove profile works.");
 console.log("[ ] Changes/Checks/History/Overview tabs render and switch correctly.");
 console.log("[ ] Filesystem edits update repository status without manual refresh.");
-console.log("\nRecord failures with command/output and workspace path before merging the closeout PR.");
+console.log("\nV0.3 Phase A diff acceptance:");
+console.log("[ ] Worktree mode shows an unstaged tracked-file diff.");
+console.log("[ ] Staged mode shows the staged version and hides unstaged-only files.");
+console.log("[ ] Base mode loads baseRef...HEAD files even when the working tree is clean.");
+console.log("[ ] Rename / Unicode / space-containing paths remain selectable and preserve old → new identity.");
+console.log("[ ] Binary files show the explicit binary state.");
+console.log("[ ] Large diffs show the truncated state without freezing the desktop window.");
+console.log("\nRecord failures with command/output and workspace path before merging the current PR.");
 
 if (launch) {
   console.log("\nLaunching Tauri dev runtime...");
