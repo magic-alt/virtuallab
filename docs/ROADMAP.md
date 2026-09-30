@@ -36,6 +36,8 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.3 — Review and GitHub
 
+**Status: READY / IN PROGRESS** — V0.1/V0.2 closeout is complete on `main`; implementation is tracked by issue #4 on branch `feat/v0.3-review-github`.
+
 Goal: make the workspace a complete local review lane before introducing agent harnesses.
 
 ### A. Local diff/review foundation

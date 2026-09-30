@@ -17,7 +17,7 @@ Repository
 
 Claude Code, Codex or other agents will attach to this model later; the workbench remains useful without them.
 
-## Current status — V0.2 workspace execution
+## Current status — V0.3 review/GitHub in development
 
 The first slice is already designed for daily local use:
 
@@ -37,7 +37,7 @@ The first slice is already designed for daily local use:
 - filesystem-driven repository refresh
 - architecture and safety boundary ready for review, verification and agents
 
-V0.2 turns the shell into an execution workbench: PTY terminals, isolated worktrees, structured build/test processes and filesystem-driven refresh live behind typed native commands.
+V0.2 is closed: PTY terminals, isolated worktrees, structured build/test processes, filesystem-driven refresh, persisted workspace context and normalized check results are complete. V0.3 is now focused on local diff/review and optional GitHub context through a typed adapter.
 
 ## Technology stack
 
