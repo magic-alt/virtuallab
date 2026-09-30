@@ -25,6 +25,7 @@ pub struct RepositorySnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct ChangeEntry {
     path: String,
+    old_path: Option<String>,
     index_status: String,
     worktree_status: String,
     kind: String,
@@ -85,48 +86,43 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    // Do not recursively expand every file under untracked directories. On large
-    // build/source trees that can turn a status refresh into seconds of disk I/O.
+    // Porcelain -z keeps spaces/Unicode lossless and reports rename/copy paths
+    // as separate NUL-delimited fields. "normal" avoids recursively expanding
+    // every file under large untracked directories.
     let status = git_read(
         &root,
         &[
             "status",
             "--porcelain=v1",
+            "-z",
             "--untracked-files=normal",
             "--ignore-submodules=dirty",
         ],
     )?;
-    let mut changes = Vec::new();
+    let parsed_status = parse_status_z(&status)?;
+    let mut changes = Vec::with_capacity(parsed_status.len());
     let mut staged_count = 0usize;
     let mut unstaged_count = 0usize;
     let mut untracked_count = 0usize;
 
-    for line in status.lines() {
-        let bytes = line.as_bytes();
-        if bytes.len() < 3 {
-            continue;
-        }
-
-        let index = bytes[0] as char;
-        let worktree = bytes[1] as char;
-        let file_path = line.get(3..).unwrap_or_default().to_string();
-
-        if index == '?' && worktree == '?' {
+    for entry in parsed_status {
+        if entry.index == '?' && entry.worktree == '?' {
             untracked_count += 1;
         } else {
-            if index != ' ' {
+            if entry.index != ' ' {
                 staged_count += 1;
             }
-            if worktree != ' ' {
+            if entry.worktree != ' ' {
                 unstaged_count += 1;
             }
         }
 
-        let kind = change_kind(index, worktree).to_string();
+        let kind = change_kind(entry.index, entry.worktree).to_string();
         changes.push(ChangeEntry {
-            path: file_path,
-            index_status: index.to_string(),
-            worktree_status: worktree.to_string(),
+            path: entry.path,
+            old_path: entry.old_path,
+            index_status: entry.index.to_string(),
+            worktree_status: entry.worktree.to_string(),
             kind,
         });
     }
@@ -151,6 +147,56 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         worktrees,
         recent_commits,
     })
+}
+
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedStatusEntry {
+    index: char,
+    worktree: char,
+    path: String,
+    old_path: Option<String>,
+}
+
+fn parse_status_z(raw: &str) -> Result<Vec<ParsedStatusEntry>, String> {
+    let mut fields = raw.split('\0').filter(|field| !field.is_empty());
+    let mut result = Vec::new();
+
+    while let Some(field) = fields.next() {
+        let bytes = field.as_bytes();
+        if bytes.len() < 3 {
+            return Err("Malformed Git status entry".to_string());
+        }
+
+        let index = bytes[0] as char;
+        let worktree = bytes[1] as char;
+        let path = field
+            .get(3..)
+            .ok_or_else(|| "Malformed Git status path".to_string())?
+            .to_string();
+
+        let renamed_or_copied =
+            matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C');
+        let old_path = if renamed_or_copied {
+            Some(
+                fields
+                    .next()
+                    .ok_or_else(|| "Malformed Git rename/copy status".to_string())?
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
+        result.push(ParsedStatusEntry {
+            index,
+            worktree,
+            path,
+            old_path,
+        });
+    }
+
+    Ok(result)
 }
 
 fn change_kind(index: char, worktree: char) -> &'static str {
@@ -358,7 +404,7 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
     let args = diff_args(request.mode, base_ref.as_deref(), path.as_deref())?;
 
     let mut metadata_args = args.clone();
-    let metadata_index = diff_mode_prefix_len(request.mode);
+    let metadata_index = 4;
     metadata_args.insert(metadata_index, "--name-status".to_string());
     metadata_args.insert(metadata_index + 1, "-z".to_string());
     let metadata_refs: Vec<&str> = metadata_args.iter().map(String::as_str).collect();
@@ -366,7 +412,7 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
     let files = parse_name_status_z(&name_status)?;
 
     let mut numstat_args = args.clone();
-    let numstat_index = diff_mode_prefix_len(request.mode);
+    let numstat_index = 4;
     numstat_args.insert(numstat_index, "--numstat".to_string());
     numstat_args.insert(numstat_index + 1, "-z".to_string());
     let numstat_refs: Vec<&str> = numstat_args.iter().map(String::as_str).collect();
@@ -401,13 +447,6 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
         truncated,
         returned_bytes,
     })
-}
-
-fn diff_mode_prefix_len(mode: DiffMode) -> usize {
-    match mode {
-        DiffMode::Worktree => 4,
-        DiffMode::Index | DiffMode::Base => 5,
-    }
 }
 
 fn diff_args(
@@ -800,6 +839,18 @@ mod tests {
     }
 
     #[test]
+    fn status_parser_preserves_unicode_spaces_and_rename_identity() {
+        let raw = "R  新 c.txt\0a b.txt\0?? untracked dir/\0";
+        let entries = parse_status_z(raw).expect("status parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].index, 'R');
+        assert_eq!(entries[0].path, "新 c.txt");
+        assert_eq!(entries[0].old_path.as_deref(), Some("a b.txt"));
+        assert_eq!(entries[1].path, "untracked dir/");
+        assert_eq!(entries[1].old_path, None);
+    }
+
+    #[test]
     fn change_kind_classifies_porcelain_states() {
         assert_eq!(change_kind('?', '?'), "untracked");
         assert_eq!(change_kind('M', ' '), "modified");
@@ -896,6 +947,14 @@ mod tests {
             .expect("base");
         fs::rename(repo.join("README.md"), repo.join("renamed file.md")).expect("rename");
         git_ok(&repo, &["add", "-A"]);
+        let snapshot =
+            inspect_repository_blocking(repo.to_string_lossy().to_string()).expect("inspect rename");
+        assert!(snapshot.changes.iter().any(|change| {
+            change.kind == "renamed"
+                && change.old_path.as_deref() == Some("README.md")
+                && change.path == "renamed file.md"
+        }));
+
         let index = diff_request(&repo, DiffMode::Index, None, None);
         assert!(index.files.iter().any(|file| {
             file.status.starts_with('R')

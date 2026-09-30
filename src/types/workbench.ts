@@ -9,6 +9,7 @@ export type ChangeKind =
 
 export interface ChangeEntry {
   path: string;
+  oldPath?: string | null;
   indexStatus: string;
   worktreeStatus: string;
   kind: ChangeKind;
