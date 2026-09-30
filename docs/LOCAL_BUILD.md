@@ -5,7 +5,7 @@
 From Windows PowerShell, macOS Terminal, or Linux shell at the repository root:
 
 ```bash
-npm install
+npm ci
 npm run doctor
 npm run acceptance:local
 npm run tauri:build
@@ -155,3 +155,13 @@ npm run doctor
 ```
 
 On Apple Silicon, `rustc -vV` should normally report `host: aarch64-apple-darwin`.
+
+
+## Reproducible dependency graph
+
+V0.1 closeout commits both lockfiles:
+
+- `package-lock.json`
+- `src-tauri/Cargo.lock`
+
+Normal local/CI setup should use `npm ci`. Rust checks/tests should use Cargo `--locked` so dependency drift fails fast instead of silently updating the graph.
