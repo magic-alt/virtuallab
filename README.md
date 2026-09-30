@@ -230,3 +230,8 @@ For the normal standalone release build use:
 ```powershell
 npm run tauri:build
 ```
+
+
+## V0.3 preparation
+
+V0.1/V0.2 closeout locks Node/Rust dependencies, restores repository/worktree/tab context, normalizes check results and runs the shared acceptance gate on Windows, macOS and Linux. The next implementation contract is [V0.3 Review and GitHub](docs/V0.3_REVIEW_GITHUB.md).

@@ -21,13 +21,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: npm install
+          cache: npm
+      - run: npm ci
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
 
-  rust:
-    name: Rust check
+  linux-native:
+    name: Linux desktop acceptance (Node 26)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,9 +40,14 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check --manifest-path src-tauri/Cargo.toml
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: npm ci
+      - run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - run: npm run acceptance:local
 
   windows-native:
     name: Windows desktop acceptance (Node 26)
@@ -51,8 +57,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
+      - run: npm ci
       - run: npm run acceptance:local
 
   macos-native:
@@ -63,6 +70,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "26"
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm install
+      - run: npm ci
       - run: npm run acceptance:local
