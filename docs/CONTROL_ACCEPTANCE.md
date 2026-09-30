@@ -41,3 +41,16 @@ A PR should not claim a native control is fully accepted until the corresponding
 
 
 CI repeats the automated gate on Windows, macOS and Linux. Node and Rust dependency graphs are locked by `package-lock.json` and `src-tauri/Cargo.lock`; CI uses `npm ci` and Cargo `--locked`.
+
+
+## V0.3 Phase A — local diff
+
+| Surface | Control / contract | Automated evidence | Desktop acceptance |
+| --- | --- | --- | --- |
+| Changes | changed-file selection | `ChangesReview.test.tsx` | select modified/staged files and verify patch changes |
+| Changes | Worktree / Staged modes | `ChangesReview.test.tsx` + Rust diff fixtures | compare unstaged vs staged content |
+| Changes | Base ref mode | Rust base-ref fixture | enter a valid base ref and load committed branch diff |
+| Git diff | rename / delete / Unicode-space paths | Rust `git.rs` fixtures | inspect representative project changes |
+| Git diff | binary fallback | Rust binary fixture | binary file shows explicit non-text state |
+| Git diff | bounded large output | Rust large-patch fixture | large file shows `truncated` rather than freezing the UI |
+| Git diff | safety boundary | path/worktree/ref validation tests | no arbitrary shell or Git write operation |

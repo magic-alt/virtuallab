@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
+import { ChangesReview } from "@/features/review/ChangesReview";
 import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
 import { isDesktopRuntime } from "@/lib/backend";
 import { repositoryCheckResults } from "@/lib/checks";
@@ -91,7 +92,14 @@ export function WorkspaceContent({
 
       <main className="vl-main surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
-        {tab === "changes" && <Changes snapshot={snapshot} />}
+        {tab === "changes" && (
+          <ChangesReview
+            snapshot={snapshot}
+            repositoryRoot={profileRepositoryRoot}
+            workspaceRoot={snapshot.root}
+            enabled={!isPreview && isDesktopRuntime()}
+          />
+        )}
         {tab === "terminal" && (
           <TerminalWorkspace cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
@@ -224,48 +232,6 @@ function Overview({
             state="planned"
           />
         </div>
-      </Panel>
-    </div>
-  );
-}
-
-function Changes({ snapshot }: { snapshot: RepositorySnapshot }) {
-  return (
-    <div className="mx-auto max-w-[1120px]">
-      <Panel
-        title="Local changes"
-        subtitle="Read-only Git porcelain view. Staging and review actions arrive after the workspace write boundary is defined."
-        icon={<FileCode2 size={16} />}
-      >
-        {snapshot.changes.length === 0 ? (
-          <EmptyState
-            icon={<CheckCircle2 size={19} />}
-            title="Working tree is clean"
-            text="There are no local modifications in this repository."
-          />
-        ) : (
-          <div className="divide-y divide-white/[0.055]">
-            {snapshot.changes.map((change, index) => (
-              <div
-                key={`${change.path}-${index}`}
-                className="flex items-center gap-3 py-3"
-              >
-                <ChangeMark kind={change.kind} />
-                <div className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={change.path}>
-                  {change.path}
-                </div>
-                <div className="mono flex items-center gap-1.5 text-[10px] text-slate-600">
-                  <span className="rounded border border-white/[0.07] bg-white/[0.025] px-1.5 py-1">
-                    I:{change.indexStatus === " " ? "·" : change.indexStatus}
-                  </span>
-                  <span className="rounded border border-white/[0.07] bg-white/[0.025] px-1.5 py-1">
-                    W:{change.worktreeStatus === " " ? "·" : change.worktreeStatus}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </Panel>
     </div>
   );

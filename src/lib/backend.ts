@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  DiffRequest,
+  DiffResponse,
   ProcessSpec,
   RepositorySnapshot,
   WorkspaceMutationResult,
@@ -31,6 +33,11 @@ export async function chooseRepositoryDirectory(): Promise<string | null> {
 export async function inspectRepository(path: string): Promise<RepositorySnapshot> {
   requireDesktop();
   return invoke<RepositorySnapshot>("inspect_repository", { path });
+}
+
+export async function gitDiff(request: DiffRequest): Promise<DiffResponse> {
+  requireDesktop();
+  return invoke<DiffResponse>("git_diff", { request });
 }
 
 export async function createWorktree(

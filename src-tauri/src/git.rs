@@ -1,6 +1,8 @@
-use serde::Serialize;
-use std::path::Path;
-use std::process::Command;
+use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::path::{Component, Path};
+use std::process::{Command, Stdio};
+use std::thread;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -264,6 +266,335 @@ fn git_read_optional(repo: &str, args: &[&str]) -> Option<String> {
 }
 
 
+
+
+const MAX_DIFF_BYTES: usize = 512 * 1024;
+const MAX_DIFF_LINES: usize = 12_000;
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffMode {
+    Worktree,
+    Index,
+    Base,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffRequest {
+    repository_root: String,
+    workspace_root: String,
+    path: Option<String>,
+    mode: DiffMode,
+    base_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffFileSummary {
+    path: String,
+    old_path: Option<String>,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffResponse {
+    mode: DiffMode,
+    base_ref: Option<String>,
+    path: Option<String>,
+    files: Vec<DiffFileSummary>,
+    patch: String,
+    binary: bool,
+    truncated: bool,
+    returned_bytes: usize,
+}
+
+#[tauri::command]
+pub async fn git_diff(request: DiffRequest) -> Result<DiffResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || git_diff_blocking(request))
+        .await
+        .map_err(|error| format!("Git diff task failed: {error}"))?
+}
+
+fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
+    let repository_root = git_read(&request.repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    let workspace_root = git_read(&request.workspace_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+
+    ensure_registered_worktree(&repository_root, &workspace_root)?;
+
+    let path = request
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(validate_relative_path)
+        .transpose()?;
+
+    let base_ref = match request.mode {
+        DiffMode::Base => {
+            let value = request
+                .base_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "Base diff requires baseRef".to_string())?;
+            validate_ref(value)?;
+            let verify = format!("{value}^{{commit}}");
+            git_read(
+                &workspace_root,
+                &["rev-parse", "--verify", "--end-of-options", verify.as_str()],
+            )
+            .map_err(|_| format!("Base ref is not a valid commit: {value}"))?;
+            Some(value.to_string())
+        }
+        _ => None,
+    };
+
+    let args = diff_args(request.mode, base_ref.as_deref(), path.as_deref())?;
+
+    let mut metadata_args = args.clone();
+    let metadata_index = diff_mode_prefix_len(request.mode);
+    metadata_args.insert(metadata_index, "--name-status".to_string());
+    metadata_args.insert(metadata_index + 1, "-z".to_string());
+    let metadata_refs: Vec<&str> = metadata_args.iter().map(String::as_str).collect();
+    let name_status = git_read(&workspace_root, &metadata_refs)?;
+    let files = parse_name_status_z(&name_status)?;
+
+    let mut numstat_args = args.clone();
+    let numstat_index = diff_mode_prefix_len(request.mode);
+    numstat_args.insert(numstat_index, "--numstat".to_string());
+    numstat_args.insert(numstat_index + 1, "-z".to_string());
+    let numstat_refs: Vec<&str> = numstat_args.iter().map(String::as_str).collect();
+    let numstat = git_read(&workspace_root, &numstat_refs)?;
+    let binary = numstat
+        .split('\0')
+        .any(|entry| entry.starts_with("-\t-\t"));
+
+    let patch_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (raw_patch, byte_truncated) =
+        git_read_limited(&workspace_root, &patch_refs, MAX_DIFF_BYTES)?;
+    let text = String::from_utf8_lossy(&raw_patch).to_string();
+    let (mut patch, line_truncated) = truncate_lines(text, MAX_DIFF_LINES);
+    let mut truncated = byte_truncated || line_truncated;
+    if patch.len() > MAX_DIFF_BYTES {
+        let mut end = MAX_DIFF_BYTES;
+        while end > 0 && !patch.is_char_boundary(end) {
+            end -= 1;
+        }
+        patch.truncate(end);
+        truncated = true;
+    }
+    let returned_bytes = patch.len();
+
+    Ok(DiffResponse {
+        mode: request.mode,
+        base_ref,
+        path,
+        files,
+        patch,
+        binary,
+        truncated,
+        returned_bytes,
+    })
+}
+
+fn diff_mode_prefix_len(mode: DiffMode) -> usize {
+    match mode {
+        DiffMode::Worktree => 4,
+        DiffMode::Index | DiffMode::Base => 5,
+    }
+}
+
+fn diff_args(
+    mode: DiffMode,
+    base_ref: Option<&str>,
+    path: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut args = vec![
+        "diff".to_string(),
+        "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
+        "--no-color".to_string(),
+    ];
+
+    match mode {
+        DiffMode::Worktree => {}
+        DiffMode::Index => args.push("--cached".to_string()),
+        DiffMode::Base => {
+            let base = base_ref.ok_or_else(|| "Base diff requires baseRef".to_string())?;
+            args.push(format!("{base}...HEAD"));
+        }
+    }
+
+    args.push("--find-renames".to_string());
+
+    if let Some(path) = path {
+        args.push("--".to_string());
+        args.push(path.to_string());
+    }
+
+    Ok(args)
+}
+
+fn validate_ref(value: &str) -> Result<(), String> {
+    if value.starts_with('-') || value.contains('\0') {
+        return Err("Invalid baseRef".to_string());
+    }
+    Ok(())
+}
+
+fn validate_relative_path(value: &str) -> Result<String, String> {
+    let path = Path::new(value);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Diff path must stay inside the workspace".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn ensure_registered_worktree(repository_root: &str, workspace_root: &str) -> Result<(), String> {
+    let inventory = parse_worktrees(&git_read(
+        repository_root,
+        &["worktree", "list", "--porcelain"],
+    )?);
+    let requested = canonical_or_original(Path::new(workspace_root));
+    let registered = inventory
+        .iter()
+        .any(|item| canonical_or_original(Path::new(&item.path)) == requested);
+
+    if registered {
+        Ok(())
+    } else {
+        Err("workspaceRoot is not a registered worktree of repositoryRoot".to_string())
+    }
+}
+
+fn parse_name_status_z(raw: &str) -> Result<Vec<DiffFileSummary>, String> {
+    let fields: Vec<&str> = raw.split('\0').filter(|field| !field.is_empty()).collect();
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while index < fields.len() {
+        let status = fields[index];
+        index += 1;
+
+        if status.starts_with('R') || status.starts_with('C') {
+            if index + 1 >= fields.len() {
+                return Err("Malformed Git rename/copy metadata".to_string());
+            }
+            let old_path = fields[index].to_string();
+            let path = fields[index + 1].to_string();
+            index += 2;
+            result.push(DiffFileSummary {
+                path,
+                old_path: Some(old_path),
+                status: status.to_string(),
+            });
+        } else {
+            let Some(path) = fields.get(index) else {
+                return Err("Malformed Git diff metadata".to_string());
+            };
+            index += 1;
+            result.push(DiffFileSummary {
+                path: (*path).to_string(),
+                old_path: None,
+                status: status.to_string(),
+            });
+        }
+    }
+
+    Ok(result)
+}
+
+fn git_read_limited(repo: &str, args: &[&str], limit: usize) -> Result<(Vec<u8>, bool), String> {
+    let mut child = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to launch git: {error}"))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture Git stdout".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture Git stderr".to_string())?;
+
+    let stderr_thread = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        bytes
+    });
+
+    let mut output = Vec::with_capacity(limit.min(64 * 1024));
+    let mut buffer = [0u8; 8192];
+    let mut truncated = false;
+
+    loop {
+        let read = stdout
+            .read(&mut buffer)
+            .map_err(|error| format!("Failed to read Git output: {error}"))?;
+        if read == 0 {
+            break;
+        }
+
+        let remaining = limit.saturating_sub(output.len());
+        if read > remaining {
+            output.extend_from_slice(&buffer[..remaining]);
+            truncated = true;
+            let _ = child.kill();
+            break;
+        }
+
+        output.extend_from_slice(&buffer[..read]);
+    }
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("Failed to wait for Git: {error}"))?;
+    let stderr = stderr_thread.join().unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
+
+    if !status.success() && !truncated {
+        return Err(if stderr.is_empty() {
+            format!("Git command failed with {status}")
+        } else {
+            stderr
+        });
+    }
+
+    Ok((output, truncated))
+}
+
+fn truncate_lines(text: String, max_lines: usize) -> (String, bool) {
+    let mut lines = text.lines();
+    let selected: Vec<&str> = lines.by_ref().take(max_lines).collect();
+    let truncated = lines.next().is_some();
+    if truncated {
+        (selected.join("\n"), true)
+    } else {
+        (text, false)
+    }
+}
+
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceMutationResult {
@@ -507,6 +838,126 @@ mod tests {
         assert_eq!(snapshot.dirty_count, 0);
         assert!(!snapshot.head_sha.is_empty());
         assert_eq!(snapshot.worktrees.len(), 1);
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    fn init_fixture_repo(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let sandbox = unique_root(name);
+        let repo = sandbox.join("repo");
+        fs::create_dir_all(&repo).expect("repo directory");
+        git_ok(&repo, &["init"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(repo.join("README.md"), "line one\n").expect("fixture write");
+        git_ok(&repo, &["add", "README.md"]);
+        git_ok(&repo, &["commit", "-m", "fixture"]);
+        (sandbox, repo)
+    }
+
+    fn diff_request(
+        repo: &std::path::Path,
+        mode: DiffMode,
+        path: Option<&str>,
+        base_ref: Option<&str>,
+    ) -> DiffResponse {
+        git_diff_blocking(DiffRequest {
+            repository_root: repo.to_string_lossy().to_string(),
+            workspace_root: repo.to_string_lossy().to_string(),
+            path: path.map(ToOwned::to_owned),
+            mode,
+            base_ref: base_ref.map(ToOwned::to_owned),
+        })
+        .expect("git diff")
+    }
+
+    #[test]
+    fn diff_supports_worktree_and_index_modes_with_unicode_paths() {
+        let (sandbox, repo) = init_fixture_repo("diff-modes");
+        fs::write(repo.join("README.md"), "line one\nline two\n").expect("modify");
+        let worktree = diff_request(&repo, DiffMode::Worktree, Some("README.md"), None);
+        assert!(worktree.patch.contains("+line two"));
+        assert_eq!(worktree.files[0].status, "M");
+
+        fs::write(repo.join("新 file.txt"), "hello\n").expect("unicode file");
+        git_ok(&repo, &["add", "新 file.txt"]);
+        let index = diff_request(&repo, DiffMode::Index, Some("新 file.txt"), None);
+        assert!(index.patch.contains("hello"));
+        assert_eq!(index.files[0].path, "新 file.txt");
+        assert_eq!(index.files[0].status, "A");
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_reports_rename_delete_and_base_ref() {
+        let (sandbox, repo) = init_fixture_repo("diff-rename");
+        let base = git_read(repo.to_string_lossy().as_ref(), &["rev-parse", "HEAD"])
+            .expect("base");
+        fs::rename(repo.join("README.md"), repo.join("renamed file.md")).expect("rename");
+        git_ok(&repo, &["add", "-A"]);
+        let index = diff_request(&repo, DiffMode::Index, None, None);
+        assert!(index.files.iter().any(|file| {
+            file.status.starts_with('R')
+                && file.old_path.as_deref() == Some("README.md")
+                && file.path == "renamed file.md"
+        }));
+        git_ok(&repo, &["commit", "-m", "rename"]);
+
+        fs::remove_file(repo.join("renamed file.md")).expect("delete");
+        git_ok(&repo, &["add", "-A"]);
+        git_ok(&repo, &["commit", "-m", "delete"]);
+
+        let base_diff = diff_request(&repo, DiffMode::Base, None, Some(base.trim()));
+        assert!(base_diff.files.iter().any(|file| file.status.starts_with('D')));
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_detects_binary_and_bounds_large_patch() {
+        let (sandbox, repo) = init_fixture_repo("diff-bounds");
+        fs::write(repo.join("blob.bin"), [0u8, 1, 2, 3]).expect("binary");
+        git_ok(&repo, &["add", "blob.bin"]);
+        git_ok(&repo, &["commit", "-m", "binary"]);
+        fs::write(repo.join("blob.bin"), [0u8, 9, 8, 7]).expect("binary modify");
+
+        let binary = diff_request(&repo, DiffMode::Worktree, Some("blob.bin"), None);
+        assert!(binary.binary);
+
+        let large = "x".repeat(MAX_DIFF_BYTES + 200_000);
+        fs::write(repo.join("large.txt"), large).expect("large");
+        git_ok(&repo, &["add", "large.txt"]);
+        let bounded = diff_request(&repo, DiffMode::Index, Some("large.txt"), None);
+        assert!(bounded.truncated);
+        assert!(bounded.returned_bytes <= MAX_DIFF_BYTES);
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_rejects_path_escape_and_unregistered_workspace() {
+        let (sandbox, repo) = init_fixture_repo("diff-guards");
+        let invalid_path = git_diff_blocking(DiffRequest {
+            repository_root: repo.to_string_lossy().to_string(),
+            workspace_root: repo.to_string_lossy().to_string(),
+            path: Some("../outside.txt".to_string()),
+            mode: DiffMode::Worktree,
+            base_ref: None,
+        });
+        assert!(invalid_path.is_err());
+
+        let other = sandbox.join("other");
+        fs::create_dir_all(&other).expect("other repo");
+        git_ok(&other, &["init"]);
+        let invalid_workspace = git_diff_blocking(DiffRequest {
+            repository_root: repo.to_string_lossy().to_string(),
+            workspace_root: other.to_string_lossy().to_string(),
+            path: None,
+            mode: DiffMode::Worktree,
+            base_ref: None,
+        });
+        assert!(invalid_workspace.is_err());
 
         let _ = fs::remove_dir_all(sandbox);
     }
