@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { editor } from "monaco-editor";
-import { enforceDiffPaneWrapping } from "./MonacoReviewSurface";
+import { enforceDiffPaneWrapping } from "./diffPaneWrapping";
 
 describe("enforceDiffPaneWrapping", () => {
   it("forces visual wrapping on both original and modified diff panes", () => {
