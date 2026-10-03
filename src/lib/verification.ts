@@ -109,13 +109,36 @@ export function addEvidenceArtifact(
   };
 }
 
+function validateEvidenceChecks(
+  profile: VerificationProfile,
+  checks: EvidenceCheck[],
+) {
+  const known = new Set(profile.gates.map((gate) => gate.id));
+  const seen = new Set<string>();
+  for (const check of checks) {
+    if (!known.has(check.gateId)) {
+      throw new Error(
+        `Evidence references unknown verification gate '${check.gateId}'.`,
+      );
+    }
+    if (seen.has(check.gateId)) {
+      throw new Error(
+        `Evidence contains duplicate verification gate '${check.gateId}'.`,
+      );
+    }
+    seen.add(check.gateId);
+  }
+}
+
 export function evidenceStatus(
   profile: VerificationProfile,
   checks: EvidenceCheck[],
 ): EvidenceStatus {
   validateVerificationProfile(profile);
+  validateEvidenceChecks(profile, checks);
   const byGate = new Map(checks.map((check) => [check.gateId, check]));
   const required = profile.gates.filter((gate) => gate.required);
+  const optional = profile.gates.filter((gate) => !gate.required);
 
   if (required.some((gate) => byGate.get(gate.id)?.status === "fail")) return "fail";
   if (required.some((gate) => byGate.get(gate.id)?.status === "running")) return "running";
@@ -123,6 +146,14 @@ export function evidenceStatus(
     return "not_run";
   }
   if (required.some((gate) => byGate.get(gate.id)?.status === "warn")) return "warn";
+  if (
+    optional.some((gate) => {
+      const status = byGate.get(gate.id)?.status;
+      return status === "fail" || status === "warn";
+    })
+  ) {
+    return "warn";
+  }
   return "pass";
 }
 
