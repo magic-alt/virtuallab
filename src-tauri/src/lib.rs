@@ -1,8 +1,13 @@
+mod agent;
 mod execution;
 mod git;
 mod github;
 mod watch;
 
+use agent::{
+    agent_harness_capabilities, agent_session_start, agent_session_stop, agent_turn_interrupt,
+    agent_turn_start, agent_turn_steer, AgentManager,
+};
 use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
@@ -17,6 +22,7 @@ pub fn run() {
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
         .manage(WatchManager::default())
+        .manage(AgentManager::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             inspect_repository,
@@ -34,6 +40,12 @@ pub fn run() {
             process_stop,
             watch_start,
             watch_stop,
+            agent_harness_capabilities,
+            agent_session_start,
+            agent_session_stop,
+            agent_turn_start,
+            agent_turn_steer,
+            agent_turn_interrupt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VirtualLab");
