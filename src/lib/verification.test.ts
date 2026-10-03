@@ -88,6 +88,44 @@ describe("verification profile and evidence manifest", () => {
     expect(manifest.artifacts).toHaveLength(1);
   });
 
+  it("downgrades optional gate failures to a warning instead of hiding them", () => {
+    expect(
+      evidenceStatus(PROFILE, [
+        {
+          gateId: "typecheck",
+          status: "pass",
+          detail: "tsc passed",
+          startedAtMs: 1,
+          finishedAtMs: 2,
+          exitCode: 0,
+        },
+        {
+          gateId: "hardware-smoke",
+          status: "fail",
+          detail: "bench unavailable",
+          startedAtMs: 1,
+          finishedAtMs: 2,
+          exitCode: 1,
+        },
+      ]),
+    ).toBe("warn");
+  });
+
+  it("rejects evidence for gates outside the selected profile", () => {
+    expect(() =>
+      evidenceStatus(PROFILE, [
+        {
+          gateId: "unknown",
+          status: "pass",
+          detail: "invalid evidence",
+          startedAtMs: 1,
+          finishedAtMs: 2,
+          exitCode: 0,
+        },
+      ]),
+    ).toThrow("unknown verification gate 'unknown'");
+  });
+
   it("fails a run when a required gate fails", () => {
     expect(
       evidenceStatus(PROFILE, [
