@@ -15,6 +15,7 @@ use tauri::{AppHandle, Emitter, State};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+type SharedStdin = Arc<Mutex<ChildStdin>>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +105,19 @@ impl AgentEvent {
         }
     }
 
+    fn server_request(root: &str, method: &str, payload: Value) -> Self {
+        let (thread_id, turn_id) = extract_ids(&payload);
+        Self {
+            event_type: "agent.server_request_rejected".into(),
+            workspace_root: root.into(),
+            thread_id,
+            turn_id,
+            method: Some(method.into()),
+            payload: Some(payload),
+            timestamp_ms: now_ms(),
+        }
+    }
+
     fn lifecycle(kind: &str, root: &str, thread_id: Option<String>) -> Self {
         Self {
             event_type: kind.into(),
@@ -130,7 +144,7 @@ impl AgentEvent {
 }
 
 struct CodexProcess {
-    stdin: Mutex<ChildStdin>,
+    stdin: SharedStdin,
     child: Mutex<Child>,
     pending: Pending,
     next_id: AtomicU64,
@@ -141,9 +155,7 @@ impl CodexProcess {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().map_err(lock_error)?.insert(id, tx);
-        if let Err(error) = self.write(json!({
-            "jsonrpc": "2.0", "id": id, "method": method, "params": params
-        })) {
+        if let Err(error) = self.write(rpc_request(id, method, params)) {
             if let Ok(mut pending) = self.pending.lock() {
                 pending.remove(&id);
             }
@@ -162,17 +174,19 @@ impl CodexProcess {
     }
 
     fn notify(&self, method: &str) -> Result<(), String> {
-        self.write(json!({ "jsonrpc": "2.0", "method": method }))
+        self.write(rpc_notification(method))
     }
 
     fn write(&self, value: Value) -> Result<(), String> {
-        let mut stdin = self.stdin.lock().map_err(lock_error)?;
-        serde_json::to_writer(&mut *stdin, &value)
-            .map_err(|error| format!("Failed to encode Codex JSON-RPC: {error}"))?;
-        stdin
-            .write_all(b"\n")
-            .and_then(|_| stdin.flush())
-            .map_err(|error| format!("Failed to write Codex JSON-RPC: {error}"))
+        write_message(&self.stdin, &value)
+    }
+
+    fn is_running(&self) -> Result<bool, String> {
+        let mut child = self.child.lock().map_err(lock_error)?;
+        child
+            .try_wait()
+            .map(|status| status.is_none())
+            .map_err(|error| format!("Failed to inspect Codex app-server: {error}"))
     }
 
     fn stop(&self) -> Result<(), String> {
@@ -261,15 +275,24 @@ fn start_session(
         return Err(format!("Agent workspace is not a directory: {}", request.workspace_root));
     }
     let key = workspace_key(root);
-    if let Some(existing) = manager.runtimes.lock().map_err(lock_error)?.get(&key).cloned() {
-        if request
-            .thread_id
-            .as_deref()
-            .is_some_and(|thread| thread != existing.binding.thread_id)
-        {
-            return Err("Workspace already has a different active Codex thread.".into());
+    let existing = manager
+        .runtimes
+        .lock()
+        .map_err(lock_error)?
+        .get(&key)
+        .cloned();
+    if let Some(existing) = existing {
+        if existing.process.is_running()? {
+            if request
+                .thread_id
+                .as_deref()
+                .is_some_and(|thread| thread != existing.binding.thread_id)
+            {
+                return Err("Workspace already has a different active Codex thread.".into());
+            }
+            return Ok(existing.binding.clone());
         }
-        return Ok(existing.binding.clone());
+        manager.runtimes.lock().map_err(lock_error)?.remove(&key);
     }
 
     let process = spawn_codex(&app, root)?;
@@ -472,14 +495,31 @@ fn spawn_codex(app: &AppHandle, root: &str) -> Result<Arc<CodexProcess>, String>
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Failed to start Codex app-server: {error}"))?;
-    let stdin = child.stdin.take().ok_or("Codex stdin unavailable")?;
-    let stdout = child.stdout.take().ok_or("Codex stdout unavailable")?;
-    let stderr = child.stderr.take().ok_or("Codex stderr unavailable")?;
+    let stdin = Arc::new(Mutex::new(
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| "Codex stdin unavailable".to_string())?,
+    ));
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex stdout unavailable".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Codex stderr unavailable".to_string())?;
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-    spawn_stdout(app.clone(), root.into(), stdout, pending.clone());
+    spawn_stdout(
+        app.clone(),
+        root.into(),
+        stdout,
+        pending.clone(),
+        stdin.clone(),
+    );
     spawn_stderr(app.clone(), root.into(), stderr);
     Ok(Arc::new(CodexProcess {
-        stdin: Mutex::new(stdin),
+        stdin,
         child: Mutex::new(child),
         pending,
         next_id: AtomicU64::new(1),
@@ -491,6 +531,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
     root: String,
     stdout: R,
     pending: Pending,
+    stdin: SharedStdin,
 ) {
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
@@ -532,6 +573,25 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
             }
             if let Some(method) = message.get("method").and_then(Value::as_str) {
                 let payload = message.get("params").cloned().unwrap_or_default();
+                if let Some(request_id) = message.get("id").cloned() {
+                    let _ = app.emit(
+                        "agent://event",
+                        AgentEvent::server_request(&root, method, payload),
+                    );
+                    if let Err(error) = write_message(
+                        &stdin,
+                        &rpc_rejection(
+                            request_id,
+                            "VirtualLab foundation adapter rejects server-initiated requests",
+                        ),
+                    ) {
+                        let _ = app.emit(
+                            "agent://event",
+                            AgentEvent::diagnostic("agent.protocol_error", &root, error),
+                        );
+                    }
+                    continue;
+                }
                 let _ = app.emit(
                     "agent://event",
                     AgentEvent::notification(&root, method, payload),
@@ -580,6 +640,34 @@ fn extract_ids(value: &Value) -> (Option<String>, Option<String>) {
             .or_else(|| nested_id(value, nested))
     };
     (id("threadId", "thread"), id("turnId", "turn"))
+}
+
+fn rpc_request(id: u64, method: &str, params: Value) -> Value {
+    json!({ "id": id, "method": method, "params": params })
+}
+
+fn rpc_notification(method: &str) -> Value {
+    json!({ "method": method })
+}
+
+fn rpc_rejection(id: Value, message: &str) -> Value {
+    json!({
+        "id": id,
+        "error": {
+            "code": -32601,
+            "message": message
+        }
+    })
+}
+
+fn write_message(stdin: &SharedStdin, value: &Value) -> Result<(), String> {
+    let mut stdin = stdin.lock().map_err(lock_error)?;
+    serde_json::to_writer(&mut *stdin, value)
+        .map_err(|error| format!("Failed to encode Codex RPC: {error}"))?;
+    stdin
+        .write_all(b"\n")
+        .and_then(|_| stdin.flush())
+        .map_err(|error| format!("Failed to write Codex RPC: {error}"))
 }
 
 fn rpc_error(value: &Value) -> String {
@@ -644,6 +732,28 @@ fn codex_command() -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_wire_messages_omit_jsonrpc_version_field() {
+        let request = rpc_request(7, "thread/start", json!({ "cwd": "/tmp" }));
+        let notification = rpc_notification("initialized");
+        assert_eq!(request.get("id").and_then(Value::as_u64), Some(7));
+        assert!(request.get("jsonrpc").is_none());
+        assert!(notification.get("jsonrpc").is_none());
+    }
+
+    #[test]
+    fn server_request_rejection_preserves_string_id() {
+        let rejected = rpc_rejection(json!("approval-1"), "unsupported");
+        assert_eq!(rejected.get("id").and_then(Value::as_str), Some("approval-1"));
+        assert_eq!(
+            rejected
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(Value::as_i64),
+            Some(-32601)
+        );
+    }
 
     #[test]
     fn extracts_notification_ids() {
