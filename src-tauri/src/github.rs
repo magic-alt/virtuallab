@@ -52,6 +52,7 @@ pub struct GithubPullRequest {
     base_ref: String,
     head_ref: String,
     head_sha: String,
+    base_sha: Option<String>,
     is_draft: bool,
     author: Option<String>,
     changed_files: Vec<GithubChangedFile>,
@@ -380,7 +381,7 @@ fn load_pull_request(
         "--repo".to_string(),
         repository.to_string(),
         "--json".to_string(),
-        "number,title,state,url,baseRefName,headRefName,headRefOid,isDraft,author,files,statusCheckRollup"
+        "number,title,state,url,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,author,files,statusCheckRollup"
             .to_string(),
     ]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -454,6 +455,7 @@ fn parse_pull_request(value: &Value) -> Result<GithubPullRequest, String> {
         base_ref: required_string(value, "baseRefName")?,
         head_ref: required_string(value, "headRefName")?,
         head_sha: required_string(value, "headRefOid")?,
+        base_sha: value.get("baseRefOid").and_then(Value::as_str).map(ToOwned::to_owned),
         is_draft: value.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
         author: value
             .get("author")

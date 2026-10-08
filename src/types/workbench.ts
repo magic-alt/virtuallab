@@ -127,7 +127,18 @@ export interface ReviewDraft {
   postedUrl?: string | null;
 }
 
+export type ReviewLoopPhase = "review" | "fix" | "needs_rereview" | "reviewed";
+
+export interface ReviewWorkspaceRequest {
+  reference: string;
+  kind: "issue" | "pr";
+  number: number;
+}
+
 export interface WorkspaceReviewState {
+  phase?: ReviewLoopPhase;
+  lastReviewedHead?: string | null;
+  lastRefreshAt?: number | null;
   workspaceRoot: string;
   drafts: ReviewDraft[];
   githubReference?: string | null;
@@ -217,6 +228,7 @@ export interface GithubPullRequest {
   baseRef: string;
   headRef: string;
   headSha: string;
+  baseSha?: string | null;
   isDraft: boolean;
   author?: string | null;
   changedFiles: GithubChangedFile[];
