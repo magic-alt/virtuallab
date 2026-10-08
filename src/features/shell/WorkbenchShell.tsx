@@ -72,6 +72,8 @@ export function WorkbenchShell() {
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
+  // A synchronous guard prevents rapid double-clicks before React re-renders.
+  const gitMutationInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
@@ -308,7 +310,8 @@ export function WorkbenchShell() {
   };
 
   const runGitMutation = async (action: () => Promise<void | boolean>) => {
-    if (!activeRepository || gitBusy || loading) return;
+    if (!activeRepository || gitMutationInFlightRef.current || loading) return;
+    gitMutationInFlightRef.current = true;
     setGitBusy(true);
     setError(null);
     try {
@@ -320,6 +323,7 @@ export function WorkbenchShell() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      gitMutationInFlightRef.current = false;
       setGitBusy(false);
     }
   };
