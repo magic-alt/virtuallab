@@ -1291,7 +1291,15 @@ mod tests {
             let snapshot = inspect_repository_blocking(root.clone()).unwrap();
             assert_eq!(snapshot.current_branch, destination);
             let active = snapshot.branches.iter().find(|item| item.name == destination).unwrap();
-            assert_eq!(active.worktree_path.as_deref(), Some(root.as_str()));
+            // Git prints canonical worktree paths. Comparing their raw spelling
+            // breaks on macOS (/var -> /private/var) and Windows (8.3 short
+            // aliases, path separators). Verify physical path identity instead.
+            let actual_worktree = active.worktree_path.as_ref().expect("active worktree path");
+            assert_eq!(
+                canonical_or_original(std::path::Path::new(actual_worktree)),
+                canonical_or_original(&repo),
+                "the active branch must be checked out in the original worktree"
+            );
             for filename in ["generated.log", "build-cache.json", "tool-output.txt"] {
                 assert_eq!(
                     fs::read_to_string(repo.join(filename)).unwrap(),
