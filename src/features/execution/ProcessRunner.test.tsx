@@ -78,17 +78,17 @@ describe("ProcessRunner controls", () => {
       profiles: [
         {
           id: "other",
-          name: "VirtualLab Rust check",
+          name: "Repository A Rust check",
           kind: "test",
-          repositoryRoot: "D:/Project/virtuallab",
+          repositoryRoot: "D:/Work/sample-alpha",
           program: "cargo",
           args: ["check", "--manifest-path", "src-tauri/Cargo.toml"],
         },
       ],
     });
 
-    render(<ProcessRunner cwd="D:/Project/servo_host" repositoryRoot="D:/Project/servo_host" enabled />);
-    expect(screen.queryByText("VirtualLab Rust check")).not.toBeInTheDocument();
+    render(<ProcessRunner cwd="D:/Work/sample-beta" repositoryRoot="D:/Work/sample-beta" enabled />);
+    expect(screen.queryByText("Repository A Rust check")).not.toBeInTheDocument();
     expect(screen.getByText(/No run profiles for this repository/i)).toBeInTheDocument();
   });
 

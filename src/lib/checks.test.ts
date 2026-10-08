@@ -14,7 +14,7 @@ describe("check result normalization", () => {
     const results = repositoryCheckResults(
       {
         ...PREVIEW_SNAPSHOT,
-        remoteUrl: "https://github.com/magic-alt/virtuallab.git",
+        remoteUrl: "https://github.com/example-org/sample-repo.git",
         dirtyCount: 2,
       },
       false,
