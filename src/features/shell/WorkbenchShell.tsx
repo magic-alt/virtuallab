@@ -17,6 +17,9 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
+  gitFetchOrigin,
+  gitPullCurrent,
+  gitSwitchBranch,
   inspectRepository,
   isDesktopRuntime,
   removeWorktree,
@@ -67,6 +70,7 @@ export function WorkbenchShell() {
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [loading, setLoading] = useState(false);
+  const [gitBusy, setGitBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
@@ -302,6 +306,42 @@ export function WorkbenchShell() {
     }
   };
 
+  const runGitMutation = async (action: () => Promise<void>) => {
+    if (!activeRepository || gitBusy || loading) return;
+    setGitBusy(true);
+    setError(null);
+    try {
+      await action();
+      await loadSnapshot(activePathRef.current ?? activeRepository.path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGitBusy(false);
+    }
+  };
+
+  const selectBranch = async (name: string) => {
+    if (!activeRepository || gitBusy || loading) return;
+    const occupied = snapshot.branches.find((branch) => branch.name === name)?.worktreePath;
+    if (occupied && normalizePath(occupied) !== normalizePath(snapshot.root)) {
+      // Git will not check out the same branch into two worktrees. Navigate
+      // to the existing owner instead of forcing the checkout.
+      try {
+        const next = await loadSnapshot(occupied);
+        saveWorkspaceState({
+          repositoryId: activeRepository.id,
+          activeWorktreePath: next.root,
+          activeTab: tab,
+          updatedAt: Date.now(),
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    await runGitMutation(() => gitSwitchBranch(activeRepository.path, snapshot.root, name));
+  };
+
   const isPreview = !activeRepository;
   const native = isDesktopRuntime();
 
@@ -380,6 +420,8 @@ export function WorkbenchShell() {
           }}
           onRemoveWorkspace={(path) => void deleteWorkspace(path)}
           workspaceActionsEnabled={native && Boolean(activeRepository)}
+          branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
+          onSwitchBranch={(branch) => { void selectBranch(branch); }}
         />
 
         <section className="vl-stage flex min-w-0 flex-1 flex-col">
@@ -387,6 +429,13 @@ export function WorkbenchShell() {
             snapshot={snapshot}
             isPreview={isPreview}
             loading={loading}
+            gitBusy={gitBusy}
+            onFetch={() => {
+              if (activeRepository) void runGitMutation(() => gitFetchOrigin(activeRepository.path));
+            }}
+            onPull={() => {
+              if (activeRepository) void runGitMutation(() => gitPullCurrent(activeRepository.path, snapshot.root));
+            }}
             onRefresh={() => {
               const path = activePathRef.current;
               if (path) void loadSnapshot(path).catch(() => undefined);
