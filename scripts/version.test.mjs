@@ -1,11 +1,10 @@
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { inspectVersions, setVersion } from "./version.mjs";
 
-const repoRoot = fileURLToPath(new URL("../", import.meta.url));
+const repoRoot = process.cwd();
 const versionFiles = [
   "package.json",
   "package-lock.json",
