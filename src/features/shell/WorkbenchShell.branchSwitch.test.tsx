@@ -96,15 +96,18 @@ describe("workbench branch switching with untracked artifacts", () => {
       expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
     });
 
+    await waitFor(() => expect(main).toBeEnabled());
     await user.click(main);
     await waitFor(() => {
       expect(harness.switchBranch).toHaveBeenCalledWith(repoRoot, repoRoot, "main");
       expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
     });
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Switch to codex/pr-15" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active"));
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Switch to main" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Switch to main" }));
     await waitFor(() => {
       expect(harness.switchBranch).toHaveBeenCalledTimes(3);
@@ -138,6 +141,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active"),
     );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open worktree for main" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Open worktree for main" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
@@ -151,6 +155,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.switchBranch.mockRejectedValueOnce(new Error("Cannot switch branches with staged or modified tracked files"));
     render(<WorkbenchShell />);
     await screen.findByRole("button", { name: "Switch to main" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Switch to main" })).toBeEnabled());
 
     await user.click(screen.getByRole("button", { name: "Switch to main" }));
     expect(await screen.findByText(/Cannot switch branches with staged or modified tracked files/)).toBeInTheDocument();
