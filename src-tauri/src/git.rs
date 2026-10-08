@@ -891,7 +891,18 @@ fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<
 
 fn require_clean_workspace(workspace: &str) -> Result<(), String> {
     if !git_read(workspace, &["status", "--porcelain=v1", "--untracked-files=normal"])?.is_empty() {
-        Err("Commit or stash local changes (including untracked files) before switching or pulling.".to_string())
+        Err("Commit or stash local changes (including untracked files) before pulling.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+// Branch changes must not silently carry staged/unstaged tracked modifications.
+// Untracked build artifacts are *not* an unconditional blocker: Git's native
+// checkout protection will refuse the switch if they collide with target files.
+fn require_no_tracked_changes(workspace: &str) -> Result<(), String> {
+    if !git_read(workspace, &["status", "--porcelain=v1", "--untracked-files=no"])?.is_empty() {
+        Err("Cannot switch branches with staged or modified tracked files. Commit or stash them first. Untracked files alone are allowed when they do not conflict.".to_string())
     } else {
         Ok(())
     }
@@ -921,7 +932,7 @@ fn git_switch_branch_blocking(repository_root: String, workspace_root: String, b
     if current.trim() == branch {
         return Ok(());
     }
-    require_clean_workspace(&workspace)?;
+    require_no_tracked_changes(&workspace)?;
     let local_ref = format!("refs/heads/{branch}");
     if git_read(&workspace, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_ok() {
         git(&workspace, &["switch", branch])?;
@@ -1254,6 +1265,67 @@ mod tests {
         assert!(git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string()).is_err());
         assert!(git_pull_current_blocking(repo_path.clone(), repo_path.clone()).is_err());
         fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_codex_pr_15_main_round_trip_with_untracked_files() {
+        let (sandbox, repo) = init_fixture_repo("pr15-main-roundtrip");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "codex/pr-15"]);
+
+        // Build artifacts from macOS remain untracked and must not lock the user
+        // into the PR branch when Git can safely preserve them.
+        for filename in ["generated.log", "build-cache.json", "tool-output.txt"] {
+            fs::write(repo.join(filename), format!("user data: {filename}")).unwrap();
+        }
+        for destination in ["main", "codex/pr-15", "main"] {
+            git_switch_branch_blocking(root.clone(), root.clone(), destination.to_string())
+                .expect("safe branch checkout must succeed despite untracked files");
+            let snapshot = inspect_repository_blocking(root.clone()).unwrap();
+            assert_eq!(snapshot.current_branch, destination);
+            let active = snapshot.branches.iter().find(|item| item.name == destination).unwrap();
+            assert_eq!(active.worktree_path.as_deref(), Some(root.as_str()));
+            for filename in ["generated.log", "build-cache.json", "tool-output.txt"] {
+                assert_eq!(
+                    fs::read_to_string(repo.join(filename)).unwrap(),
+                    format!("user data: {filename}")
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_preserves_conflicting_untracked_files_and_rejects_tracked_edits() {
+        let (sandbox, repo) = init_fixture_repo("branch-switch-guards");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "codex/pr-15"]);
+        git_ok(&repo, &["switch", "main"]);
+        fs::write(repo.join("collision.txt"), "main tracked content").unwrap();
+        git_ok(&repo, &["add", "collision.txt"]);
+        git_ok(&repo, &["commit", "-m", "main adds file"]);
+        git_ok(&repo, &["switch", "codex/pr-15"]);
+        fs::write(repo.join("collision.txt"), "untracked user content").unwrap();
+
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("Git must block overwriting untracked files");
+        assert!(error.contains("untracked") || error.contains("overwritten"), "{error}");
+        assert_eq!(fs::read_to_string(repo.join("collision.txt")).unwrap(), "untracked user content");
+        assert_eq!(inspect_repository_blocking(root.clone()).unwrap().current_branch, "codex/pr-15");
+
+        fs::remove_file(repo.join("collision.txt")).unwrap();
+        fs::write(repo.join("README.md"), "modified tracked content").unwrap();
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("tracked modifications must block checkout");
+        assert!(error.contains("Commit or stash"), "{error}");
+        git_ok(&repo, &["add", "README.md"]);
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("staged modifications must block checkout");
+        assert!(error.contains("Commit or stash"), "{error}");
+        assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "codex/pr-15");
         let _ = fs::remove_dir_all(sandbox);
     }
 
