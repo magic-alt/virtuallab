@@ -42,6 +42,7 @@ const snapshot: RepositorySnapshot = {
     { path: "src/b.ts", indexStatus: "A", worktreeStatus: " ", kind: "added" },
   ],
   worktrees: [{ path: "D:/repo", head: "1234567890", branch: "feat/review", detached: false }],
+  branches: [{ name: "feat/review", local: true, remote: false, worktreePath: "D:/repo" }],
   recentCommits: [],
 };
 
