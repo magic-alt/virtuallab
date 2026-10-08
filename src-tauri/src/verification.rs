@@ -1,6 +1,6 @@
-use crate::process::background_command;
 //! Local verification runner and evidence storage.
 //! This module intentionally does NOT authorize hardware execution.
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
