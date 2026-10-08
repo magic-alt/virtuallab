@@ -21,6 +21,8 @@ function props() {
     onNewWorkspace: vi.fn(),
     onSelectWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
+    onSwitchBranch: vi.fn(),
+    branchActionsEnabled: true,
     workspaceActionsEnabled: true,
     repositoryActionsEnabled: true,
     filterQuery: "",
@@ -50,6 +52,12 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
     expect(p.onRemoveWorkspace).toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /switch to feat\/remote-only/i }));
+    expect(p.onSwitchBranch).toHaveBeenCalledWith("feat/remote-only");
+
+    await user.click(screen.getByRole("button", { name: /open worktree for main/i }));
+    expect(p.onSwitchBranch).toHaveBeenCalledWith("main");
   });
 
   it("filters repositories and disables native-only controls in web preview", () => {
@@ -60,11 +68,13 @@ describe("ProjectSidebar controls", () => {
         filterQuery="sample-beta"
         repositoryActionsEnabled={false}
         workspaceActionsEnabled={false}
+        branchActionsEnabled={false}
       />,
     );
     expect(screen.queryByText("sample-alpha")).not.toBeInTheDocument();
     expect(screen.getByText("sample-beta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add repository/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^new$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /switch to feat\/remote-only/i })).toBeDisabled();
   });
 });
