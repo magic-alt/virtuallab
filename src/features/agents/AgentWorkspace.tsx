@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { AlertTriangle, CircleStop, Play, ShieldAlert } from "lucide-react";
 import { getHarnessAdapter } from "@/lib/agentHarness";
 import { AgentApprovalBroker, type ProtectedAction } from "@/lib/agentSafety";
 import { WorkspaceAgentService } from "@/lib/workspaceAgent";
 import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions";
+import { useAgentTimeline } from "@/stores/agentTimeline";
 import { BUILTIN_ROLES, buildAgentPrompt, useAgentConfiguration } from "@/stores/agentConfiguration";
 import type {
-  AgentEvent, AgentHarnessCapabilities, AgentHarnessKind, AgentSessionBinding,
+  AgentEvent, AgentHarnessCapabilities, AgentHarnessKind,
 } from "@/types/agent";
 
 interface Props { workspaceRoot: string; enabled: boolean }
@@ -37,6 +37,10 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const key = agentWorkspaceKey(workspaceRoot);
   const binding = useAgentSessionStore((s) => s.bindings[key]);
   const setBinding = useAgentSessionStore((s) => s.setBinding);
+  const events = useAgentTimeline((s) => s.entries[key] ?? []);
+  const turn = useAgentTimeline((s) => s.activeTurns[key] ?? null);
+  const setActiveTurn = useAgentTimeline((s) => s.setActiveTurn);
+  const clearTimeline = useAgentTimeline((s) => s.clear);
   const config = useAgentConfiguration();
   const selection = config.selections[key] ?? { roleId: "general", skillIds: [] };
   const roles = [...BUILTIN_ROLES, ...config.roles];
@@ -45,9 +49,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const [harness, setHarness] = useState<AgentHarnessKind>(binding?.harness ?? "codex");
   const [capabilities, setCapabilities] = useState<AgentHarnessCapabilities | null>(emptyCapabilities);
   const [attached, setAttached] = useState(false);
-  const [turn, setTurn] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
-  const [events, setEvents] = useState<AgentEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -62,33 +64,8 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
 
   useEffect(() => {
     setHarness(useAgentSessionStore.getState().bindings[agentWorkspaceKey(workspaceRoot)]?.harness ?? "codex");
-    setEvents([]); setAttached(false); setTurn(null); setCapabilities(null); setError("");
+    setAttached(false); setCapabilities(null); setError("");
   }, [workspaceRoot]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let dead = false;
-    let stop: UnlistenFn | undefined;
-    void listen<AgentEvent>("agent://event", (event) => {
-      const item = event.payload;
-      if (!item || agentWorkspaceKey(item.workspaceRoot) !== key) return;
-      // Provider-specific events are emitted only by the attached workspace runtime.
-      if (item.eventType === "agent.session_binding") {
-        const data = item.payload as { binding?: AgentSessionBinding } | undefined;
-        if (data?.binding && data.binding.workspaceRoot
-          && agentWorkspaceKey(data.binding.workspaceRoot) === key) {
-          setBinding(data.binding);
-        }
-      }
-      if (item.eventType === "agent.turn_completed" || item.method === "turn/completed"
-        || item.eventType === "agent.process_exited") {
-        setTurn(null);
-      }
-      setEvents((prev) => [...prev.slice(-299), item]);
-    }).then((unlisten) => { if (dead) unlisten(); else stop = unlisten; })
-      .catch((cause) => setError(String(cause)));
-    return () => { dead = true; stop?.(); };
-  }, [enabled, key, setBinding]);
 
   async function run(task: () => Promise<void>) {
     setBusy(true); setError("");
@@ -113,24 +90,31 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     const result = await adapter.startTurn({
       workspaceRoot, threadId: current.threadId, text: input,
     });
-    setTurn(result.turnId);
+    setActiveTurn(workspaceRoot, result.turnId);
     setPrompt("");
   });
   const interrupt = () => run(async () => {
     const current = useAgentSessionStore.getState().bindings[key];
     if (!turn || !current) return;
     await adapter.interruptTurn({ workspaceRoot, threadId: current.threadId, turnId: turn });
-    setTurn(null);
+    setActiveTurn(workspaceRoot, null);
+  });
+  const steer = () => run(async () => {
+    if (!turn || !prompt.trim() || !capabilities?.features.steering) return;
+    const current = useAgentSessionStore.getState().bindings[key];
+    if (!current) return;
+    await adapter.steerTurn({ workspaceRoot, threadId: current.threadId, turnId: turn, text: prompt.trim() });
+    setPrompt("");
   });
   const stop = () => run(async () => {
     await adapter.stopSession(workspaceRoot);
-    setAttached(false); setTurn(null);
+    setAttached(false); setActiveTurn(workspaceRoot, null);
   });
   const forget = () => run(async () => {
     if (!window.confirm("Forget the saved thread association for this workspace? This cannot be undone.")) return;
     await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
-    setAttached(false); setTurn(null);
+    setAttached(false); setActiveTurn(workspaceRoot, null);
   });
   const changeHarness = (value: AgentHarnessKind) => {
     if (attached || turn) {
@@ -245,6 +229,8 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
             <button type="button" onClick={() => void send()} disabled={!enabled || busy || !attached || !prompt.trim() || !!turn}
               className="flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-xs font-semibold text-black">
               <Play size={14}/>Start turn</button>
+            <button type="button" onClick={() => void steer()} disabled={!enabled || busy || !turn || !capabilities?.features.steering || !prompt.trim()}
+              className="rounded border border-white/20 px-3 py-2 text-xs">Steer turn</button>
             <button type="button" onClick={() => void interrupt()} disabled={!enabled || busy || !turn}
               className="flex items-center gap-2 rounded border border-rose-400/30 px-3 py-2 text-xs text-rose-300">
               <CircleStop size={14}/>Interrupt</button>
@@ -257,7 +243,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
       <section className="rounded-xl border border-white/10 bg-black/20 p-4">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold">Structured event timeline <span className="text-xs font-normal text-stone-500">({events.length}/300)</span></h3>
-          <button type="button" onClick={() => setEvents([])} className="text-xs text-stone-400 underline">Clear timeline</button>
+          <button type="button" onClick={() => clearTimeline(workspaceRoot)} className="text-xs text-stone-400 underline">Clear timeline</button>
         </div>
         <div role="log" aria-label="Agent event timeline" className="mt-3 max-h-80 space-y-2 overflow-y-auto font-mono text-xs">
           {!events.length && <p className="text-stone-500">No events received for this workspace.</p>}
