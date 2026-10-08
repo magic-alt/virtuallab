@@ -1273,7 +1273,9 @@ mod tests {
         git_ok(&repo, &["switch", "main"]);
         let stale = "refs/remotes/origin/feat/removed-from-origin";
         assert!(git_read(&repo_path, &["show-ref", "--verify", "--quiet", stale]).is_ok());
-        git_ok(&repo, &["push", "origin", "--delete", "feat/removed-from-origin"]);
+        // Simulate deletion performed elsewhere on the server, without Git's
+        // local push command immediately deleting our origin-tracking ref.
+        git_ok(&origin, &["update-ref", "-d", "refs/heads/feat/removed-from-origin"]);
 
         let before = inspect_repository_blocking(repo_path.clone()).expect("before pruning");
         assert!(before.branches.iter().any(|b| b.name == "feat/removed-from-origin" && b.remote));
