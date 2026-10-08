@@ -891,7 +891,18 @@ fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<
 
 fn require_clean_workspace(workspace: &str) -> Result<(), String> {
     if !git_read(workspace, &["status", "--porcelain=v1", "--untracked-files=normal"])?.is_empty() {
-        Err("Commit or stash local changes (including untracked files) before switching or pulling.".to_string())
+        Err("Commit or stash local changes (including untracked files) before pulling.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+// Branch changes must not silently carry staged/unstaged tracked modifications.
+// Untracked build artifacts are *not* an unconditional blocker: Git's native
+// checkout protection will refuse the switch if they collide with target files.
+fn require_no_tracked_changes(workspace: &str) -> Result<(), String> {
+    if !git_read(workspace, &["status", "--porcelain=v1", "--untracked-files=no"])?.is_empty() {
+        Err("Cannot switch branches with staged or modified tracked files. Commit or stash them first. Untracked files alone are allowed when they do not conflict.".to_string())
     } else {
         Ok(())
     }
@@ -921,7 +932,7 @@ fn git_switch_branch_blocking(repository_root: String, workspace_root: String, b
     if current.trim() == branch {
         return Ok(());
     }
-    require_clean_workspace(&workspace)?;
+    require_no_tracked_changes(&workspace)?;
     let local_ref = format!("refs/heads/{branch}");
     if git_read(&workspace, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_ok() {
         git(&workspace, &["switch", branch])?;
@@ -945,7 +956,57 @@ pub async fn git_fetch_origin(repository_root: String) -> Result<(), String> {
 
 fn git_fetch_origin_blocking(repository_root: String) -> Result<(), String> {
     let repository = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?;
-    git(repository.trim(), &["fetch", "origin"])?;
+    // Keep origin/* consistent with refs still advertised by origin.
+    // Pruning remote-tracking refs never deletes local refs/heads/*.
+    git(repository.trim(), &["fetch", "--prune", "origin"])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_delete_local_branch(repository_root: String, branch: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_delete_local_branch_blocking(repository_root, branch)
+    })
+    .await
+    .map_err(|error| format!("Git branch deletion task failed: {error}"))?
+}
+
+fn git_delete_local_branch_blocking(repository_root: String, branch: String) -> Result<(), String> {
+    let root = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Select a local branch to delete".to_string());
+    }
+    git_read(&root, &["check-ref-format", "--branch", branch])?;
+    let local_ref = format!("refs/heads/{branch}");
+    if git_read(&root, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_err() {
+        return Err(format!("Branch '{branch}' is not a local branch. Fetch --prune cleans stale origin branches."));
+    }
+
+    // Prevent accidental deletion of the mainline branch even when it is not checked out.
+    let origin_default = git_read_optional(
+        &root,
+        &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+    );
+    if matches!(branch, "main" | "master")
+        || origin_default.as_deref().map(str::trim) == Some(format!("origin/{branch}").as_str())
+    {
+        return Err(format!("Refusing to delete the default branch '{branch}'"));
+    }
+
+    // Also guard linked worktrees, including a worktree with uncommitted files.
+    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    if let Some(owner) = worktrees.iter().find(|item| item.branch.as_deref() == Some(branch)) {
+        return Err(format!(
+            "Branch '{branch}' is checked out at {}. Switch that worktree first.",
+            owner.path
+        ));
+    }
+
+    // -d refuses unmerged commits; -D and force deletion are intentionally unsupported.
+    git(&root, &["branch", "-d", "--", branch])?;
     Ok(())
 }
 
@@ -1201,9 +1262,153 @@ mod tests {
         assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "updated upstream\\n");
 
         fs::write(repo.join("untracked.txt"), "local only").expect("dirty fixture");
-        assert!(git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string()).is_err());
+        git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string())
+            .expect("safe switch preserves untracked artifacts");
+        assert_eq!(
+            fs::read_to_string(repo.join("untracked.txt")).unwrap(),
+            "local only"
+        );
         assert!(git_pull_current_blocking(repo_path.clone(), repo_path.clone()).is_err());
         fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_codex_pr_15_main_round_trip_with_untracked_files() {
+        let (sandbox, repo) = init_fixture_repo("pr15-main-roundtrip");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "codex/pr-15"]);
+
+        // Build artifacts from macOS remain untracked and must not lock the user
+        // into the PR branch when Git can safely preserve them.
+        for filename in ["generated.log", "build-cache.json", "tool-output.txt"] {
+            fs::write(repo.join(filename), format!("user data: {filename}")).unwrap();
+        }
+        for destination in ["main", "codex/pr-15", "main"] {
+            git_switch_branch_blocking(root.clone(), root.clone(), destination.to_string())
+                .expect("safe branch checkout must succeed despite untracked files");
+            let snapshot = inspect_repository_blocking(root.clone()).unwrap();
+            assert_eq!(snapshot.current_branch, destination);
+            let active = snapshot.branches.iter().find(|item| item.name == destination).unwrap();
+            // Git prints canonical worktree paths. Comparing their raw spelling
+            // breaks on macOS (/var -> /private/var) and Windows (8.3 short
+            // aliases, path separators). Verify physical path identity instead.
+            let actual_worktree = active.worktree_path.as_ref().expect("active worktree path");
+            assert_eq!(
+                canonical_or_original(std::path::Path::new(actual_worktree)),
+                canonical_or_original(&repo),
+                "the active branch must be checked out in the original worktree"
+            );
+            for filename in ["generated.log", "build-cache.json", "tool-output.txt"] {
+                assert_eq!(
+                    fs::read_to_string(repo.join(filename)).unwrap(),
+                    format!("user data: {filename}")
+                );
+            }
+        }
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_preserves_conflicting_untracked_files_and_rejects_tracked_edits() {
+        let (sandbox, repo) = init_fixture_repo("branch-switch-guards");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "codex/pr-15"]);
+        git_ok(&repo, &["switch", "main"]);
+        fs::write(repo.join("collision.txt"), "main tracked content").unwrap();
+        git_ok(&repo, &["add", "collision.txt"]);
+        git_ok(&repo, &["commit", "-m", "main adds file"]);
+        git_ok(&repo, &["switch", "codex/pr-15"]);
+        fs::write(repo.join("collision.txt"), "untracked user content").unwrap();
+
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("Git must block overwriting untracked files");
+        assert!(error.contains("untracked") || error.contains("overwritten"), "{error}");
+        assert_eq!(fs::read_to_string(repo.join("collision.txt")).unwrap(), "untracked user content");
+        assert_eq!(inspect_repository_blocking(root.clone()).unwrap().current_branch, "codex/pr-15");
+
+        fs::remove_file(repo.join("collision.txt")).unwrap();
+        fs::write(repo.join("README.md"), "modified tracked content").unwrap();
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("tracked modifications must block checkout");
+        assert!(error.contains("Commit or stash"), "{error}");
+        git_ok(&repo, &["add", "README.md"]);
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("staged modifications must block checkout");
+        assert!(error.contains("Commit or stash"), "{error}");
+        assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "codex/pr-15");
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn fetch_prunes_stale_origin_refs_without_deleting_local_branches() {
+        let (sandbox, repo) = init_fixture_repo("fetch-prune");
+        let origin = sandbox.join("origin.git");
+        let origin_path = origin.to_string_lossy().to_string();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", &origin_path]);
+        git_ok(&repo, &["remote", "add", "origin", &origin_path]);
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/removed-from-origin"]);
+        git_ok(&repo, &["push", "-u", "origin", "feat/removed-from-origin"]);
+        git_ok(&repo, &["switch", "main"]);
+        let stale = "refs/remotes/origin/feat/removed-from-origin";
+        assert!(git_read(&repo_path, &["show-ref", "--verify", "--quiet", stale]).is_ok());
+        // Simulate deletion performed elsewhere on the server, without Git's
+        // local push command immediately deleting our origin-tracking ref.
+        git_ok(&origin, &["update-ref", "-d", "refs/heads/feat/removed-from-origin"]);
+
+        let before = inspect_repository_blocking(repo_path.clone()).expect("before pruning");
+        assert!(before.branches.iter().any(|b| b.name == "feat/removed-from-origin" && b.remote));
+        git_fetch_origin_blocking(repo_path.clone()).expect("prune origin");
+        let after = inspect_repository_blocking(repo_path.clone()).expect("after pruning");
+        let retained = after.branches.iter().find(|b| b.name == "feat/removed-from-origin")
+            .expect("local branch should survive fetch --prune");
+        assert!(retained.local && !retained.remote);
+        assert!(git_read(&repo_path, &["show-ref", "--verify", "--quiet", stale]).is_err());
+        assert!(after.branches.iter().any(|b| b.name == "main" && b.remote));
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn delete_local_branch_checks_default_active_worktree_and_unmerged() {
+        let (sandbox, repo) = init_fixture_repo("delete-branch");
+        let path = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["branch", "feat/merged"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "main".to_string())
+            .unwrap_err().contains("default branch"));
+
+        // Removing a safe, unused branch must not depend on untracked files.
+        fs::write(repo.join("untracked.txt"), "keep").unwrap();
+        git_delete_local_branch_blocking(path.clone(), "feat/merged".to_string())
+            .expect("delete fully merged local branch");
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/merged"]).is_err());
+        fs::remove_file(repo.join("untracked.txt")).unwrap();
+
+        git_ok(&repo, &["switch", "-c", "feat/active"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/active".to_string())
+            .unwrap_err().contains("checked out"));
+        git_ok(&repo, &["switch", "main"]);
+
+        let lane = sandbox.join("lane");
+        git_ok(&repo, &["worktree", "add", "-b", "feat/occupied", lane.to_str().unwrap(), "HEAD"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/occupied".to_string())
+            .unwrap_err().contains("checked out"));
+        git_ok(&repo, &["worktree", "remove", lane.to_str().unwrap()]);
+
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("feature-only.txt"), "data").unwrap();
+        git_ok(&repo, &["add", "feature-only.txt"]);
+        git_ok(&repo, &["commit", "-m", "unmerged work"]);
+        git_ok(&repo, &["switch", "main"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".to_string()).is_err());
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_ok());
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/no-such-branch".to_string()).is_err());
         let _ = fs::remove_dir_all(sandbox);
     }
 

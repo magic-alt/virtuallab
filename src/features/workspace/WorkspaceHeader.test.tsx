@@ -16,7 +16,7 @@ describe("WorkspaceHeader", () => {
 
     await user.click(screen.getByRole("button", { name: /refresh/i }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: /^fetch$/i }));
+    await user.click(screen.getByRole("button", { name: /^fetch \+ prune$/i }));
     expect(onFetch).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: /^pull$/i }));
     expect(onPull).toHaveBeenCalledTimes(1);
@@ -25,7 +25,7 @@ describe("WorkspaceHeader", () => {
       <WorkspaceHeader snapshot={PREVIEW_SNAPSHOT} isPreview loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
     );
     expect(screen.getByRole("button", { name: /refresh/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^fetch$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^fetch \+ prune$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^pull$/i })).toBeDisabled();
   });
 });

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
   DiffRequest,
   DiffResponse,
@@ -38,6 +38,38 @@ export async function inspectRepository(path: string): Promise<RepositorySnapsho
 export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: string, branch: string): Promise<void> {
   requireDesktop();
   return invoke("git_switch_branch", { repositoryRoot, workspaceRoot, branch });
+}
+
+export async function gitDeleteLocalBranch(repositoryRoot: string, branch: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_delete_local_branch", { repositoryRoot, branch });
+}
+
+/**
+ * Destructive Git operations must be gated by a Tauri-native confirmation.
+ * Never fall back to window.confirm(): macOS WKWebView can suppress its UI.
+ * A cancelled or unavailable dialog must never invoke the Rust command.
+ */
+export async function deleteLocalBranchAfterConfirmation(
+  repositoryRoot: string,
+  branch: string,
+): Promise<boolean> {
+  requireDesktop();
+  const confirmed = await confirm(
+    `Delete the LOCAL branch "${branch}"?\n\n` +
+      "This does not delete a branch on GitHub. Git will refuse to delete a branch with unmerged commits. " +
+      "Stale origin branches are removed with Fetch + prune.",
+    {
+      title: "Delete local Git branch",
+      kind: "warning",
+      okLabel: "Delete local",
+      cancelLabel: "Cancel",
+    },
+  );
+
+  if (!confirmed) return false;
+  await gitDeleteLocalBranch(repositoryRoot, branch);
+  return true;
 }
 
 export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {

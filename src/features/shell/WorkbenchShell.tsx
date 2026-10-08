@@ -17,6 +17,7 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
+  deleteLocalBranchAfterConfirmation,
   gitFetchOrigin,
   gitPullCurrent,
   gitSwitchBranch,
@@ -71,6 +72,8 @@ export function WorkbenchShell() {
   const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
+  // A synchronous guard prevents rapid double-clicks before React re-renders.
+  const gitMutationInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
@@ -82,12 +85,29 @@ export function WorkbenchShell() {
   const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
   const latestSnapshotRequestRef = useRef<string | null>(null);
 
-  const loadSnapshot = useCallback((path: string): Promise<RepositorySnapshot> => {
+  const loadSnapshot = useCallback((path: string, requireFresh = false): Promise<RepositorySnapshot> => {
     const key = normalizePath(path);
     latestSnapshotRequestRef.current = key;
 
     const existing = snapshotLoadsRef.current.get(key);
-    if (existing) return existing;
+    if (existing) {
+      if (requireFresh) {
+        // A filesystem watch refresh may have started before git switch ended.
+        // Wait for it, then *reinspect* the new HEAD instead of displaying
+        // the snapshot that captured the previous branch.
+        return existing.catch(() => undefined).then(() => loadSnapshot(path, true));
+      }
+      // An older request may have lost ownership of the UI when the user
+      // switched worktrees. Re-selecting its path must commit its snapshot.
+      return existing.then((next) => {
+        if (latestSnapshotRequestRef.current === key) {
+          activePathRef.current = next.root;
+          setSnapshot(next);
+          setSnapshotRevision((revision) => revision + 1);
+        }
+        return next;
+      });
+    }
 
     const cached = snapshotCacheRef.current.get(key);
     if (
@@ -101,7 +121,8 @@ export function WorkbenchShell() {
     }
 
     setLoading(true);
-    setError(null);
+    // A filesystem watcher refresh must not erase a meaningful Git error
+    // (e.g. an untracked file collision) before the user can read it.
 
     const request = inspectRepository(path)
       .then((next) => {
@@ -306,16 +327,21 @@ export function WorkbenchShell() {
     }
   };
 
-  const runGitMutation = async (action: () => Promise<void>) => {
-    if (!activeRepository || gitBusy || loading) return;
+  const runGitMutation = async (action: () => Promise<void | boolean>) => {
+    if (!activeRepository || gitMutationInFlightRef.current || loading) return;
+    gitMutationInFlightRef.current = true;
     setGitBusy(true);
     setError(null);
     try {
-      await action();
-      await loadSnapshot(activePathRef.current ?? activeRepository.path);
+      // A cancelled confirmation returns false: do not execute further
+      // mutations or refresh the repository as though deletion succeeded.
+      if (await action() !== false) {
+        await loadSnapshot(activePathRef.current ?? activeRepository.path, true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      gitMutationInFlightRef.current = false;
       setGitBusy(false);
     }
   };
@@ -327,7 +353,8 @@ export function WorkbenchShell() {
       // Git will not check out the same branch into two worktrees. Navigate
       // to the existing owner instead of forcing the checkout.
       try {
-        const next = await loadSnapshot(occupied);
+        setError(null);
+        const next = await loadSnapshot(occupied, true);
         saveWorkspaceState({
           repositoryId: activeRepository.id,
           activeWorktreePath: next.root,
@@ -340,6 +367,15 @@ export function WorkbenchShell() {
       return;
     }
     await runGitMutation(() => gitSwitchBranch(activeRepository.path, snapshot.root, name));
+  };
+
+  const deleteLocalBranch = async (name: string) => {
+    if (!activeRepository || gitBusy || loading) return;
+    const branch = snapshot.branches.find((item) => item.name === name);
+    if (!branch?.local || branch.worktreePath || name === "main" || name === "master") return;
+    // This keeps the branch action disabled while the native confirmation
+    // dialog is open. Cancel/close/permission errors never delete a branch.
+    await runGitMutation(() => deleteLocalBranchAfterConfirmation(activeRepository.path, name));
   };
 
   const isPreview = !activeRepository;
@@ -384,7 +420,7 @@ export function WorkbenchShell() {
       {error && (
         <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-rose-400/15 bg-rose-400/[0.06] px-4 py-2 text-xs text-rose-200">
           <TriangleAlert size={14} />
-          <span className="truncate">{error}</span>
+          <span className="truncate" title={error}>{error}</span>
           <button className="ml-auto text-[10px] text-rose-300/60 hover:text-rose-200" onClick={() => setError(null)} type="button">
             dismiss
           </button>
@@ -422,6 +458,7 @@ export function WorkbenchShell() {
           workspaceActionsEnabled={native && Boolean(activeRepository)}
           branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
+          onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
         />
 
         <section className="vl-stage flex min-w-0 flex-1 flex-col">
@@ -437,6 +474,7 @@ export function WorkbenchShell() {
               if (activeRepository) void runGitMutation(() => gitPullCurrent(activeRepository.path, snapshot.root));
             }}
             onRefresh={() => {
+              setError(null);
               const path = activePathRef.current;
               if (path) void loadSnapshot(path).catch(() => undefined);
             }}
