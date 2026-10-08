@@ -17,7 +17,7 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
-  gitDeleteLocalBranch,
+  deleteLocalBranchAfterConfirmation,
   gitFetchOrigin,
   gitPullCurrent,
   gitSwitchBranch,
@@ -307,13 +307,16 @@ export function WorkbenchShell() {
     }
   };
 
-  const runGitMutation = async (action: () => Promise<void>) => {
+  const runGitMutation = async (action: () => Promise<void | boolean>) => {
     if (!activeRepository || gitBusy || loading) return;
     setGitBusy(true);
     setError(null);
     try {
-      await action();
-      await loadSnapshot(activePathRef.current ?? activeRepository.path);
+      // A cancelled confirmation returns false: do not execute further
+      // mutations or refresh the repository as though deletion succeeded.
+      if (await action() !== false) {
+        await loadSnapshot(activePathRef.current ?? activeRepository.path);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -347,13 +350,9 @@ export function WorkbenchShell() {
     if (!activeRepository || gitBusy || loading) return;
     const branch = snapshot.branches.find((item) => item.name === name);
     if (!branch?.local || branch.worktreePath || name === "main" || name === "master") return;
-    const confirmed = window.confirm(
-      `Delete the LOCAL branch "${name}"?\n\n` +
-      "This does not delete a branch on GitHub. Git will refuse to delete branches with unmerged commits. " +
-      "Remote-tracking branches are cleaned using Fetch + prune.",
-    );
-    if (!confirmed) return;
-    await runGitMutation(() => gitDeleteLocalBranch(activeRepository.path, name));
+    // This keeps the branch action disabled while the native confirmation
+    // dialog is open. Cancel/close/permission errors never delete a branch.
+    await runGitMutation(() => deleteLocalBranchAfterConfirmation(activeRepository.path, name));
   };
 
   const isPreview = !activeRepository;
