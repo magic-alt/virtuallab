@@ -79,21 +79,34 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 
 ## V0.4 — Verification control plane
 
-- reusable verification profiles
-- build/unit/HIL/hardware/soak/evidence gates
-- evidence artifact registry
-- release readiness summary
-- explicit human approval gates for hardware-affecting operations
+- [x] versioned `VerificationProfile` contract
+- [x] build/unit/HIL/hardware/soak/evidence gate kinds
+- [x] process gates keep executable + argument vectors structured
+- [x] versioned `EvidenceManifest` contract bound to workspace + repository HEAD
+- [x] evidence check/artifact normalization and final status derivation
+- [ ] verification runner
+- [ ] durable evidence artifact registry/history
+- [ ] release readiness summary
+- [ ] explicit human approval gates for hardware-affecting operations
 
 ## V0.5 — Agent harnesses
 
-- common agent adapter protocol
-- Claude Code
-- Codex
-- OpenCode
-- session resume/interrupt
-- normalized event stream
-- agent-per-workspace isolation
+- [x] common `HarnessAdapter` protocol
+- [x] `CodexAppServerAdapter` baseline
+- [x] native Codex app-server stdio JSON-RPC lifecycle
+- [x] durable workspace ↔ Codex thread binding
+- [x] thread start/resume and turn start/steer/interrupt
+- [x] normalized structured `agent://event` stream
+- [x] one active agent runtime per workspace
+- [ ] agent workspace UI / event timeline
+- [ ] eight embedded-agent roles
+- [ ] embedded/HIL skill catalog
+- [ ] hardware resource lease integration
+- [ ] approval broker for motion/power/flash/release
+- [ ] Claude Code adapter
+- [ ] OpenCode adapter
+
+The first bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md`. The Codex baseline intentionally runs `workspace-write` with `approvalPolicy = "never"` until VirtualLab owns approval routing.
 
 ## Non-goals for the first releases
 
