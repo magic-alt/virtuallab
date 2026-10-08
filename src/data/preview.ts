@@ -2,29 +2,29 @@ import type { RepositorySnapshot } from "@/types/workbench";
 
 export const PREVIEW_SNAPSHOT: RepositorySnapshot = {
   root: "Preview workspace — add a local Git repository to inspect real data",
-  name: "VirtualLab Workbench",
-  currentBranch: "feat/engineering-workbench-foundation",
+  name: "Sample Repository",
+  currentBranch: "feat/sample-workspace",
   headSha: "preview",
-  remoteUrl: "github.com/magic-alt/virtuallab",
+  remoteUrl: "github.com/example-org/sample-repo",
   dirtyCount: 3,
   stagedCount: 1,
   unstagedCount: 1,
   untrackedCount: 1,
   changes: [
     {
-      path: "src/features/workspace/WorkspaceContent.tsx",
+      path: "src/example.ts",
       indexStatus: "M",
       worktreeStatus: " ",
       kind: "modified",
     },
     {
-      path: "src-tauri/src/git.rs",
+      path: "tests/example.test.ts",
       indexStatus: " ",
       worktreeStatus: "M",
       kind: "modified",
     },
     {
-      path: "docs/ROADMAP.md",
+      path: "docs/CHANGELOG.md",
       indexStatus: "?",
       worktreeStatus: "?",
       kind: "untracked",
@@ -32,15 +32,15 @@ export const PREVIEW_SNAPSHOT: RepositorySnapshot = {
   ],
   worktrees: [
     {
-      path: "/workspace/virtuallab",
+      path: "/workspace/sample-repo",
       head: "main",
       branch: "main",
       detached: false,
     },
     {
-      path: "/workspace/virtuallab-workbench",
+      path: "/workspace/sample-repo-feature",
       head: "feature",
-      branch: "feat/engineering-workbench-foundation",
+      branch: "feat/sample-workspace",
       detached: false,
     },
   ],

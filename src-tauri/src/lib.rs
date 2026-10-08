@@ -1,5 +1,7 @@
 mod agent;
 mod execution;
+mod hardware;
+mod verification;
 mod git;
 mod github;
 mod watch;
@@ -15,6 +17,7 @@ use execution::{
 use git::{create_worktree, git_diff, inspect_repository, remove_worktree};
 use github::{github_capabilities, github_context, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
+use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,6 +26,7 @@ pub fn run() {
         .manage(ProcessManager::default())
         .manage(WatchManager::default())
         .manage(AgentManager::default())
+        .manage(VerificationManager::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             inspect_repository,
@@ -46,6 +50,9 @@ pub fn run() {
             agent_turn_start,
             agent_turn_steer,
             agent_turn_interrupt,
+            verification_run,
+            verification_cancel,
+            verification_import_artifact,
         ])
         .run(tauri::generate_context!())
         .expect("error while running VirtualLab");

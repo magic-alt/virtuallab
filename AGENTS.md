@@ -13,6 +13,8 @@ VirtualLab is a local Engineering Workbench. Preserve the workspace-first archit
 - Do not make an agent session the owner of repository state. Agents attach to workspaces.
 - New long-running features should emit structured events rather than scrape terminal text in UI code.
 - Keep Windows paths, spaces and Unicode paths in mind.
+- Never hard-code, import, or depend on another named application repository, user project, hardware lab, device ID, or project-specific path. Repositories are user-selected; integrations must be opt-in, provider-neutral adapters, not bundled project connectors.
+- Generic HIL/hardware gate types do not imply a default backend. Do not implement project-specific adapter wiring in VirtualLab core.
 - Update `docs/ARCHITECTURE.md` when a boundary or domain model changes.
 
 ## Pull request quality bar

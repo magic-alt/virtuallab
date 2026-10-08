@@ -126,6 +126,32 @@ describe("verification profile and evidence manifest", () => {
     ).toThrow("unknown verification gate 'unknown'");
   });
 
+  it("blocks required hardware gates until the native approval broker exists", () => {
+    expect(evidenceStatus(PROFILE, [{
+      gateId: "typecheck", status: "pass", detail: "done",
+      startedAtMs: 1, finishedAtMs: 2, exitCode: 0,
+    },{
+      gateId: "hardware-smoke", status: "blocked", detail: "no human approval",
+      startedAtMs: 1, finishedAtMs: 2, exitCode: null,
+    }])).toBe("warn");
+    const requiredHardware = {...PROFILE, gates: PROFILE.gates.map(gate =>
+      gate.id === "hardware-smoke" ? {...gate, required: true} : gate)};
+    expect(evidenceStatus(requiredHardware, [{
+      gateId: "typecheck", status: "pass", detail: "done",
+      startedAtMs: 1, finishedAtMs: 2, exitCode: 0,
+    },{
+      gateId: "hardware-smoke", status: "blocked", detail: "no human approval",
+      startedAtMs: 1, finishedAtMs: 2, exitCode: null,
+    }])).toBe("blocked");
+  });
+
+  it("propagates cancellation instead of misrepresenting a partial run as passed", () => {
+    expect(evidenceStatus(PROFILE, [{
+      gateId: "typecheck", status: "cancelled", detail: "user cancelled",
+      startedAtMs: 1, finishedAtMs: 2, exitCode: null,
+    }])).toBe("cancelled");
+  });
+
   it("fails a run when a required gate fails", () => {
     expect(
       evidenceStatus(PROFILE, [

@@ -18,7 +18,7 @@ describe("workbench persisted store", () => {
       id: "profile-1",
       name: "Fixture",
       kind: "build",
-      repositoryRoot: "D:/Project/virtuallab",
+      repositoryRoot: "D:/Work/sample-alpha",
       program: "echo",
       args: ["ok"],
     });
@@ -31,8 +31,8 @@ describe("workbench persisted store", () => {
   it("persists repository selection", () => {
     useWorkbenchStore.getState().addRepository({
       id: "repo-1",
-      name: "virtuallab",
-      path: "D:/Project/virtuallab",
+      name: "sample-alpha",
+      path: "D:/Work/sample-alpha",
       lastOpenedAt: 1,
     });
 
@@ -44,14 +44,14 @@ describe("workbench persisted store", () => {
   it("persists the active worktree and tab per repository", () => {
     useWorkbenchStore.getState().saveWorkspaceState({
       repositoryId: "repo-1",
-      activeWorktreePath: "D:/Project/.virtuallab-workspaces/virtuallab/review",
+      activeWorktreePath: "D:/Work/.virtuallab-workspaces/sample-alpha/review",
       activeTab: "changes",
       updatedAt: 123,
     });
 
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toEqual(
       expect.objectContaining({
-        activeWorktreePath: "D:/Project/.virtuallab-workspaces/virtuallab/review",
+        activeWorktreePath: "D:/Work/.virtuallab-workspaces/sample-alpha/review",
         activeTab: "changes",
       }),
     );
@@ -62,7 +62,7 @@ describe("workbench persisted store", () => {
   });
 
   it("persists review drafts per workspace and marks old HEAD drafts stale", () => {
-    const workspaceRoot = "D:/Project/.virtuallab-workspaces/virtuallab/review";
+    const workspaceRoot = "D:/Work/.virtuallab-workspaces/sample-alpha/review";
     useWorkbenchStore.getState().addReviewDraft({
       id: "draft-1",
       workspaceRoot,
@@ -87,10 +87,10 @@ describe("workbench persisted store", () => {
   });
 
   it("persists the GitHub reference with the workspace review state", () => {
-    const workspaceRoot = "D:/Project/virtuallab";
+    const workspaceRoot = "D:/Work/sample-alpha";
     useWorkbenchStore
       .getState()
-      .setGithubReference(workspaceRoot, "https://github.com/magic-alt/virtuallab/pull/7");
+      .setGithubReference(workspaceRoot, "https://github.com/example-org/sample-repo/pull/7");
     expect(
       useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(workspaceRoot)]
         ?.githubReference,
@@ -102,8 +102,8 @@ describe("workbench persisted store", () => {
       repositories: [
         {
           id: "repo-1",
-          name: "virtuallab",
-          path: "D:/Project/virtuallab",
+          name: "sample-alpha",
+          path: "D:/Work/sample-alpha",
           lastOpenedAt: 1,
         },
       ],
@@ -111,14 +111,14 @@ describe("workbench persisted store", () => {
       workspaceStates: {
         "repo-1": {
           repositoryId: "repo-1",
-          activeWorktreePath: "D:/Project/virtuallab",
+          activeWorktreePath: "D:/Work/sample-alpha",
           activeTab: "overview",
           updatedAt: 1,
         },
       },
       reviewStates: {
-        [reviewWorkspaceKey("D:/Project/virtuallab")]: {
-          workspaceRoot: "D:/Project/virtuallab",
+        [reviewWorkspaceKey("D:/Work/sample-alpha")]: {
+          workspaceRoot: "D:/Work/sample-alpha",
           drafts: [],
           githubReference: "pr:7",
           updatedAt: 1,
