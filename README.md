@@ -237,7 +237,8 @@ See [V0.3 review and GitHub](docs/V0.3_REVIEW_GITHUB.md), [V0.4 verification and
 
 Background Git/GitHub/where/Codex/build probes are launched with the Windows
 `CREATE_NO_WINDOW` flag. This prevents short-lived console windows from
-appearing during workspace startup and watcher-driven refresh, without
+appearing during workspace startup and watcher-driven refresh. The filesystem
+watcher also ignores access-only events to prevent read→rescan loops, without
 disabling the explicit embedded xterm.js terminal. The fix requires
 **rebuilding the native executable**; running an older built `.exe` will
 still exhibit the old behavior. Refer to
