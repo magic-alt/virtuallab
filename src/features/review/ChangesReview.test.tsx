@@ -208,4 +208,21 @@ describe("ChangesReview", () => {
     expect(onRefreshForRereview).toHaveBeenCalledWith("D:/repo");
   });
 
+  it("discards an in-flight diff response after workspace refresh", async()=>{
+    let resolveDiff: ((value: ReturnType<typeof response>) => void) | undefined;
+    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDiff = resolve;
+    }));
+    const user=userEvent.setup();
+    const view=render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={1} />);
+    await user.click(screen.getByRole("button",{name:"src/a.ts"}));
+    view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={2} />);
+    resolveDiff?.(response());
+    expect(await screen.findByText(/Diff invalidated by workspace refresh/)).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+  });
+
+
 });

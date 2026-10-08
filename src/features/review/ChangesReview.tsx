@@ -65,6 +65,7 @@ export function ChangesReview({
   const [refreshing, setRefreshing] = useState(false);
   const [diffOutdated, setDiffOutdated] = useState(false);
   const revisionRef = useRef({workspaceRoot, refreshRevision});
+  const requestRevisionRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,6 +77,8 @@ export function ChangesReview({
     if (previous.workspaceRoot !== workspaceRoot ||
         previous.refreshRevision !== refreshRevision) {
       revisionRef.current = {workspaceRoot, refreshRevision};
+      requestRevisionRef.current += 1;
+      setLoading(false);
       setResult(null);
       setSelectedPath(null);
       setSelectedReviewLine(null);
@@ -118,6 +121,7 @@ export function ChangesReview({
 
   const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
+    const requestRevision = ++requestRevisionRef.current;
     setSelectedPath(file.path);
     setSelectedReviewLine(null);
     setDraftBody("");
@@ -132,18 +136,23 @@ export function ChangesReview({
         mode,
         baseRef: mode === "base" ? baseRef.trim() || null : null,
       });
-      setResult(next);
-      setDiffOutdated(false);
+      if (requestRevision === requestRevisionRef.current) {
+        setResult(next);
+        setDiffOutdated(false);
+      }
     } catch (err) {
-      setResult(null);
-      setError(err instanceof Error ? err.message : String(err));
+      if (requestRevision === requestRevisionRef.current) {
+        setResult(null);
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setLoading(false);
+      if (requestRevision === requestRevisionRef.current) setLoading(false);
     }
   };
 
   const loadBaseFiles = async () => {
     if (!enabled || !baseRef.trim()) return;
+    const requestRevision = ++requestRevisionRef.current;
     setLoading(true);
     setError(null);
     setSelectedPath(null);
@@ -158,17 +167,23 @@ export function ChangesReview({
         mode: "base",
         baseRef: baseRef.trim(),
       });
-      setBaseFiles(next.files);
-      setDiffOutdated(false);
+      if (requestRevision === requestRevisionRef.current) {
+        setBaseFiles(next.files);
+        setDiffOutdated(false);
+      }
     } catch (err) {
-      setBaseFiles([]);
-      setError(err instanceof Error ? err.message : String(err));
+      if (requestRevision === requestRevisionRef.current) {
+        setBaseFiles([]);
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setLoading(false);
+      if (requestRevision === requestRevisionRef.current) setLoading(false);
     }
   };
 
   const changeMode = (nextMode: DiffMode) => {
+    requestRevisionRef.current += 1;
+    setLoading(false);
     setMode(nextMode);
     setSelectedPath(null);
     setSelectedReviewLine(null);
