@@ -135,7 +135,10 @@ describe("workbench branch switching with untracked artifacts", () => {
       };
     });
     render(<WorkbenchShell />);
-    await user.click(await screen.findByRole("button", { name: "Open worktree for main" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active"),
+    );
+    await user.click(screen.getByRole("button", { name: "Open worktree for main" }));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
       expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(mainRoot);
