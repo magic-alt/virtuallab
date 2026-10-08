@@ -101,10 +101,10 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 - [x] evidence check/artifact normalization and final status derivation
 - [x] bounded native software-gate runner (build/unit/evidence only; adapters and hardware are blocked)
 - [x] per-run manifest/log/artifact SHA-256 persistence
-- [ ] searchable evidence history / immutable registry
-- [ ] release readiness summary
+- [ ] searchable evidence history / immutable registry (carried to V0.8 [#23](https://github.com/magic-alt/virtuallab/issues/23))
+- [ ] release readiness summary (carried to V0.8 [#23](https://github.com/magic-alt/virtuallab/issues/23))
 - [x] private L0–L4 lease and human-grant *policy contract* (not an exposed authorization API)
-- [ ] real human approval UI + independent hardware-side enforcement
+- [ ] real human approval routing (V0.6 [#19](https://github.com/magic-alt/virtuallab/issues/19)); independent hardware-side enforcement is an optional external provider, not a bundled feature
 
 ## V0.5 — Agent harnesses (software feature scope complete)
 
@@ -126,8 +126,9 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 - [x] OpenCode CLI adapter (provider plan agent, structured NDJSON)
 - [x] DeepSeek adapter through Codex app-server Responses provider, with environment-only API key
 - [x] exclusive native workspace runtime ownership across all four harnesses
-- [ ] independent optional hardware provider with on-device lease enforcement and interlocks (no backend bundled)
-- [ ] cross-platform V0.5 CI and authenticated desktop acceptance recorded
+- [ ] optional post-V1.0 hardware provider with on-device lease enforcement and interlocks (deferred RFC; **no backend bundled**)
+- [x] cross-platform V0.5 feature PR CI recorded ([PR #13](https://github.com/magic-alt/virtuallab/pull/13))
+- [ ] authenticated V0.5 desktop/provider acceptance recorded (V0.6 [#19](https://github.com/magic-alt/virtuallab/issues/19))
 
 **V0.5 feature-scope note:** a UI approval or TypeScript lease is never device authorization; the provider boundary remains intentionally fail-closed until an independently enforcing hardware implementation is configured. See `docs/V0.5_AGENT_HARNESSES.md`.
 
