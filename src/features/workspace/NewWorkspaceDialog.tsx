@@ -4,14 +4,18 @@ import { Button } from "@/components/ui/Button";
 
 export function NewWorkspaceDialog({
   defaultBaseRef,
+  defaultBranch = "",
+  reviewLabel,
   onClose,
   onCreate,
 }: {
   defaultBaseRef: string;
+  defaultBranch?: string;
+  reviewLabel?: string;
   onClose: () => void;
   onCreate: (branch: string, baseRef: string, targetPath?: string) => Promise<void>;
 }) {
-  const [branch, setBranch] = useState("");
+  const [branch, setBranch] = useState(defaultBranch);
   const [baseRef, setBaseRef] = useState(defaultBaseRef || "HEAD");
   const [targetPath, setTargetPath] = useState("");
   const [busy, setBusy] = useState(false);
