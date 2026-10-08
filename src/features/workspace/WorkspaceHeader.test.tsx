@@ -11,7 +11,7 @@ describe("WorkspaceHeader", () => {
     const onFetch = vi.fn();
     const onPull = vi.fn();
     const { rerender } = render(
-      <WorkspaceHeader snapshot={PREVIEW_SNAPSHOT} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
+      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0 }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
     );
 
     await user.click(screen.getByRole("button", { name: /refresh/i }));
