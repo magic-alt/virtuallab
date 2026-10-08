@@ -1,10 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
-const DEFAULT_ROOT = import.meta.url.startsWith("file:")
-  ? fileURLToPath(new URL("../", import.meta.url))
-  : process.cwd();
+const DEFAULT_ROOT = process.cwd();
 const PACKAGE_CRATE = /(^\[package\]\r?\nname\s*=\s*"virtuallab"\r?\nversion\s*=\s*")[^"]+(")/m;
 const LOCK_CRATE = /(^\[\[package\]\]\r?\nname\s*=\s*"virtuallab"\r?\nversion\s*=\s*")[^"]+(")/m;
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
