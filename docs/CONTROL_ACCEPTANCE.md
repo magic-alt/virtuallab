@@ -238,8 +238,9 @@ Windows `cmd.exe` wrapper, plus a static guard against unreviewed native
 
 **Manual Windows GUI acceptance (not automated):**
 
-1. Build a standalone Tauri Windows GUI binary with `npm run tauri:build:debug`
-   or `npm run tauri:build`; launch the binary outside PowerShell.
+1. Build a Windows GUI release with `npm run tauri:build` and launch the
+   built `src-tauri/target/release/virtuallab.exe` independently. The debug
+   build uses the console subsystem and may legitimately have its own parent console.
 2. Add/select a Git repository and keep VirtualLab open. Confirm there are no
    recurring console windows during initial Git status/worktree/log inspection.
 3. Modify a tracked file in an external editor and verify filesystem refresh
