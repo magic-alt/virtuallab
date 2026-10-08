@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const native = vi.hoisted(() => ({
-  ask: vi.fn(),
+  confirm: vi.fn(),
   invoke: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  ask: native.ask,
+  confirm: native.confirm,
   open: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -21,7 +21,7 @@ describe("native local branch deletion confirmation", () => {
       configurable: true,
       value: {},
     });
-    native.ask.mockReset();
+    native.confirm.mockReset();
     native.invoke.mockReset();
     native.invoke.mockResolvedValue(undefined);
   });
@@ -32,12 +32,12 @@ describe("native local branch deletion confirmation", () => {
 
   it("waits for the visible native dialog before requesting deletion", async () => {
     let resolveConfirmation!: (approved: boolean) => void;
-    native.ask.mockReturnValue(new Promise<boolean>((resolve) => {
+    native.confirm.mockReturnValue(new Promise<boolean>((resolve) => {
       resolveConfirmation = resolve;
     }));
 
     const operation = deleteLocalBranchAfterConfirmation("/repo", "feat/merged");
-    expect(native.ask).toHaveBeenCalledWith(
+    expect(native.confirm).toHaveBeenCalledWith(
       expect.stringContaining('Delete the LOCAL branch "feat/merged"?'),
       expect.objectContaining({
         title: "Delete local Git branch",
@@ -59,13 +59,13 @@ describe("native local branch deletion confirmation", () => {
   });
 
   it("does not invoke deletion when user cancels", async () => {
-    native.ask.mockResolvedValue(false);
+    native.confirm.mockResolvedValue(false);
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/cancelled")).resolves.toBe(false);
     expect(native.invoke).not.toHaveBeenCalled();
   });
 
   it("fails closed when the native dialog fails (including permission errors)", async () => {
-    native.ask.mockRejectedValue(new Error("dialog:allow-ask denied"));
+    native.confirm.mockRejectedValue(new Error("dialog:allow-ask denied"));
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/denied"))
       .rejects.toThrow("dialog:allow-ask denied");
     expect(native.invoke).not.toHaveBeenCalled();
@@ -75,12 +75,12 @@ describe("native local branch deletion confirmation", () => {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/not-desktop"))
       .rejects.toThrow("desktop runtime");
-    expect(native.ask).not.toHaveBeenCalled();
+    expect(native.confirm).not.toHaveBeenCalled();
     expect(native.invoke).not.toHaveBeenCalled();
   });
 
   it("does not mask a Rust Git rejection after approval", async () => {
-    native.ask.mockResolvedValue(true);
+    native.confirm.mockResolvedValue(true);
     native.invoke.mockRejectedValue(new Error("branch is not fully merged"));
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/unmerged"))
       .rejects.toThrow("branch is not fully merged");
