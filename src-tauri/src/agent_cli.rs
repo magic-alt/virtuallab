@@ -228,7 +228,7 @@ fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, std
                 }
             }
         }
-    });
+    })
 }
 fn process_stderr(app: AppHandle, session: Arc<CliSession>, turn_id: String, stderr: impl std::io::Read + Send + 'static) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -240,7 +240,7 @@ fn process_stderr(app: AppHandle, session: Arc<CliSession>, turn_id: String, std
                 }
             }
         }
-    });
+    })
 }
 #[tauri::command]
 pub async fn agent_cli_turn_start(

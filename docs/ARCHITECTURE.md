@@ -5,7 +5,7 @@ VirtualLab is a **local-first Engineering Workbench / Engineering Control Plane*
 ## Architecture principles
 
 1. **Workspace owns execution context.** Repository, branch/worktree, terminal, checks, diff and future agent sessions all hang from one workspace.
-2. **AI is an adapter, not the product core.** Codex is integrated as an initial optional harness bridge; other agents can be added later without changing the workspace model.
+2. **AI is an adapter, not the product core.** Codex, DeepSeek-through-Codex, Claude Code, and OpenCode are optional harnesses attached to a worktree.
 3. **Native operations stay behind a narrow Rust boundary.** The frontend requests typed commands; Rust performs filesystem/process/Git operations.
 4. **Typed native operations.** Interactive PTYs are human-controlled; Git/GitHub/verification services use narrowly defined Tauri commands, not arbitrary agent-supplied shell strings.
 5. **Hardware-changing actions require explicit human approval.** Flashing, drive enable, power-stage enable, destructive Git operations and merge actions will be gated.
@@ -18,6 +18,7 @@ React / TypeScript UI
   ├─ features/sidebar
   ├─ features/workspace
   ├─ Monaco review + GitHub panel
+  ├─ Agents panel: roles, opt-in skills, live timeline, safety requests
   ├─ stores / typed adapters
   └─ typed backend client
           │ Tauri invoke/events
@@ -28,13 +29,14 @@ Rust native core
   ├─ PTY/process supervisor
   ├─ filesystem watcher
   ├─ restricted verification runner + hashed evidence files
-  ├─ Codex app-server transport + private hardware policy contract
+  ├─ Codex / DeepSeek app-server, native Claude/OpenCode CLI transport
+  ├─ exclusive agent workspace ownership + private hardware policy contract
   └─ persisted workspace context
           │
           ├─ git
           ├─ PowerShell/bash
           ├─ build/test tools
-          └─ Codex app-server (foundation only; UI later)
+          └─ opt-in Codex / DeepSeek / Claude Code / OpenCode harness
 ```
 
 ## Frontend stack
@@ -46,7 +48,7 @@ Rust native core
 - Zustand for local application state
 - Lucide icons
 
-Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff, optional `gh` PR/issue context, and initial Codex app-server transport. Full agent workspace UI and durable cross-run event history are still planned.
+Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff, optional `gh` PR/issue context, Agent workspace UI and four harness transports. Durable cross-run event history is still planned.
 
 ## Native stack
 
@@ -162,3 +164,17 @@ Authenticated same-origin issue / PR reference
 Source references are workspace-local and restored when that worktree is revisited. `baseRefOid` and `headRefOid` from `gh pr view --json` are compared with the local (abbreviated) Git HEAD; a local HEAD at PR base does not authorize posting to PR head. A new worktree starts at a user-selected **local** base ref, not at a remote PR branch. Changes/Monaco always remain read-only. A post-refresh diff is considered invalid until explicitly reloaded.
 
 The native boundary continues to reject nonmatching GitHub repository URLs; no automatic fetch/checkout/merge/reset/force-push behavior was added. Workspace and review state remain meaningful offline.
+
+
+## V0.5 independent harness boundary
+
+- \`HarnessAdapter\` selects Codex, DeepSeek, Claude Code or OpenCode without changing repository/worktree ownership. The Rust \`AgentOwnership\` guard forbids two different harness runtimes in the same workspace until stopped.
+- Codex and DeepSeek use the same stdio app-server RPC lifecycle; DeepSeek explicitly configures the Responses provider from \`DEEPSEEK_API_KEY\` and a user-managed local Codex model catalog. No secrets are saved by VirtualLab.
+- Claude Code and OpenCode use direct executable/argument vectors, non-interactive NDJSON streams and native process supervision; they do not invoke arbitrary shell strings, parse TUI escape codes or expose a privileged terminal.
+- Claude and OpenCode default to provider plan/read-only mode. Provider permissions are NOT OS sandboxing; a malicious or modified local CLI can still exercise user permissions.
+- Provider-native CLI session IDs are learned from authenticated local executable events and persisted per workspace. CLI thread/turn streams and server notification streams share \`agent://event\`, with a 300-entry UI ring buffer (ephemeral, not a signed audit trail).
+- User-created role and skill instructions are persisted locally and must never contain credentials. Only selected opt-in skills enter prompts; none reference or bind other repositories.
+- \`AgentApprovalBroker\` records a direct human decision and validates limited TTL. The \`EnforcingHardwareProvider\` interface requires an independent scoped device-side lease. There is no installed provider, so attempts to authorize motion, power, flash or release fail closed; no UI record permits hardware I/O.
+- Software-side permissions and process interruption are NOT interlocks, emergency stops or security boundaries. Any future hardware integration must independently enforce revocation, watchdog, safe state and transport isolation.
+
+See [V0.5 agent harnesses](./V0.5_AGENT_HARNESSES.md).

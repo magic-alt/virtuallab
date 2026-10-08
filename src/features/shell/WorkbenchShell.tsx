@@ -413,7 +413,7 @@ export function WorkbenchShell() {
               </span>
               <span>workspace owns execution context</span>
             </div>
-            <span className="mono text-orange-300/70">V0.3 review loop · V0.4 contracts</span>
+            <span className="mono text-orange-300/70">V0.5 multi-harness workbench</span>
           </footer>
         </section>
       </div>

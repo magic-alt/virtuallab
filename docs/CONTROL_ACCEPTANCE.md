@@ -254,3 +254,30 @@ Windows `cmd.exe` wrapper, plus a static guard against unreviewed native
 
 Do not treat a passing GitHub Actions build as proof that the desktop flicker
 has been observed and resolved on a physical Windows session.
+
+
+## V0.5 — Agent workspace control acceptance
+
+| Surface | Control or safety contract | Automated evidence | Desktop acceptance required |
+| --- | --- | --- | --- |
+| Navigation | Agents tab | \`WorkspaceContent.test.tsx\` | switch across all tabs and reopen Agents |
+| Agents | provider selector and capability detection | \`agentHarness.test.ts\` | Codex/DeepSeek/Claude/OpenCode availability, missing CLI, missing DeepSeek env key |
+| Agents | Attach, resume, stop and forget saved thread | \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | restart application and explicitly resume saved provider session |
+| Native | exactly one harness runtime per workspace | \`agent_ownership.rs\` Rust test | attempt a second provider without stopping first; must refuse |
+| Agents | bounded structured event timeline, interrupt | \`AgentWorkspace.test.tsx\`, native protocol unit tests | stream real provider turn and inspect 300-event cap; stop and interrupt |
+| Agents | custom roles and optional skills | \`agentConfiguration.test.ts\`, \`AgentWorkspace.test.tsx\` | select role, add user-defined skill, switch worktrees, verify isolation |
+| Safety | human acknowledgement broker and one-use typed provider | \`agentSafety.test.ts\` | request motion/power/flash/release and verify DENY with no provider |
+| Windows | CLI visibility | Rust static subprocess guard | repeat provider detection and turns in packaged Windows GUI: no recurring console windows |
+
+### V0.5 manual provider checks (not covered by CI)
+
+1. Use two disposable worktrees. Select **Agents**, check Codex availability, Attach and run a harmless prompt. Confirm \`item/agentMessage/delta\` and \`turn/completed\` appear as structured events.
+2. Run a long non-destructive Codex turn and Interrupt; verify the runtime can accept another turn. Stop and resume; thread ID should remain bound.
+3. Set \`DEEPSEEK_API_KEY\` in the desktop process environment and configure the official Codex DeepSeek model catalog. Check availability, select DeepSeek, Attach, run a harmless request, confirm selected provider/model and that no API key appears in UI logs/argv.
+4. With native \`claude\` and \`opencode\` executables installed and authenticated, run harmless read-only prompts. Verify provider-native session IDs replace provisional IDs and subsequent turns resume the same session. Test missing executable and malformed event failure behavior.
+5. Stop the current runtime and Forget binding before changing harness; a second harness must not attach while the first still owns the workspace. Switch to another workspace and confirm isolation.
+6. Add custom role and opt-in skill. Compare prompt behavior across worktrees. Check that no other repository or hardware-specific backend appears by default.
+7. In Protected operations request a resource ID and a motion/power/flash/release human acknowledgement. Confirm explicit dialog, one-use outcome and a fail-closed denial without an independent provider. **Do not connect an energized DUT or flash live hardware as part of this test.**
+8. On Windows, packaged GUI must not flash console windows during provider capability checks or subprocess turns. This is a real desktop acceptance check, not asserted from CI.
+
+A green CI means tests/builds passed on that commit, not that provider credentials, remote API compatibility, desktop interaction or physical interlocks were validated.
