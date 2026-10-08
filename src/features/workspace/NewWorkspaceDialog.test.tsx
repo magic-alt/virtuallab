@@ -30,4 +30,16 @@ describe("NewWorkspaceDialog", () => {
     await user.click(screen.getByRole("button", { name: /cancel/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+  it("prefills an issue-specific branch but does not create anything until clicked",async()=>{
+    const onCreate=vi.fn().mockResolvedValue(undefined);
+    const user=userEvent.setup();
+    render(<NewWorkspaceDialog defaultBaseRef="HEAD" defaultBranch="review/issue-42"
+      reviewLabel="ISSUE #42" onCreate={onCreate} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Branch")).toHaveValue("review/issue-42");
+    expect(screen.getByText(/does not fetch or check out remote PR code automatically/)).toBeInTheDocument();
+    expect(onCreate).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button",{name:"Create workspace"}));
+    expect(onCreate).toHaveBeenCalledWith("review/issue-42","HEAD",undefined);
+  });
+
 });

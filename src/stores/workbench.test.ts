@@ -130,4 +130,18 @@ describe("workbench persisted store", () => {
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toBeUndefined();
     expect(Object.keys(useWorkbenchStore.getState().reviewStates)).toHaveLength(0);
   });
+  it("persists review phase and invalidates a reviewed HEAD on commit change", () => {
+    const path="D:/Work/sample-alpha";
+    const key=reviewWorkspaceKey(path);
+    useWorkbenchStore.getState().setReviewPhase(path,"fix");
+    expect(useWorkbenchStore.getState().reviewStates[key]?.phase).toBe("fix");
+    useWorkbenchStore.getState().setReviewPhase(path,"needs_rereview");
+    expect(useWorkbenchStore.getState().reviewStates[key]?.lastRefreshAt).toEqual(expect.any(Number));
+    useWorkbenchStore.getState().setReviewPhase(path,"reviewed","abcdef1");
+    expect(useWorkbenchStore.getState().reviewStates[key]?.lastReviewedHead).toBe("abcdef1");
+    useWorkbenchStore.getState().markReviewDraftsStale(path,"abcdef2");
+    expect(useWorkbenchStore.getState().reviewStates[key]?.phase).toBe("needs_rereview");
+    expect(window.localStorage.getItem("virtuallab-workbench-v2")).toContain("needs_rereview");
+  });
+
 });
