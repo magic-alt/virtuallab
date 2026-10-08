@@ -22,6 +22,8 @@ interface Props {
   onNewWorkspace: () => void;
   onSelectWorkspace: (path: string) => void;
   onRemoveWorkspace: (path: string) => void;
+  onSwitchBranch: (branch: string) => void;
+  branchActionsEnabled: boolean;
   workspaceActionsEnabled: boolean;
   repositoryActionsEnabled: boolean;
   filterQuery: string;
@@ -38,6 +40,8 @@ export function ProjectSidebar({
   onNewWorkspace,
   onSelectWorkspace,
   onRemoveWorkspace,
+  onSwitchBranch,
+  branchActionsEnabled,
   workspaceActionsEnabled,
   repositoryActionsEnabled,
   filterQuery,
@@ -48,6 +52,9 @@ export function ProjectSidebar({
         `${repository.name} ${repository.path}`.toLowerCase().includes(query),
       )
     : repositories;
+  const visibleBranches = snapshot.branches.filter((branch) =>
+    !query || branch.name.toLowerCase().includes(query),
+  );
   const visibleWorktrees = (query
     ? snapshot.worktrees.filter((worktree) =>
         `${worktree.branch ?? ""} ${worktree.path}`.toLowerCase().includes(query),
@@ -164,6 +171,46 @@ export function ProjectSidebar({
                 )}
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="mt-7">
+          <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
+          <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
+            Local and origin branches, separate from worktree lanes.
+          </p>
+          <div className="mt-2 space-y-1">
+            {visibleBranches.map((branch) => {
+              const active = branch.name === snapshot.currentBranch;
+              const inOtherWorktree = Boolean(
+                branch.worktreePath &&
+                branch.worktreePath.replaceAll("\\", "/").toLowerCase() !== snapshot.root.replaceAll("\\", "/").toLowerCase(),
+              );
+              return (
+                <button
+                  key={branch.name}
+                  type="button"
+                  aria-label={inOtherWorktree ? `Open worktree for ${branch.name}` : `Switch to ${branch.name}`}
+                  onClick={() => onSwitchBranch(branch.name)}
+                  disabled={!branchActionsEnabled}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition disabled:opacity-40",
+                    active
+                      ? "border-orange-400/30 bg-orange-400/10 text-orange-200"
+                      : "border-white/[0.05] text-slate-300 hover:bg-white/[0.04]",
+                  )}
+                >
+                  <GitBranch size={12} className="shrink-0 text-slate-600" />
+                  <span className="min-w-0 flex-1 truncate" title={branch.name}>{branch.name}</span>
+                  <span className="shrink-0 text-[10px] text-slate-600">
+                    {active ? "active" : inOtherWorktree ? "worktree" : branch.local ? "local" : "origin"}
+                  </span>
+                </button>
+              );
+            })}
+            {visibleBranches.length === 0 && (
+              <p className="px-2 py-2 text-xs text-slate-600">No matching branches. Fetch origin to discover remote branches.</p>
+            )}
           </div>
         </div>
       </div>
