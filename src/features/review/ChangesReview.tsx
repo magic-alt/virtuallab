@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -34,7 +34,11 @@ export function ChangesReview({
   repositoryRoot,
   workspaceRoot,
   enabled,
+  refreshRevision = 0,
+  onRefreshForRereview,
 }: {
+  refreshRevision?: number;
+  onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
   snapshot: RepositorySnapshot;
   repositoryRoot: string;
   workspaceRoot: string;
@@ -46,6 +50,7 @@ export function ChangesReview({
   const addReviewDraft = useWorkbenchStore((state) => state.addReviewDraft);
   const removeReviewDraft = useWorkbenchStore((state) => state.removeReviewDraft);
   const markReviewDraftsStale = useWorkbenchStore((state) => state.markReviewDraftsStale);
+  const setReviewPhase = useWorkbenchStore((state) => state.setReviewPhase);
 
   const drafts = reviewState?.drafts ?? [];
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -57,11 +62,41 @@ export function ChangesReview({
   const [baseFiles, setBaseFiles] = useState<DiffFileSummary[]>([]);
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [diffOutdated, setDiffOutdated] = useState(false);
+  const revisionRef = useRef({workspaceRoot, refreshRevision});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     markReviewDraftsStale(workspaceRoot, snapshot.headSha);
   }, [markReviewDraftsStale, snapshot.headSha, workspaceRoot]);
+
+  useEffect(() => {
+    const previous = revisionRef.current;
+    if (previous.workspaceRoot !== workspaceRoot ||
+        previous.refreshRevision !== refreshRevision) {
+      revisionRef.current = {workspaceRoot, refreshRevision};
+      setResult(null);
+      setSelectedPath(null);
+      setSelectedReviewLine(null);
+      setBaseFiles([]);
+      setError(null);
+      setDiffOutdated(true);
+    }
+  }, [workspaceRoot, refreshRevision]);
+
+  const requestRereview = async () => {
+    if (!onRefreshForRereview || refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await onRefreshForRereview(workspaceRoot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const files = useMemo<ReviewFile[]>(() => {
     if (mode === "base") {
@@ -98,6 +133,7 @@ export function ChangesReview({
         baseRef: mode === "base" ? baseRef.trim() || null : null,
       });
       setResult(next);
+      setDiffOutdated(false);
     } catch (err) {
       setResult(null);
       setError(err instanceof Error ? err.message : String(err));
@@ -123,6 +159,7 @@ export function ChangesReview({
         baseRef: baseRef.trim(),
       });
       setBaseFiles(next.files);
+      setDiffOutdated(false);
     } catch (err) {
       setBaseFiles([]);
       setError(err instanceof Error ? err.message : String(err));
@@ -143,7 +180,7 @@ export function ChangesReview({
   const saveDraft = () => {
     const body = draftBody.trim();
     const path = result?.path ?? selectedPath;
-    if (!body || !path || !selectedReviewLine) return;
+    if (!body || !path || !selectedReviewLine || diffOutdated) return;
 
     const now = Date.now();
     const draft: ReviewDraft = {
@@ -161,6 +198,7 @@ export function ChangesReview({
       updatedAt: now,
     };
     addReviewDraft(draft);
+    setReviewPhase(workspaceRoot, "review");
     setDraftBody("");
   };
 
@@ -227,6 +265,29 @@ export function ChangesReview({
             Side by side
           </Button>
         </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
+        <span className="text-slate-300">Review → Fix → Refresh → Re-review</span>
+        <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
+        <Button size="sm" variant="outline" onClick={() => setReviewPhase(workspaceRoot, "fix")}>
+          Mark fix in progress
+        </Button>
+        {onRefreshForRereview && (
+          <Button size="sm" variant="outline" disabled={!enabled || refreshing}
+            onClick={() => void requestRereview()}>
+            {refreshing ? "Refreshing…" : "Refresh and re-review"}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" disabled={!result || loading || diffOutdated}
+          onClick={() => setReviewPhase(workspaceRoot, "reviewed", snapshot.headSha)}>
+          Mark reviewed
+        </Button>
+        {diffOutdated && (
+          <span className="text-amber-300">
+            Diff invalidated by workspace refresh; select a file or reload base files to re-review.
+          </span>
+        )}
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,340px)_minmax(0,1fr)] gap-4" data-testid="changes-review-grid">
