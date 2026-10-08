@@ -5,8 +5,8 @@ import { ProjectSidebar } from "./ProjectSidebar";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 
 const repositories = [
-  { id: "repo-1", name: "servo_host", path: "D:/Project/servo_host", lastOpenedAt: 1 },
-  { id: "repo-2", name: "servoHIL", path: "D:/Project/servoHIL", lastOpenedAt: 2 },
+  { id: "repo-1", name: "sample-alpha", path: "D:/Work/sample-alpha", lastOpenedAt: 1 },
+  { id: "repo-2", name: "sample-beta", path: "D:/Work/sample-beta", lastOpenedAt: 2 },
 ];
 
 function props() {
@@ -36,16 +36,16 @@ describe("ProjectSidebar controls", () => {
     await user.click(screen.getByRole("button", { name: /add repository/i }));
     expect(p.onAdd).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: /^servoHIL D:\/Project\/servoHIL$/i }));
+    await user.click(screen.getByRole("button", { name: /^sample-beta D:\/Work\/sample-beta$/i }));
     expect(p.onSelect).toHaveBeenCalledWith("repo-2");
 
-    await user.click(screen.getByRole("button", { name: /remove servohil/i }));
+    await user.click(screen.getByRole("button", { name: /remove sample-beta/i }));
     expect(p.onRemove).toHaveBeenCalledWith("repo-2");
 
     await user.click(screen.getByRole("button", { name: /^new$/i }));
     expect(p.onNewWorkspace).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: /feat\/engineering-workbench-foundation/i }));
+    await user.click(screen.getByRole("button", { name: /feat\/sample-workspace/i }));
     expect(p.onSelectWorkspace).toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
@@ -57,13 +57,13 @@ describe("ProjectSidebar controls", () => {
     render(
       <ProjectSidebar
         {...p}
-        filterQuery="servoHIL"
+        filterQuery="sample-beta"
         repositoryActionsEnabled={false}
         workspaceActionsEnabled={false}
       />,
     );
-    expect(screen.queryByText("servo_host")).not.toBeInTheDocument();
-    expect(screen.getByText("servoHIL")).toBeInTheDocument();
+    expect(screen.queryByText("sample-alpha")).not.toBeInTheDocument();
+    expect(screen.getByText("sample-beta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add repository/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^new$/i })).toBeDisabled();
   });
