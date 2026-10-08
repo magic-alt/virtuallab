@@ -13,7 +13,11 @@ function props() {
   return {
     repositories,
     activeRepositoryId: "repo-1",
-    snapshot: PREVIEW_SNAPSHOT,
+    snapshot: { ...PREVIEW_SNAPSHOT, branches: [
+      ...PREVIEW_SNAPSHOT.branches,
+      { name: "feat/unused", local: true, remote: false, worktreePath: null },
+      { name: "feat/occupied", local: true, remote: false, worktreePath: "/workspace/another-lane" },
+    ] },
     isPreview: false,
     onAdd: vi.fn(),
     onSelect: vi.fn(),
@@ -22,6 +26,7 @@ function props() {
     onSelectWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
     onSwitchBranch: vi.fn(),
+    onDeleteBranch: vi.fn(),
     branchActionsEnabled: true,
     workspaceActionsEnabled: true,
     repositoryActionsEnabled: true,
@@ -58,6 +63,13 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /open worktree for main/i }));
     expect(p.onSwitchBranch).toHaveBeenCalledWith("main");
+
+    await user.click(screen.getByRole("button", { name: "Delete local branch feat/unused" }));
+    expect(p.onDeleteBranch).toHaveBeenCalledWith("feat/unused");
+    expect(screen.queryByRole("button", { name: "Delete local branch main" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete local branch feat/remote-only" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete local branch feat/occupied" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete local branch feat/sample-workspace" })).toBeDisabled();
   });
 
   it("filters repositories and disables native-only controls in web preview", () => {
@@ -85,5 +97,6 @@ describe("ProjectSidebar controls", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /switch to feat\/remote-only/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete local branch feat/unused" })).toBeDisabled();
   });
 });
