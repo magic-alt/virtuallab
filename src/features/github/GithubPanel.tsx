@@ -6,24 +6,31 @@ import {
   LoaderCircle,
   MessageSquare,
   RefreshCw,
+  GitBranchPlus,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { githubAdapter } from "@/lib/github";
+import { correlatePrHead } from "@/lib/reviewLoop";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import type {
   GithubCapabilities,
   GithubContext,
   RepositorySnapshot,
   ReviewDraft,
+  ReviewWorkspaceRequest,
 } from "@/types/workbench";
 
 export function GithubPanel({
   snapshot,
   workspaceRoot,
   enabled,
+  onNewReviewWorkspace,
+  onRefreshForRereview,
 }: {
+  onNewReviewWorkspace?: (request: ReviewWorkspaceRequest) => void;
+  onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
   snapshot: RepositorySnapshot;
   workspaceRoot: string;
   enabled: boolean;
@@ -33,12 +40,14 @@ export function GithubPanel({
   );
   const setGithubReference = useWorkbenchStore((state) => state.setGithubReference);
   const markReviewDraftPosted = useWorkbenchStore((state) => state.markReviewDraftPosted);
+  const setReviewPhase = useWorkbenchStore((state) => state.setReviewPhase);
 
   const [capabilities, setCapabilities] = useState<GithubCapabilities | null>(null);
   const [context, setContext] = useState<GithubContext | null>(null);
   const [reference, setReference] = useState(reviewState?.githubReference ?? "");
   const [loading, setLoading] = useState(false);
   const [postingId, setPostingId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const drafts = reviewState?.drafts ?? [];
@@ -50,11 +59,22 @@ export function GithubPanel({
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
+    const savedReference = useWorkbenchStore.getState()
+      .reviewStates[reviewWorkspaceKey(workspaceRoot)]?.githubReference;
+    setContext(null);
+    setCapabilities(null);
     setLoading(true);
-    void githubAdapter
-      .capabilities(workspaceRoot)
-      .then((next) => {
-        if (!disposed) setCapabilities(next);
+    void githubAdapter.capabilities(workspaceRoot)
+      .then(async (next) => {
+        if (disposed) return;
+        setCapabilities(next);
+        if (next.mode === "connected" && savedReference) {
+          const restored = await githubAdapter.loadContext(workspaceRoot, savedReference);
+          if (!disposed) {
+            setCapabilities(restored.capabilities);
+            setContext(restored);
+          }
+        }
       })
       .catch((err) => {
         if (!disposed) setError(err instanceof Error ? err.message : String(err));
@@ -62,9 +82,7 @@ export function GithubPanel({
       .finally(() => {
         if (!disposed) setLoading(false);
       });
-    return () => {
-      disposed = true;
-    };
+    return () => { disposed = true; };
   }, [enabled, workspaceRoot]);
 
   const loadContext = async () => {
@@ -104,17 +122,15 @@ export function GithubPanel({
   };
 
   const pr = context?.pullRequest ?? null;
-  const headMatches = Boolean(
-    pr &&
-      (pr.headSha.startsWith(snapshot.headSha) ||
-        snapshot.headSha.startsWith(pr.headSha)),
-  );
+  const headRelation = pr ? correlatePrHead(snapshot.headSha, pr) : "unknown";
+  const headMatches = headRelation === "head";
 
   const postableDrafts = useMemo(
     () =>
       drafts.filter(
         (draft) =>
           draft.status === "active" &&
+          draft.headSha === snapshot.headSha &&
           pr?.changedFiles.some((file) => file.path === draft.path),
       ),
     [drafts, pr],
@@ -145,6 +161,19 @@ export function GithubPanel({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setPostingId(null);
+    }
+  };
+
+  const refreshReview = async () => {
+    if (!onRefreshForRereview || refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await onRefreshForRereview(workspaceRoot);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -234,6 +263,20 @@ export function GithubPanel({
         </div>
       </section>
 
+      {(pr || context?.issue) && (
+        <div className="flex flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-4 py-3 text-[11px]">
+          <span className="font-medium text-slate-300">Review loop</span>
+          <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
+          <span className="text-slate-500">
+            Inspect → Review → Fix → Refresh → Re-review
+          </span>
+          <Button size="sm" variant="outline"
+            onClick={() => setReviewPhase(workspaceRoot,"fix")}>
+            Mark fix in progress
+          </Button>
+        </div>
+      )}
+
       {pr && (
         <section className="border border-white/[0.07] bg-[#15100c]/92">
           <div className="flex items-start gap-3 border-b border-white/[0.06] px-4 py-3">
@@ -247,11 +290,39 @@ export function GithubPanel({
               </div>
             </div>
             <Badge tone={headMatches ? "green" : "amber"}>
-              {headMatches ? "HEAD match" : "HEAD mismatch"}
+              {headRelation === "head" ? "HEAD match" : headRelation === "base" ? "At PR base" :
+                headRelation === "unknown" ? "HEAD unknown" : "HEAD mismatch"}
             </Badge>
             <Badge tone="neutral">{pr.state}</Badge>
           </div>
 
+          <div className="flex flex-wrap items-center gap-3 border-b border-white/[0.06] p-4">
+            <div className="mono text-[10px] text-slate-500">
+              Local: {snapshot.headSha} · PR head: {pr.headSha.slice(0, 12)} ·
+              PR base: {pr.baseSha?.slice(0, 12) ?? "not available"}
+            </div>
+            <div className="ml-auto flex gap-2">
+              {onNewReviewWorkspace && (
+                <Button onClick={() => onNewReviewWorkspace({
+                  kind:"pr", number:pr.number, reference:pr.url,
+                })} size="sm" variant="outline">
+                  <GitBranchPlus size={12} /> New PR worktree
+                </Button>
+              )}
+              {onRefreshForRereview && (
+                <Button onClick={() => void refreshReview()} disabled={refreshing} size="sm" variant="outline">
+                  <RefreshCw size={12} /> Refresh and re-review
+                </Button>
+              )}
+            </div>
+          </div>
+          {headRelation !== "head" && (
+            <div className="border-b border-amber-400/15 px-4 py-2 text-[11px] text-amber-200">
+              {headRelation === "base"
+                ? "This workspace is at PR base, not PR head. A new worktree does not fetch PR commits automatically."
+                : "Local HEAD does not match the loaded PR head. Review-comment posting stays disabled."}
+            </div>
+          )}
           <div className="grid grid-cols-[0.75fr_1.25fr] gap-4 p-4">
             <div>
               <div className="grid grid-cols-4 gap-2">
@@ -318,7 +389,8 @@ export function GithubPanel({
                 drafts.map((draft) => {
                   const fileInPr = pr.changedFiles.some((file) => file.path === draft.path);
                   const canPost =
-                    draft.status === "active" && headMatches && fileInPr && postingId !== draft.id;
+                    draft.status === "active" && draft.headSha === snapshot.headSha &&
+                    headMatches && fileInPr && postingId !== draft.id;
                   return (
                     <div key={draft.id} className="border border-white/[0.06] bg-white/[0.02] p-3">
                       <div className="flex items-center gap-2">
@@ -374,6 +446,20 @@ export function GithubPanel({
             </div>
           </div>
           <div className="mono mt-2 text-[10px] text-slate-600">{context.issue.url}</div>
+          {onNewReviewWorkspace && (
+            <div className="mt-3 flex items-center gap-2">
+              <Button onClick={() => onNewReviewWorkspace({
+                kind: "issue", number: context.issue!.number, reference: context.issue!.url,
+              })} size="sm" variant="outline">
+                <GitBranchPlus size={12} /> New issue worktree
+              </Button>
+              {onRefreshForRereview && (
+                <Button onClick={() => void refreshReview()} disabled={refreshing} size="sm" variant="outline">
+                  <RefreshCw size={12} /> Refresh and re-review
+                </Button>
+              )}
+            </div>
+          )}
           {context.issue.labels.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-2">
               {context.issue.labels.map((label) => (
