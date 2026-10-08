@@ -184,3 +184,21 @@ For updates to the issue/PR review workflow run `npm run test:controls`, `npm ru
 To exercise the actual Issue/PR → worktree flow, open the Tauri app with a user-selected local Git repository, authenticate the optional `gh` CLI, and follow `docs/CONTROL_ACCEPTANCE.md`. A new review worktree uses a user-confirmed local base ref and does not fetch/checkout PR code. After editing, use **Refresh and re-review** to invalidate cached Diff before re-opening it.
 
 No other repository is a required build dependency or hard-coded integration.
+
+## Desktop app icon parity (Windows / macOS / Linux)
+
+The Windows `src-tauri/icons/icon.ico` (orange V) is the canonical artwork. Earlier versions mistakenly used a different blue `icon.png` and omitted `icon.icns`, causing a different macOS icon. The build now explicitly includes all three matching resources.
+
+After replacing the Windows artwork, regenerate the other platforms' icon resources and verify them before a release:
+
+```bash
+npm run icons:generate
+npm run icons:check
+npm run tauri:build
+```
+
+`icons:check` performs a byte-level comparison with the PNG images embedded in `icon.ico` and is enforced by CI. The macOS job additionally builds an actual `.app` and checks that its `CFBundleIconFile` points to the expected bundled `.icns`.
+
+**Artwork resolution:** the original Windows icon only supplies 16×16 and 32×32 artwork. The matching macOS icon is functional but may look soft at large Dock sizes/Retina zoom. A future artwork refresh should replace the canonical ICO with the *same* high-resolution orange-V identity and extend `generate-icons.mjs` to support 128/256/512/1024 variants rather than silently reintroducing unrelated branding.
+
+After upgrading on macOS, close VirtualLab, replace the older `VirtualLab.app` (do not launch an older copy), and reopen it. If the Dock/Finder still shows a cached icon, run `touch /Applications/VirtualLab.app && killall Dock` only when the app was actually installed under `/Applications`; this refreshes the cache without modifying the application binary.

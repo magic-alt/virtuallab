@@ -15,7 +15,9 @@
     "test:controls": "vitest run",
     "test:watch": "vitest",
     "acceptance:local": "node scripts/acceptance.mjs",
-    "tauri:build:debug": "node scripts/tauri-run.mjs build --debug"
+    "tauri:build:debug": "node scripts/tauri-run.mjs build --debug",
+    "icons:generate": "node scripts/generate-icons.mjs",
+    "icons:check": "node scripts/generate-icons.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
