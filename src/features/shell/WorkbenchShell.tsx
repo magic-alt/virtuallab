@@ -24,8 +24,10 @@ import {
   watchStop,
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
+import { suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
   RepositorySnapshot,
+  ReviewWorkspaceRequest,
   WorkbenchEvent,
   WorkspaceTab,
 } from "@/types/workbench";
@@ -40,6 +42,8 @@ export function WorkbenchShell() {
     removeRepository,
     setActiveRepository,
     saveWorkspaceState,
+    setGithubReference,
+    setReviewPhase,
   } = useWorkbenchStore();
 
   const activeRepository = useMemo(
@@ -52,6 +56,8 @@ export function WorkbenchShell() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
+  const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
+  const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
@@ -86,6 +92,7 @@ export function WorkbenchShell() {
         if (latestSnapshotRequestRef.current === key) {
           activePathRef.current = next.root;
           setSnapshot(next);
+          setSnapshotRevision((revision) => revision + 1);
         }
         return next;
       })
@@ -228,13 +235,33 @@ export function WorkbenchShell() {
       targetPath,
     );
     const next = await loadSnapshot(created.path);
+    if (reviewIntent) {
+      // A source PR/issue is only a reference: never silently check out remote code.
+      setGithubReference(next.root, reviewIntent.reference);
+      setReviewPhase(next.root, "review");
+    }
+    const nextTab = reviewIntent ? "github" : "overview";
     saveWorkspaceState({
       repositoryId: activeRepository.id,
       activeWorktreePath: next.root,
-      activeTab: "overview",
+      activeTab: nextTab,
       updatedAt: Date.now(),
     });
-    setTab("overview");
+    setTab(nextTab);
+    setReviewIntent(null);
+  };
+
+  const refreshForRereview = async (workspaceRoot: string) => {
+    if (!activeRepository || normalizePath(workspaceRoot) !== normalizePath(snapshot.root)) return;
+    await loadSnapshot(workspaceRoot);
+    setReviewPhase(workspaceRoot, "needs_rereview");
+    setTab("changes");
+    saveWorkspaceState({
+      repositoryId: activeRepository.id,
+      activeWorktreePath: workspaceRoot,
+      activeTab: "changes",
+      updatedAt: Date.now(),
+    });
   };
 
   const deleteWorkspace = async (path: string) => {
@@ -324,7 +351,7 @@ export function WorkbenchShell() {
             setActiveRepository(id);
           }}
           onRemove={removeRepository}
-          onNewWorkspace={() => setWorkspaceDialog(true)}
+          onNewWorkspace={() => { setReviewIntent(null); setWorkspaceDialog(true); }}
           onSelectWorkspace={(path) => {
             if (!activeRepository) return;
             void loadSnapshot(path)
@@ -358,6 +385,13 @@ export function WorkbenchShell() {
             profileRepositoryRoot={activeRepository?.path ?? snapshot.root}
             tab={tab}
             isPreview={isPreview}
+            snapshotRevision={snapshotRevision}
+            onRefreshForRereview={refreshForRereview}
+            onNewReviewWorkspace={(intent) => {
+              if (!activeRepository || !native) return;
+              setReviewIntent(intent);
+              setWorkspaceDialog(true);
+            }}
             onTabChange={(nextTab) => {
               setTab(nextTab);
               if (!activeRepository) return;
@@ -379,15 +413,17 @@ export function WorkbenchShell() {
               </span>
               <span>workspace owns execution context</span>
             </div>
-            <span className="mono text-orange-300/70">v0.2 workspace execution</span>
+            <span className="mono text-orange-300/70">V0.3 review loop · V0.4 contracts</span>
           </footer>
         </section>
       </div>
 
       {workspaceDialog && activeRepository && (
         <NewWorkspaceDialog
-          defaultBaseRef={snapshot.currentBranch || "HEAD"}
-          onClose={() => setWorkspaceDialog(false)}
+          defaultBaseRef={reviewIntent ? "HEAD" : snapshot.currentBranch || "HEAD"}
+          defaultBranch={reviewIntent ? suggestedReviewBranch(reviewIntent) : ""}
+          reviewLabel={reviewIntent ? `${reviewIntent.kind.toUpperCase()} #${reviewIntent.number}` : undefined}
+          onClose={() => { setWorkspaceDialog(false); setReviewIntent(null); }}
           onCreate={createWorkspace}
         />
       )}
