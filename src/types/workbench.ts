@@ -22,6 +22,13 @@ export interface WorktreeSummary {
   detached: boolean;
 }
 
+export interface BranchSummary {
+  name: string;
+  local: boolean;
+  remote: boolean;
+  worktreePath?: string | null;
+}
+
 export interface CommitSummary {
   sha: string;
   subject: string;
@@ -40,6 +47,7 @@ export interface RepositorySnapshot {
   untrackedCount: number;
   changes: ChangeEntry[];
   worktrees: WorktreeSummary[];
+  branches: BranchSummary[];
   recentCommits: CommitSummary[];
 }
 
