@@ -40,6 +40,11 @@ export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: str
   return invoke("git_switch_branch", { repositoryRoot, workspaceRoot, branch });
 }
 
+export async function gitDeleteLocalBranch(repositoryRoot: string, branch: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_delete_local_branch", { repositoryRoot, branch });
+}
+
 export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {
   requireDesktop();
   return invoke("git_fetch_origin", { repositoryRoot });
