@@ -49,7 +49,9 @@ export function NewWorkspaceDialog({
               <h2 className="m-0 text-base font-semibold">New workspace</h2>
             </div>
             <p className="mb-0 mt-2 text-xs leading-5 text-slate-600">
-              Creates an isolated Git worktree and a new branch. Leave target empty to use VirtualLab's managed sibling workspace directory.
+              {reviewLabel
+                ? `Prepare a dedicated ${reviewLabel} worktree. This creates a local branch from the chosen base ref; it does not fetch or check out remote PR code automatically.`
+                : "Creates an isolated Git worktree and a new branch. Leave target empty to use VirtualLab's managed sibling workspace directory."}
             </p>
           </div>
           <button aria-label="Close new workspace dialog" className="rounded-lg p-2 text-slate-600 hover:bg-white/[0.05]" onClick={onClose} type="button">
