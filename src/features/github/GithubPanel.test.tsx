@@ -28,6 +28,7 @@ const snapshot: RepositorySnapshot = {
   untrackedCount: 0,
   changes: [],
   worktrees: [],
+  branches: [{ name: "feat/review", local: true, remote: false, worktreePath: "D:/repo" }],
   recentCommits: [],
 };
 
