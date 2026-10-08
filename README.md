@@ -15,7 +15,9 @@ Repository
       └─ Agent sessions (later)
 ```
 
-Claude Code, Codex or other agents will attach to this model later; the workbench remains useful without them.
+Optional agent harnesses can attach to this model, but the workbench remains useful without them.
+
+**Project independence:** VirtualLab is a general-purpose local workbench. It never assumes a specific GitHub repository, firmware project, hardware board, device ID, or lab setup. All repositories are selected by the user, all build/test profiles are workspace-scoped, and any third-party hardware extension must be explicitly configured. Generic HIL/verification gate types are not connections to a particular project.
 
 ## Current status — V0.3 review/GitHub in development
 
