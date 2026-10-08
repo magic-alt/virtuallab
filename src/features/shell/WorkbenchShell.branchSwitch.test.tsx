@@ -113,6 +113,36 @@ describe("workbench branch switching with untracked artifacts", () => {
     expect(harness.inspect.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
+  it("opens main's existing worktree without a duplicate checkout", async () => {
+    const user = userEvent.setup();
+    const mainRoot = "/fixtures/virtuallab-main";
+    const codex = snapshot();
+    codex.branches[0].worktreePath = mainRoot;
+    codex.worktrees.push({
+      path: mainRoot, head: "2222222222", branch: "main", detached: false,
+    });
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path !== mainRoot) return codex;
+      return {
+        ...codex,
+        root: mainRoot,
+        currentBranch: "main",
+        headSha: "2222222222",
+        branches: codex.branches.map((branch) => ({
+          ...branch,
+          worktreePath: branch.name === "main" ? mainRoot : repoRoot,
+        })),
+      };
+    });
+    render(<WorkbenchShell />);
+    await user.click(await screen.findByRole("button", { name: "Open worktree for main" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
+      expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(mainRoot);
+    });
+    expect(harness.switchBranch).not.toHaveBeenCalled();
+  });
+
   it("displays switch failures instead of swallowing them", async () => {
     const user = userEvent.setup();
     harness.switchBranch.mockRejectedValueOnce(new Error("Cannot switch branches with staged or modified tracked files"));
