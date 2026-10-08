@@ -62,6 +62,16 @@ The first native build can take several minutes because Cargo must compile the T
 
 A complete native build also requires the MSVC linker/toolchain. If you see `link.exe`, Windows SDK or MSVC errors, install Visual Studio Build Tools with **Desktop development with C++**.
 
+If a MinGW compiler is also on `PATH`, run the acceptance command from a Visual Studio Developer Command Prompt and select MSVC for Cargo's C/C++ build dependencies:
+
+```cmd
+set "CC=cl"
+set "CXX=cl"
+npm run acceptance:local
+```
+
+This avoids linking MinGW C++ objects with the MSVC linker. The acceptance runner also preserves the existing Windows `Path` variable when adding Cargo to the child process path.
+
 Tauri renders through WebView2 on Windows. Current Windows 10/11 systems normally already have the Edge WebView2 runtime; install/update it if the native window cannot initialize.
 
 ## Why the old control-test command failed
