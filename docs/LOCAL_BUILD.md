@@ -228,8 +228,10 @@ Check `mdfind 'kMDItemCFBundleIdentifier == "io.magic-alt.virtuallab"'` to find 
 
 **Git branches** in the sidebar lists all local branches plus origin-tracking branches; **Workspace lanes** lists checked-out worktrees only. The two lists are intentionally different.
 
-1. Click **Fetch** to update origin-tracking branches (including `origin/main`). **Refresh** inspects local state only; it does not contact the remote.
+1. Click **Fetch + prune** to run `git fetch --prune origin`: update origin-tracking branches (including `origin/main`) and **remove obsolete `origin/*` refs** for branches deleted on GitHub. It does **not** delete local branches. **Refresh** inspects local state only; it does not contact the remote.
 2. In **Git branches**, click `main`. If it is only present on origin, VirtualLab creates a local tracking branch. If `main` is already checked out in another worktree, VirtualLab opens that worktree instead of forcing a second checkout.
 3. Click **Pull** to fast-forward the selected branch from the matching `origin/<branch>`. Diverged histories are refused; nothing is reset or force-merged.
+
+To delete a **local** branch, use its trash icon under **Git branches**, then confirm. The action uses `git branch -d`, refuses unmerged commits, protects `main`/`master` and the remote default branch, and refuses branches checked out in any worktree. This never deletes a branch on GitHub. For origin-only entries there is no delete button; **Fetch + prune** removes ones deleted upstream. Git local branches deliberately remain after pruning, so delete those individually if no longer needed. Existing untracked files do not block deleting a different, merged branch.
 
 Switch and pull reject staged, unstaged or untracked changes; commit or stash them first. Fetch never changes the working files. This UI operates on the currently selected worktree; no workspace is deleted by branch switching. Network authentication and remote failures are reported by Git. A local branch with no corresponding origin branch cannot be pulled until its remote is configured; pushing and remote management remain terminal workflows.
