@@ -1,8 +1,9 @@
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Component, Path};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,7 +141,7 @@ pub async fn github_post_review_comment(
 fn github_capabilities_blocking(workspace_root: &str) -> GithubCapabilities {
     let repository = repository_from_workspace(workspace_root).ok().flatten();
 
-    let version_probe = Command::new("gh").arg("--version").output();
+    let version_probe = background_command("gh").arg("--version").output();
     let installed = version_probe.as_ref().is_ok_and(|output| output.status.success());
     if !installed {
         let detail = match version_probe {
@@ -159,7 +160,7 @@ fn github_capabilities_blocking(workspace_root: &str) -> GithubCapabilities {
         );
     }
 
-    let auth = Command::new("gh")
+    let auth = background_command("gh")
         .args(["auth", "status", "--hostname", "github.com"])
         .current_dir(workspace_root)
         .output();
@@ -318,7 +319,7 @@ fn github_post_review_comment_blocking(
     // Defense in depth: do not rely on a possibly stale client-side HEAD check.
     // A second user action, explicit confirmation, is still required in the UI.
     let latest_pr = load_pull_request(&request.workspace_root, repository, Some(request.pr_number))?;
-    let output = Command::new("git")
+    let output = background_command("git")
         .args(["-C", &request.workspace_root, "rev-parse", "--verify", "HEAD"])
         .output()
         .map_err(|error| format!("Failed to inspect review HEAD: {error}"))?;
@@ -345,7 +346,7 @@ fn github_post_review_comment_blocking(
         repository, request.pr_number
     );
 
-    let mut child = Command::new("gh")
+    let mut child = background_command("gh")
         .args(["api", "--method", "POST", endpoint.as_str(), "--input", "-"])
         .current_dir(&request.workspace_root)
         .stdin(Stdio::piped())
@@ -446,7 +447,7 @@ fn load_issue(
 }
 
 fn run_gh_json(workspace_root: &str, args: &[&str]) -> Result<Value, String> {
-    let output = Command::new("gh")
+    let output = background_command("gh")
         .args(args)
         .current_dir(workspace_root)
         .output()
@@ -645,7 +646,7 @@ fn parse_number(value: &str) -> Result<u64, String> {
 }
 
 fn repository_from_workspace(workspace_root: &str) -> Result<Option<String>, String> {
-    let output = Command::new("git")
+    let output = background_command("git")
         .arg("-C")
         .arg(workspace_root)
         .args(["remote", "get-url", "origin"])

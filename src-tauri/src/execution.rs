@@ -1,3 +1,4 @@
+use crate::process::background_command;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -478,7 +479,7 @@ fn default_shell() -> (String, Vec<String>) {
 
 #[cfg(target_os = "windows")]
 fn command_available(program: &str) -> bool {
-    Command::new("where")
+    background_command("where")
         .arg(program)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -500,7 +501,7 @@ fn process_command(program: &str) -> Command {
     let lower = resolved.to_ascii_lowercase();
 
     if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-        let mut command = Command::new("cmd.exe");
+        let mut command = background_command("cmd.exe");
         command
             .arg("/d")
             .arg("/s")
@@ -508,13 +509,13 @@ fn process_command(program: &str) -> Command {
             .arg(resolved);
         command
     } else {
-        Command::new(resolved)
+        background_command(resolved)
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn process_command(program: &str) -> Command {
-    Command::new(program)
+    background_command(program)
 }
 
 #[cfg(target_os = "windows")]
@@ -524,7 +525,7 @@ fn resolve_windows_program(program: &str) -> Option<String> {
         return Some(program.to_string());
     }
 
-    let output = Command::new("where")
+    let output = background_command("where")
         .arg(program)
         .output()
         .ok()?;

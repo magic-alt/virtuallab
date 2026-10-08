@@ -1,8 +1,9 @@
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::thread;
 
 #[derive(Debug, Serialize)]
@@ -266,7 +267,7 @@ fn parse_commits(raw: &str) -> Vec<CommitSummary> {
 }
 
 fn git(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = background_command("git")
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -287,7 +288,7 @@ fn git(repo: &str, args: &[&str]) -> Result<String, String> {
 }
 
 fn git_read(repo: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = background_command("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repo)
@@ -740,7 +741,7 @@ fn parse_name_status_z(raw: &str) -> Result<Vec<DiffFileSummary>, String> {
 }
 
 fn git_read_limited(repo: &str, args: &[&str], limit: usize) -> Result<(Vec<u8>, bool), String> {
-    let mut child = Command::new("git")
+    let mut child = background_command("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(repo)
@@ -1000,7 +1001,7 @@ mod tests {
     }
 
     fn git_ok(repo: &std::path::Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = background_command("git")
             .arg("-C")
             .arg(repo)
             .args(args)
