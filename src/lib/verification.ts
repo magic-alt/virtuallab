@@ -141,6 +141,8 @@ export function evidenceStatus(
   const optional = profile.gates.filter((gate) => !gate.required);
 
   if (required.some((gate) => byGate.get(gate.id)?.status === "fail")) return "fail";
+  if (checks.some((check) => check.status === "cancelled")) return "cancelled";
+  if (required.some((gate) => byGate.get(gate.id)?.status === "blocked")) return "blocked";
   if (required.some((gate) => byGate.get(gate.id)?.status === "running")) return "running";
   if (required.some((gate) => !byGate.has(gate.id) || byGate.get(gate.id)?.status === "not_run")) {
     return "not_run";
@@ -149,7 +151,7 @@ export function evidenceStatus(
   if (
     optional.some((gate) => {
       const status = byGate.get(gate.id)?.status;
-      return status === "fail" || status === "warn";
+      return status === "fail" || status === "warn" || status === "blocked";
     })
   ) {
     return "warn";

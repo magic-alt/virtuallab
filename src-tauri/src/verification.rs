@@ -138,9 +138,10 @@ pub async fn verification_run(
     let token = Arc::new(AtomicBool::new(false));
     {
         let mut active = manager.active.lock().map_err(lock_err)?;
-        if active.insert(request.run_id.clone(), token.clone()).is_some() {
+        if active.contains_key(&request.run_id) {
             return Err("Verification run id is already active.".into());
         }
+        active.insert(request.run_id.clone(), token.clone());
     }
     let run_id = request.run_id.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {

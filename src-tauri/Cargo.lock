@@ -3884,6 +3884,7 @@ name = "virtuallab"
 version = "0.2.0"
 dependencies = [
  "notify",
+ "sha2",
  "portable-pty",
  "serde",
  "serde_json",

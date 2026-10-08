@@ -40,7 +40,7 @@ export interface VerificationProfile {
   gates: VerificationGate[];
 }
 
-export type EvidenceStatus = "pass" | "warn" | "fail" | "running" | "not_run";
+export type EvidenceStatus = "pass" | "warn" | "fail" | "running" | "not_run" | "blocked" | "cancelled";
 
 export interface EvidenceCheck {
   gateId: string;

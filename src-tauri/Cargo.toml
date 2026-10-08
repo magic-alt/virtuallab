@@ -19,3 +19,5 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 portable-pty = "0.9"
 notify = "8"
+
+sha2 = "0.10.9"
