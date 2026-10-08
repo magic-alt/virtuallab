@@ -28,7 +28,7 @@ function requireDesktop() {
 }
 
 export class CodexAppServerAdapter implements HarnessAdapter {
-  readonly kind = "codex" as const;
+  readonly kind: AgentHarnessKind = "codex";
 
   async capabilities(): Promise<AgentHarnessCapabilities> {
     requireDesktop();
