@@ -186,16 +186,16 @@ mod tests {
 
     fn resource() -> HardwareResource {
         HardwareResource {
-            id: "servo-node21".into(),
+            id: "resource-a".into(),
             capabilities: vec![Action::InspectMetadata, Action::BenchRead, Action::Motion],
         }
     }
     fn request(action: Action, mode: LeaseMode) -> LeaseRequest {
-        LeaseRequest {resource_id: "servo-node21".into(),workspace_root:"/repo/a".into(),
+        LeaseRequest {resource_id: "resource-a".into(),workspace_root:"/repo/a".into(),
             action,mode,ttl_ms:1000}
     }
     fn human_grant() -> HumanGrant {
-        HumanGrant{id:"approval-1".into(),resource_id:"servo-node21".into(),
+        HumanGrant{id:"approval-1".into(),resource_id:"resource-a".into(),
             workspace_root:"/repo/a".into(),max_level:PermissionLevel::L3,
             expires_at_ms:5000,issuer:"human".into(),one_use:true}
     }

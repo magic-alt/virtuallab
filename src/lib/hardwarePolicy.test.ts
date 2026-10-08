@@ -3,14 +3,14 @@ import { evaluateHardwarePolicy, hardwareRequiredLevel } from "./hardwarePolicy"
 import type { HardwareApproval, HardwareLease, HardwareLeaseRequest, HardwareResource } from "@/types/hardware";
 
 const resource: HardwareResource = {
-  id: "node21", kind: "dut", capabilities: ["inspect-metadata", "bench-read", "motion", "flash"],
+  id: "resource-a", kind: "dut", capabilities: ["inspect-metadata", "bench-read", "motion", "flash"],
 };
 const req: HardwareLeaseRequest = {
-  resourceId: "node21", workspaceRoot: "/repo/worktree",
+  resourceId: "resource-a", workspaceRoot: "/repo/worktree",
   mode: "shared-read", action: "inspect-metadata", ttlMs: 1000,
 };
 const grant: HardwareApproval = {
-  id: "human-1", issuer: "human", resourceId: "node21",
+  id: "human-1", issuer: "human", resourceId: "resource-a",
   workspaceRoot: "/repo/worktree", maxLevel: "L3", expiresAtMs: 2000, oneUse: true,
 };
 
@@ -37,7 +37,7 @@ describe("hardware policy", () => {
 
   it("prevents exclusive lease conflicts and ignores expired leases", () => {
     const active: HardwareLease = {
-      id: "lease-1", resourceId:"node21", workspaceRoot:"/other",
+      id: "lease-1", resourceId:"resource-a", workspaceRoot:"/other",
       action:"inspect-metadata", mode:"shared-read", level:"L0", issuedAtMs:500, expiresAtMs:1800,
     };
     expect(evaluateHardwarePolicy(resource, {...req, mode:"exclusive"}, null, [active], 1000).allowed).toBe(false);
