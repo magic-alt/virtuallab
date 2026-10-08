@@ -187,9 +187,13 @@ No other repository is a required build dependency or hard-coded integration.
 
 ## Desktop app icon parity (Windows / macOS / Linux)
 
-The Windows `src-tauri/icons/icon.ico` (orange V) is the canonical artwork. Earlier versions mistakenly used a different blue `icon.png` and omitted `icon.icns`, causing a different macOS icon. The build now explicitly includes all three matching resources.
+The app uses a **single deterministic vector-geometry definition** in `scripts/icon-core.mjs` to build matching orange-V icons for all platforms. The old 16px/32px ICO-to-ICNS conversion was inadequate for macOS Dock rendering; do not use or restore it.
 
-After replacing the Windows artwork, regenerate the other platforms' icon resources and verify them before a release:
+The generated and committed resources are:
+
+- `src-tauri/icons/icon.png`: full RGBA 1024×1024 image.
+- `src-tauri/icons/icon.ico`: Windows PNG images at 16/32/48/64/128/256px.
+- `src-tauri/icons/icon.icns`: macOS standard representations from 16px through 1024px, including Retina variants.
 
 ```bash
 npm run icons:generate
@@ -197,8 +201,25 @@ npm run icons:check
 npm run tauri:build
 ```
 
-`icons:check` performs a byte-level comparison with the PNG images embedded in `icon.ico` and is enforced by CI. The macOS job additionally builds an actual `.app` and checks that its `CFBundleIconFile` points to the expected bundled `.icns`.
+Both the generated output and the generator are committed. `icons:check` fails when committed binary assets differ from the shared source. The macOS CI runner now also builds `VirtualLab.app`, decodes its **actual bundled ICNS** using `iconutil`, `sips`, and ImageIO/CoreGraphics, checks 1024px availability, and checks expected orange/dark pixel content. A mere file-copy equality check is not sufficient.
 
-**Artwork resolution:** the original Windows icon only supplies 16×16 and 32×32 artwork. The matching macOS icon is functional but may look soft at large Dock sizes/Retina zoom. A future artwork refresh should replace the canonical ICO with the *same* high-resolution orange-V identity and extend `generate-icons.mjs` to support 128/256/512/1024 variants rather than silently reintroducing unrelated branding.
+### Upgrading a previously installed macOS app
 
-After upgrading on macOS, close VirtualLab, replace the older `VirtualLab.app` (do not launch an older copy), and reopen it. If the Dock/Finder still shows a cached icon, run `touch /Applications/VirtualLab.app && killall Dock` only when the app was actually installed under `/Applications`; this refreshes the cache without modifying the application binary.
+Check that the Git checkout includes this fix, run the build again, and **replace the old application bundle**. Existing Dock shortcuts may still reference the older bundle rather than the newly built one.
+
+```bash
+git pull
+npm ci
+npm run icons:check
+npm run tauri:build
+open src-tauri/target/release/bundle/macos/VirtualLab.app
+```
+
+To install at `/Applications/VirtualLab.app`, quit VirtualLab and replace that bundle with the new `src-tauri/target/release/bundle/macos/VirtualLab.app`. Remove and re-add the old Dock shortcut if it is pinned to a different copy. If Finder/Dock still shows a cached icon after replacing the correct bundle:
+
+```bash
+touch /Applications/VirtualLab.app
+killall Dock
+```
+
+Check `mdfind 'kMDItemCFBundleIdentifier == "io.magic-alt.virtuallab"'` to find duplicate installed copies. The cache reset only changes display state; it cannot fix an old or incorrectly built bundle.

@@ -96,3 +96,9 @@ jobs:
           ICON_NAME="$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")"
           test -n "$ICON_NAME"
           cmp "src-tauri/icons/icon.icns" "$APP/Contents/Resources/$ICON_NAME"
+          # The old test only compared bytes; Dock still rendered malformed red/black.
+          # Decode the *packaged* ICNS using Apple's native icon readers.
+          iconutil --convert iconset --output "$RUNNER_TEMP/VirtualLab.iconset" "$APP/Contents/Resources/$ICON_NAME"
+          sips -s format png "$APP/Contents/Resources/$ICON_NAME" --out "$RUNNER_TEMP/VirtualLab-rendered.png"
+          test -s "$RUNNER_TEMP/VirtualLab-rendered.png"
+          swift scripts/validate-macos-icon.swift "$APP/Contents/Resources/$ICON_NAME"
