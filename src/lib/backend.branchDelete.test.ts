@@ -65,9 +65,9 @@ describe("native local branch deletion confirmation", () => {
   });
 
   it("fails closed when the native dialog fails (including permission errors)", async () => {
-    native.confirm.mockRejectedValue(new Error("dialog:allow-ask denied"));
+    native.confirm.mockRejectedValue(new Error("dialog:allow-message denied"));
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/denied"))
-      .rejects.toThrow("dialog:allow-ask denied");
+      .rejects.toThrow("dialog:allow-message denied");
     expect(native.invoke).not.toHaveBeenCalled();
   });
 
