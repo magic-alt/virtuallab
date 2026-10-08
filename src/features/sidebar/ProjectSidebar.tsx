@@ -54,9 +54,15 @@ export function ProjectSidebar({
         `${repository.name} ${repository.path}`.toLowerCase().includes(query),
       )
     : repositories;
-  const visibleBranches = snapshot.branches.filter((branch) =>
-    !query || branch.name.toLowerCase().includes(query),
-  );
+  // Always keep the active branch and main in easy reach, even in repositories
+  // with dozens of old local / origin refs.
+  const visibleBranches = snapshot.branches
+    .filter((branch) => !query || branch.name.toLowerCase().includes(query))
+    .sort((left, right) => {
+      const priority = (name: string) =>
+        name === snapshot.currentBranch ? 0 : name === "main" ? 1 : 2;
+      return priority(left.name) - priority(right.name) || left.name.localeCompare(right.name);
+    });
   const visibleWorktrees = (query
     ? snapshot.worktrees.filter((worktree) =>
         `${worktree.branch ?? ""} ${worktree.path}`.toLowerCase().includes(query),
@@ -179,7 +185,7 @@ export function ProjectSidebar({
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
           <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
-            Local and origin branches. Fetch + prune removes stale origin refs; delete removes only local branches.
+            Current branch and main are pinned first. Untracked files are kept when switching safely; Fetch + prune removes stale origin refs.
           </p>
           <div className="mt-2 space-y-1">
             {visibleBranches.map((branch) => {
