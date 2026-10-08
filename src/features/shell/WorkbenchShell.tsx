@@ -24,7 +24,7 @@ import {
   watchStop,
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
-import { suggestedReviewBranch } from "@/lib/reviewLoop";
+import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
   RepositorySnapshot,
   ReviewWorkspaceRequest,
@@ -420,7 +420,7 @@ export function WorkbenchShell() {
 
       {workspaceDialog && activeRepository && (
         <NewWorkspaceDialog
-          defaultBaseRef={reviewIntent ? "HEAD" : snapshot.currentBranch || "HEAD"}
+          defaultBaseRef={reviewIntent ? selectedReviewBase(snapshot.headSha) : snapshot.currentBranch || "HEAD"}
           defaultBranch={reviewIntent ? suggestedReviewBranch(reviewIntent) : ""}
           reviewLabel={reviewIntent ? `${reviewIntent.kind.toUpperCase()} #${reviewIntent.number}` : undefined}
           onClose={() => { setWorkspaceDialog(false); setReviewIntent(null); }}

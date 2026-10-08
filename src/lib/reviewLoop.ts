@@ -23,3 +23,10 @@ export function suggestedReviewBranch(target: ReviewWorkspaceRequest): string {
   if (!Number.isSafeInteger(target.number) || target.number <= 0) throw new Error("Invalid review reference number.");
   return `review/${target.kind}-${target.number}`;
 }
+
+/** A review worktree starts from the selected *active* workspace, never a different primary worktree. */
+export function selectedReviewBase(activeHead: string): string {
+  const head=activeHead.trim();
+  if (!/^[a-f0-9]{7,40}$/i.test(head)) throw new Error("A valid active-workspace HEAD is required.");
+  return head;
+}

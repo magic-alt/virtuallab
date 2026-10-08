@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { correlatePrHead, gitOidMatches, suggestedReviewBranch } from "./reviewLoop";
+import { correlatePrHead, gitOidMatches, selectedReviewBase, suggestedReviewBranch } from "./reviewLoop";
 
 const pr = {headSha:"abcdef1234567890",baseSha:"1234567890abcdef"};
 describe("review loop identity", () => {
@@ -9,6 +9,10 @@ describe("review loop identity", () => {
     expect(correlatePrHead("fffffffffff",pr)).toBe("diverged");
     expect(correlatePrHead("preview",pr)).toBe("unknown");
     expect(gitOidMatches("abc","abc")).toBe(false);
+  });
+  it("selects the active worktree HEAD instead of an unrelated repository primary HEAD",()=>{
+    expect(selectedReviewBase("abcdef1234")).toBe("abcdef1234");
+    expect(()=>selectedReviewBase("preview")).toThrow();
   });
   it("suggests a repository-neutral worktree branch",()=>{
     expect(suggestedReviewBranch({kind:"issue",number:42,reference:"https://github.com/example/repo/issues/42"})).toBe("review/issue-42");
