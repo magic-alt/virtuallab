@@ -47,7 +47,7 @@ describe("ProjectSidebar controls", () => {
     await user.click(screen.getByRole("button", { name: /^new$/i }));
     expect(p.onNewWorkspace).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: /feat\/sample-workspace/i }));
+    await user.click(screen.getByRole("button", { name: /^feat\/sample-workspace/i }));
     expect(p.onSelectWorkspace).toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
@@ -62,7 +62,7 @@ describe("ProjectSidebar controls", () => {
 
   it("filters repositories and disables native-only controls in web preview", () => {
     const p = props();
-    render(
+    const { rerender } = render(
       <ProjectSidebar
         {...p}
         filterQuery="sample-beta"
@@ -75,6 +75,15 @@ describe("ProjectSidebar controls", () => {
     expect(screen.getByText("sample-beta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add repository/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^new$/i })).toBeDisabled();
+    rerender(
+      <ProjectSidebar
+        {...p}
+        filterQuery=""
+        repositoryActionsEnabled={false}
+        workspaceActionsEnabled={false}
+        branchActionsEnabled={false}
+      />,
+    );
     expect(screen.getByRole("button", { name: /switch to feat\/remote-only/i })).toBeDisabled();
   });
 });
