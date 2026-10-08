@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
@@ -140,6 +140,62 @@ describe("ChangesReview", () => {
     expect(screen.queryByRole("button", { name: "src/a.ts" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "src/b.ts" }));
     expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({ path: "src/b.ts", mode: "index" }));
+  });
+
+  it("shows untracked files and grouped directories without requesting a tracked diff", async () => {
+    const user = userEvent.setup();
+    const untrackedSnapshot: RepositorySnapshot = {
+      ...snapshot, dirtyCount: 2, stagedCount: 0, unstagedCount: 0, untrackedCount: 2,
+      changes: [
+        { path: "new file.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
+        { path: "generated/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
+      ],
+    };
+    render(<ChangesReview snapshot={untrackedSnapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "new file.ts" }));
+    expect(screen.getByText("Untracked file")).toBeInTheDocument();
+    expect(backend.gitDiff).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Mark reviewed" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "generated/" }));
+    expect(screen.getByText("Untracked directory")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Staged" }));
+    expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "generated/" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Untracked directory")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Base" }));
+    expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
+  });
+
+  it("clears a loaded diff when selecting an untracked item", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={{ ...snapshot, dirtyCount: 3, untrackedCount: 1, changes: [
+      ...snapshot.changes,
+      { path: "新 file.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
+    ] }} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await screen.findByTestId("monaco-review");
+    await user.click(screen.getByRole("button", { name: "新 file.ts" }));
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+    expect(screen.getByText("Untracked file")).toBeInTheDocument();
+    expect(backend.gitDiff).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    expect(await screen.findByTestId("monaco-review")).toBeInTheDocument();
+  });
+
+  it("discards a pending tracked diff after selecting an untracked item", async () => {
+    let resolveDiff!: (value: ReturnType<typeof response>) => void;
+    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => { resolveDiff = resolve; }));
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={{ ...snapshot, dirtyCount: 3, untrackedCount: 1, changes: [
+      ...snapshot.changes,
+      { path: "new.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
+    ] }} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await user.click(screen.getByRole("button", { name: "new.ts" }));
+    await act(async () => { resolveDiff(response()); });
+    expect(screen.getByText("Untracked file")).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark reviewed" })).toBeDisabled();
   });
 
   it("discovers base files and sends rename identity", async () => {

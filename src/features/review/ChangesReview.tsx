@@ -27,6 +27,7 @@ interface ReviewFile {
   path: string;
   oldPath?: string | null;
   status: string;
+  untracked?: boolean;
 }
 
 export function ChangesReview({
@@ -114,10 +115,12 @@ export function ChangesReview({
       .filter((change) =>
         mode === "index"
           ? change.indexStatus !== " " && change.indexStatus !== "?"
-          : change.worktreeStatus !== " " && change.kind !== "untracked",
+          : change.worktreeStatus !== " " || change.kind === "untracked",
       )
       .map((change) => localReviewFile(change, mode));
   }, [baseFiles, mode, snapshot.changes]);
+
+  const selectedUntracked = files.find((file) => file.path === selectedPath && file.untracked);
 
   const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
@@ -125,8 +128,13 @@ export function ChangesReview({
     setSelectedPath(file.path);
     setSelectedReviewLine(null);
     setDraftBody("");
-    setLoading(true);
+    setResult(null);
     setError(null);
+    if (file.untracked) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     try {
       const next = await gitDiff({
         repositoryRoot,
@@ -282,6 +290,11 @@ export function ChangesReview({
         </div>
       </div>
 
+      <div aria-label="Local change summary" className="text-[11px] text-slate-400">
+        Local changes: {snapshot.unstagedCount} unstaged · {snapshot.stagedCount} staged · {snapshot.untrackedCount} untracked.
+        {" "}Untracked directories count as one entry.
+      </div>
+
       <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
         <span className="text-slate-300">Review → Fix → Refresh → Re-review</span>
         <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
@@ -317,8 +330,10 @@ export function ChangesReview({
             </div>
             <div className="mt-1 text-[11px] text-slate-600">
               {mode === "base"
-                ? "Load a base ref, then select a committed change."
-                : "Select a tracked file for read-only Monaco review."}
+                ? "Load a base ref to compare committed changes. Local unstaged and untracked changes are not included."
+                : mode === "index"
+                  ? "Staged changes only. Untracked entries are shown in Worktree."
+                  : "Unstaged changes and untracked entries. Select a tracked file for read-only Monaco review."}
             </div>
           </div>
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="changes-file-list">
@@ -326,9 +341,9 @@ export function ChangesReview({
               <div className="p-5 text-xs leading-5 text-slate-600">
                 {mode === "base"
                   ? "No base-ref file list loaded yet, or there are no committed changes."
-                  : mode === "worktree" && snapshot.untrackedCount > 0
-                    ? "No tracked files in this mode. Untracked files have no Git diff until they are staged."
-                    : "No files in this diff mode."}
+                  : mode === "index"
+                    ? "No staged changes. Check Worktree for unstaged and untracked entries."
+                    : "No unstaged or untracked changes. Check Staged for changes already in the index."}
               </div>
             ) : (
               files.map((file) => (
@@ -393,7 +408,7 @@ export function ChangesReview({
         <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
           <div className="flex min-h-10 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
             <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
-              {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? "No file selected"}
+              {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? selectedPath ?? "No file selected"}
             </div>
             {selectedReviewLine && (
               <Badge tone="orange">
@@ -412,6 +427,13 @@ export function ChangesReview({
               <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
               <ReviewMessage icon="error" title="Diff load failed" detail={error} />
+            ) : selectedUntracked ? (
+              <ReviewMessage
+                title={selectedUntracked.path.endsWith("/") ? "Untracked directory" : "Untracked file"}
+                detail={selectedUntracked.path.endsWith("/")
+                  ? "Git groups this directory as one local change. Its files are not staged; tracked diff review is unavailable here."
+                  : "This file is counted as a local change but is not staged. Tracked diff review is unavailable until the file is staged."}
+              />
             ) : result?.binary ? (
               <ReviewMessage
                 title="Binary diff"
@@ -484,6 +506,7 @@ function localReviewFile(change: ChangeEntry, mode: DiffMode): ReviewFile {
     path: change.path,
     oldPath: change.oldPath,
     status: status || (change.kind === "untracked" ? "?" : "·"),
+    untracked: change.kind === "untracked",
   };
 }
 
@@ -516,6 +539,7 @@ function FileRow({
       <span className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={label}>
         {label}
       </span>
+      {file.untracked && <Badge tone="neutral">untracked</Badge>}
     </button>
   );
 }
