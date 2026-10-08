@@ -1,6 +1,6 @@
-# V0.2 control acceptance matrix
+# Control acceptance matrix — V0.1 to V0.5 foundations
 
-Every visible interactive control must be backed by an automated test or an explicit desktop acceptance step.
+Every visible interactive control must have an automated test and/or an explicit desktop acceptance step. Automated success does not prove authenticated GitHub posting or safe physical hardware behavior.
 
 | Surface | Control | Automated evidence | Desktop acceptance |
 | --- | --- | --- | --- |
@@ -194,3 +194,30 @@ Drafts are local data. Creating, editing, selecting or deleting a local draft pe
 9. Sign out of `gh` or temporarily make it unavailable, press **Detect**, and verify **local only** mode while Changes/Monaco/local drafts remain usable.
 
 The GitHub adapter exposes no merge, reset, clean, force-push or release command in V0.3.
+
+
+## V0.3 C — Review loop matrix
+
+| Scenario | Automated tests | Desktop check |
+| --- | --- | --- |
+| PR/issue → worktree intent | `GithubPanel.test.tsx`, `NewWorkspaceDialog.test.tsx`, `reviewLoop.test.ts` | load an issue/PR from the selected repository, inspect prefilled `review/issue-N` / `review/pr-N` and click Create |
+| Isolation and scope | Rust `git.rs` worktree tests, typed shell workflow | verify a sibling worktree is created; source reference is attached only to new worktree |
+| Review → fix → refresh → re-review | `ChangesReview.test.tsx`, `workbench.test.ts` | mark fix, edit file externally, click Refresh and re-review, reload diff and mark reviewed |
+| Stale open Diff | `ChangesReview.test.tsx` | keep Monaco open, edit tracked content, Refresh; old editor is invalidated until reloaded |
+| HEAD change / stale draft | `workbench.test.ts` | save draft, create new commit, Refresh; previous active draft becomes stale |
+| PR head/base relation | `reviewLoop.test.ts`, `GithubPanel.test.tsx`, Rust GitHub parse fixture | HEAD at PR base shows `At PR base` and posting disabled; HEAD at PR head allows only eligible draft |
+| Offline/repository mismatch | existing GithubPanel/Rust guard tests | no `gh`: Changes and drafts still work; cross-repo URL is rejected |
+| Mutations | existing explicit comment confirmation + native Git guards | creating worktree and posting comment need separate deliberate actions; no merge/reset/force push |
+
+### Review-loop manual scenario
+
+1. Use a disposable repository with a GitHub origin and two branches and an issue/PR on that **same** repository. Authenticate local `gh` if testing the GitHub steps.
+2. Load issue context, select **New issue worktree** and **cancel**. Confirm no Git branch or worktree was created.
+3. Repeat and explicitly create `review/issue-N` from local HEAD; verify switch to the new worktree with persisted issue link. Revisit another worktree and return to confirm isolation.
+4. Review a tracked changed file in Changes, create a draft and mark **fix in progress**. Make an edit in an external editor or terminal.
+5. Click **Refresh and re-review**: confirm the displayed Monaco content is invalidated. Reopen the file and click **Mark reviewed**. Commit another change and verify review phase/drafts become stale on next refresh.
+6. Load a PR. Verify local HEAD vs PR head and base OIDs; at PR base, comments are disabled. Do **not** assume a newly created PR worktree automatically contains remote PR commits.
+7. Verify posting requires an active same-HEAD draft, changed file in PR and explicit confirmation. Cancel first. Post only a disposable review comment after confirming and check returned URL.
+8. Run the no-`gh` / offline fallback, path spaces/Unicode, refresh while a diff is open and Windows/macOS/Linux native workflows.
+
+Do not claim this manual checklist PASS based only on GitHub Actions CI.

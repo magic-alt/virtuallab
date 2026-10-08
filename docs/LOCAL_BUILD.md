@@ -165,3 +165,12 @@ V0.1 closeout commits both lockfiles:
 - `src-tauri/Cargo.lock`
 
 Normal local/CI setup should use `npm ci`. Rust checks/tests should use Cargo `--locked` so dependency drift fails fast instead of silently updating the graph.
+
+
+## V0.3 review-loop development checks
+
+For updates to the issue/PR review workflow run `npm run test:controls`, `npm run typecheck`, `npm run build` and `npm run acceptance:local`. The acceptance runner covers Rust Git tests and UI fixtures; it does not authenticate to GitHub or post review comments.
+
+To exercise the actual Issue/PR → worktree flow, open the Tauri app with a user-selected local Git repository, authenticate the optional `gh` CLI, and follow `docs/CONTROL_ACCEPTANCE.md`. A new review worktree uses a user-confirmed local base ref and does not fetch/checkout PR code. After editing, use **Refresh and re-review** to invalidate cached Diff before re-opening it.
+
+No other repository is a required build dependency or hard-coded integration.

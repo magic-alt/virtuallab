@@ -5,9 +5,9 @@ VirtualLab is a **local-first Engineering Workbench / Engineering Control Plane*
 ## Architecture principles
 
 1. **Workspace owns execution context.** Repository, branch/worktree, terminal, checks, diff and future agent sessions all hang from one workspace.
-2. **AI is an adapter, not the product core.** Claude Code, Codex, OpenCode or other agents can be added later without changing the workspace model.
+2. **AI is an adapter, not the product core.** Codex is integrated as an initial optional harness bridge; other agents can be added later without changing the workspace model.
 3. **Native operations stay behind a narrow Rust boundary.** The frontend requests typed commands; Rust performs filesystem/process/Git operations.
-4. **No arbitrary shell from UI commands.** V0.1 uses fixed Git subcommands and structured arguments to avoid command injection.
+4. **Typed native operations.** Interactive PTYs are human-controlled; Git/GitHub/verification services use narrowly defined Tauri commands, not arbitrary agent-supplied shell strings.
 5. **Hardware-changing actions require explicit human approval.** Flashing, drive enable, power-stage enable, destructive Git operations and merge actions will be gated.
 6. **Local-first and offline-capable.** Git inspection and workspace inventory must work without cloud services.
 
@@ -17,7 +17,8 @@ VirtualLab is a **local-first Engineering Workbench / Engineering Control Plane*
 React / TypeScript UI
   ├─ features/sidebar
   ├─ features/workspace
-  ├─ stores
+  ├─ Monaco review + GitHub panel
+  ├─ stores / typed adapters
   └─ typed backend client
           │ Tauri invoke/events
           ▼
@@ -26,12 +27,14 @@ Rust native core
   ├─ workspace service
   ├─ PTY/process supervisor
   ├─ filesystem watcher
+  ├─ restricted verification runner + hashed evidence files
+  ├─ Codex app-server transport + private hardware policy contract
   └─ persisted workspace context
           │
           ├─ git
           ├─ PowerShell/bash
           ├─ build/test tools
-          └─ agent harnesses  (later)
+          └─ Codex app-server (foundation only; UI later)
 ```
 
 ## Frontend stack
@@ -43,11 +46,7 @@ Rust native core
 - Zustand for local application state
 - Lucide icons
 
-Planned adapters:
-
-- xterm.js for embedded PTY terminals
-- structured `workbench://event` stream for process/filesystem lifecycle
-- Monaco diff/editor for review (V0.3)
+Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff, optional `gh` PR/issue context, and initial Codex app-server transport. Full agent workspace UI and durable cross-run event history are still planned.
 
 ## Native stack
 
@@ -123,7 +122,7 @@ The local Zustand store persists one workspace context per repository: active wo
 
 ## V0.2 normalized checks
 
-Repository readiness and process outcomes share a typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. V0.2 uses this for local readiness semantics; V0.4 will add durable evidence, history and release-gate policy.
+Repository readiness and process outcomes share a typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. V0.2 uses this for local readiness semantics; V0.4 now persists per-run manifests, hashes, and logs; history search and enforceable release gates are future work.
 
 ## V0.3 review boundary
 
@@ -142,6 +141,24 @@ The first V0.4/V0.5 bridge keeps the workspace as the durable owner while adding
 - `VerificationProfile` defines versioned build/unit/HIL/hardware/soak/evidence gates using structured executable + argument vectors or future typed adapters.
 - `EvidenceManifest` binds a verification run to the workspace, repository HEAD, individual gate results, artifacts, and optional firmware/bitstream/DUT/hardware-revision metadata.
 
-This slice defines the contracts but does not yet make an agent authoritative for verification. The verification runner, durable evidence artifact registry, hardware resource leases and explicit hardware/release approval broker remain independent control-plane responsibilities.
+This slice defines the contracts but does not yet make an agent authoritative for verification. The restricted native verification runner writes evidence into `.virtuallab/evidence/<run-id>/`. A private hardware lease policy contract exists but cannot authorize real hardware: there is no public grant-minting method, physical interlock, or approved hardware execution provider. Release readiness UI, searchable history and complete authorization are not implemented.
 
 See [V0.4 → V0.5 agent foundation](./V0.4_V0.5_AGENT_FOUNDATION.md).
+
+
+## V0.3 review loop (current)
+
+```text
+Authenticated same-origin issue / PR reference
+  → user confirms new local Git worktree
+  → workspace-local source reference + review state
+  → Changes diff / optional local line draft
+  → fix in Terminal or external editor
+  → refresh native Git snapshot; invalidate cached Monaco diff
+  → reload changed file / base file list → mark reviewed
+  → optional explicit, confirmed GitHub comment (PR head match only)
+```
+
+Source references are workspace-local and restored when that worktree is revisited. `baseRefOid` and `headRefOid` from `gh pr view --json` are compared with the local (abbreviated) Git HEAD; a local HEAD at PR base does not authorize posting to PR head. A new worktree starts at a user-selected **local** base ref, not at a remote PR branch. Changes/Monaco always remain read-only. A post-refresh diff is considered invalid until explicitly reloaded.
+
+The native boundary continues to reject nonmatching GitHub repository URLs; no automatic fetch/checkout/merge/reset/force-push behavior was added. Workspace and review state remain meaningful offline.

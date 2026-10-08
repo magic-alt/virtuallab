@@ -19,27 +19,27 @@ Optional agent harnesses can attach to this model, but the workbench remains use
 
 **Project independence:** VirtualLab is a general-purpose local workbench. It never assumes a specific GitHub repository, firmware project, hardware board, device ID, or lab setup. All repositories are selected by the user, all build/test profiles are workspace-scoped, and any third-party hardware extension must be explicitly configured. Generic HIL/verification gate types are not connections to a particular project.
 
-## Current status — V0.3 review/GitHub in development
+## Current implementation status
 
-The first slice is already designed for daily local use:
+**V0.1/V0.2:** completed local workbench foundation and workspace execution.  
+**V0.3 A/B:** completed local Git diff + read-only Monaco review, persisted line drafts, and optional `gh` GitHub PR/issue integration.  
+**V0.3 C:** Review loop implementation in PR #12: explicit Issue/PR → worktree creation, Review → Fix → Refresh → Re-review phase, HEAD/base correlation and stale-diff invalidation. Desktop manual acceptance remains a separate verification step.  
+**V0.4:** versioned verification profile, native process runner, cancellation/timeout, per-run evidence directory, SHA-256 artifacts and restricted hardware lease/approval *contract*. Full evidence history/release UI and physical hardware integration are not implemented.  
+**V0.5:** Codex app-server harness foundation and persisted workspace↔thread binding. Agent workspace UI, automatic hardware permissions and additional adapters are not yet available.
 
-- orange-accented Tauri desktop shell
-- persisted list of local repositories
-- native folder picker
-- native, read-only Git inspection
-- current branch and HEAD
-- dirty/staged/unstaged/untracked counts
-- changed-file inventory
-- Git worktree inventory
-- recent commit history
-- preview mode when running as a normal web page
-- native PowerShell/bash PTY with multi-terminal tabs
-- Git worktree create/select/remove workflow
-- structured build/test profiles with Run/Stop and streamed output
-- filesystem-driven repository refresh
-- architecture and safety boundary ready for review, verification and agents
+This repo ships independently of other application repositories or hardware labs. Local review works without GitHub authentication; the optional GitHub panel uses an existing `gh` login and never stores a token.
 
-V0.2 is closed: PTY terminals, isolated worktrees, structured build/test processes, filesystem-driven refresh, persisted workspace context and normalized check results are complete. V0.3 is now focused on local diff/review and optional GitHub context through a typed adapter.
+### V0.3 Review loop
+
+1. Add/select a local repository and open the **GitHub** tab.
+2. With authenticated `gh`, load a PR/issue URL belonging to that repository.
+3. Click **New issue worktree** or **New PR worktree**, inspect/edit the suggested local branch and base ref, then explicitly **Create workspace**. The link to the source issue/PR persists per worktree. No automatic PR branch checkout, remote fetch or merge occurs.
+4. Select **Changes**, inspect a read-only diff and create a line-scoped local draft.
+5. Mark **fix in progress**; edit using the Terminal or an external editor.
+6. Click **Refresh and re-review**. Any open diff is invalidated, so reload the selected file (or base file list), inspect again and click **Mark reviewed**.
+7. In GitHub, only a draft tied to the current HEAD can be posted and only when local HEAD matches PR head; posting requires an explicit confirmation. Local HEAD equal to PR base is **not** sufficient.
+
+Refresh/re-review is a local workflow, not a proof that the remote PR has been updated. PR metadata and checks require an explicit GitHub refresh/reload to reflect upstream changes.
 
 ## Technology stack
 
@@ -61,14 +61,7 @@ V0.2 is closed: PTY terminals, isolated worktrees, structured build/test process
 - **Zustand**
 - **Lucide**
 
-Planned:
-
-- xterm.js + PTY process supervisor
-- Monaco diff/review
-- SQLite event/history store
-- GitHub integration
-- verification profiles
-- Claude Code / Codex harness adapters
+Implemented adapters include xterm.js/PTy, Monaco read-only diff, optional `gh` GitHub context, native verification runner and Codex app-server foundation. Planned work includes durable searchable event history, release gates UI, full agent event timeline, other harness adapters and independently enforced hardware controls.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -115,13 +108,13 @@ cargo check --locked --manifest-path src-tauri/Cargo.toml
 
 ## Product direction
 
-V0.2 adds isolated workspace execution with Git worktree lifecycle, xterm.js and a native PTY/process supervisor.
+V0.2 provides isolated worktrees, native PTY and process supervision.
 
-V0.3 adds diff/review and GitHub PR state.
+V0.3 adds diff/review, optional GitHub PR/issue context and the explicit Review loop.
 
-V0.4 adds engineering verification gates for build, unit, HIL, hardware, soak and evidence.
+V0.4 adds a restricted native verification runner, evidence files and policy contracts; hardware gates remain blocked pending real enforcement.
 
-V0.5 adds agent harnesses. The invariant remains:
+V0.5 provides the initial Codex harness bridge, without an Agent workspace UI yet. The invariant remains:
 
 > **Agent belongs to Workspace. Workspace does not belong to Agent.**
 
@@ -145,7 +138,7 @@ If Rust is not installed, install rustup first (for example `winget install Rust
 
 ## Control acceptance
 
-Every interactive control introduced in V0.2 must have either an automated UI/native test or an explicit local acceptance step. The acceptance runner is Node-based and works on Windows, macOS and Linux. Run:
+Every new interactive control must have an automated UI/native test and/or an explicit desktop acceptance step. V0.3 Review loop controls and safety gates are mapped in the control acceptance document. The acceptance runner is Node-based and works on Windows, macOS and Linux. Run:
 
  ```bash
 npm ci
@@ -235,6 +228,6 @@ npm run tauri:build
 ```
 
 
-## V0.3 preparation
+## Implementation contracts
 
-V0.1/V0.2 closeout locks Node/Rust dependencies, restores repository/worktree/tab context, normalizes check results and runs the shared acceptance gate on Windows, macOS and Linux. The next implementation contract is [V0.3 Review and GitHub](docs/V0.3_REVIEW_GITHUB.md).
+See [V0.3 review and GitHub](docs/V0.3_REVIEW_GITHUB.md), [V0.4 verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md), [V0.4/V0.5 agent foundation](docs/V0.4_V0.5_AGENT_FOUNDATION.md), and the [control acceptance matrix](docs/CONTROL_ACCEPTANCE.md). CI uses Windows/macOS/Linux desktop acceptance; actual third-party GitHub authentication and PR posting are manual desktop checks.
