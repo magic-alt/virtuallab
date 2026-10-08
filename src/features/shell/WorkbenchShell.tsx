@@ -85,12 +85,29 @@ export function WorkbenchShell() {
   const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
   const latestSnapshotRequestRef = useRef<string | null>(null);
 
-  const loadSnapshot = useCallback((path: string): Promise<RepositorySnapshot> => {
+  const loadSnapshot = useCallback((path: string, requireFresh = false): Promise<RepositorySnapshot> => {
     const key = normalizePath(path);
     latestSnapshotRequestRef.current = key;
 
     const existing = snapshotLoadsRef.current.get(key);
-    if (existing) return existing;
+    if (existing) {
+      if (requireFresh) {
+        // A filesystem watch refresh may have started before git switch ended.
+        // Wait for it, then *reinspect* the new HEAD instead of displaying
+        // the snapshot that captured the previous branch.
+        return existing.catch(() => undefined).then(() => loadSnapshot(path, true));
+      }
+      // An older request may have lost ownership of the UI when the user
+      // switched worktrees. Re-selecting its path must commit its snapshot.
+      return existing.then((next) => {
+        if (latestSnapshotRequestRef.current === key) {
+          activePathRef.current = next.root;
+          setSnapshot(next);
+          setSnapshotRevision((revision) => revision + 1);
+        }
+        return next;
+      });
+    }
 
     const cached = snapshotCacheRef.current.get(key);
     if (
@@ -318,7 +335,7 @@ export function WorkbenchShell() {
       // A cancelled confirmation returns false: do not execute further
       // mutations or refresh the repository as though deletion succeeded.
       if (await action() !== false) {
-        await loadSnapshot(activePathRef.current ?? activeRepository.path);
+        await loadSnapshot(activePathRef.current ?? activeRepository.path, true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -335,7 +352,7 @@ export function WorkbenchShell() {
       // Git will not check out the same branch into two worktrees. Navigate
       // to the existing owner instead of forcing the checkout.
       try {
-        const next = await loadSnapshot(occupied);
+        const next = await loadSnapshot(occupied, true);
         saveWorkspaceState({
           repositoryId: activeRepository.id,
           activeWorktreePath: next.root,
