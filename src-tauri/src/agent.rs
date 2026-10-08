@@ -211,8 +211,11 @@ pub struct AgentManager {
 
 #[tauri::command]
 pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabilities, String> {
-    if harness != "codex" {
+    if harness != "codex" && harness != "deepseek" {
         return Err(format!("Unsupported agent harness: {harness}"));
+    }
+    if harness == "deepseek" && std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
+        return Ok(AgentHarnessCapabilities { harness, available: false, version: None, detail: "DEEPSEEK_API_KEY is not set; configure the official DeepSeek Codex model catalog locally.".into(), features: AgentHarnessFeatures { persistent_threads: true, turns: true, steering: true, interrupt: true, structured_events: true } });
     }
     let features = AgentHarnessFeatures {
         persistent_threads: true,
@@ -230,7 +233,7 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
                 harness,
                 available: true,
                 version: (!version.is_empty()).then_some(version),
-                detail: "Codex CLI available; VirtualLab uses app-server stdio JSON-RPC.".into(),
+                detail: if harness == "deepseek" { "DeepSeek provider via Codex Responses app-server; requires DEEPSEEK_API_KEY and a local Codex model catalog.".into() } else { "Codex CLI available; VirtualLab uses app-server stdio JSON-RPC.".into() },
                 features,
             })
         }
@@ -268,7 +271,7 @@ fn start_session(
     manager: AgentManager,
     request: AgentSessionStartRequest,
 ) -> Result<AgentSessionBinding, String> {
-    if request.harness != "codex" {
+    if request.harness != "codex" && request.harness != "deepseek" {
         return Err(format!("Unsupported agent harness: {}", request.harness));
     }
     let root = request.workspace_root.trim();
@@ -289,14 +292,15 @@ fn start_session(
                 .as_deref()
                 .is_some_and(|thread| thread != existing.binding.thread_id)
             {
-                return Err("Workspace already has a different active Codex thread.".into());
+                return Err("Workspace already has a different active agent thread.".into());
             }
+            if existing.binding.harness != request.harness { return Err("Stop the current harness before switching providers.".into()); }
             return Ok(existing.binding.clone());
         }
         manager.runtimes.lock().map_err(lock_error)?.remove(&key);
     }
 
-    let process = spawn_codex(&app, root)?;
+    let process = spawn_codex(&app, root, &request.harness)?;
     if let Err(error) = initialize_codex(&process) {
         let _ = process.stop();
         return Err(error);
@@ -309,7 +313,9 @@ fn start_session(
                 "cwd": root,
                 "sandbox": "workspace-write",
                 "approvalPolicy": "never",
-                "excludeTurns": true
+                "excludeTurns": true,
+                "model": if request.harness == "deepseek" { Some("deepseek-flash") } else { None },
+                "modelProvider": if request.harness == "deepseek" { Some("deepseek") } else { None }
             }),
         )
     } else {
@@ -320,7 +326,9 @@ fn start_session(
                 "sandbox": "workspace-write",
                 "approvalPolicy": "never",
                 "ephemeral": false,
-                "serviceName": "virtuallab"
+                "serviceName": "virtuallab",
+                "model": if request.harness == "deepseek" { Some("deepseek-flash") } else { None },
+                "modelProvider": if request.harness == "deepseek" { Some("deepseek") } else { None }
             }),
         )
     };
@@ -336,7 +344,7 @@ fn start_session(
     let timestamp = now_ms();
     let binding = AgentSessionBinding {
         workspace_root: root.into(),
-        harness: "codex".into(),
+        harness: request.harness.clone(),
         thread_id: thread_id.clone(),
         created_at_ms: timestamp,
         updated_at_ms: timestamp,
@@ -485,11 +493,26 @@ fn initialize_codex(process: &CodexProcess) -> Result<(), String> {
     process.notify("initialized")
 }
 
-fn spawn_codex(app: &AppHandle, root: &str) -> Result<Arc<CodexProcess>, String> {
-    let mut child = codex_command()
-        .arg("app-server")
-        .arg("--listen")
-        .arg("stdio://")
+fn spawn_codex(app: &AppHandle, root: &str, harness: &str) -> Result<Arc<CodexProcess>, String> {
+    let mut command = codex_command();
+    command.arg("app-server").arg("--listen").arg("stdio://");
+    if harness == "deepseek" {
+        if std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
+            return Err("DEEPSEEK_API_KEY is required for DeepSeek; no credentials are stored by VirtualLab.".into());
+        }
+        // No tokens on argv, disk, or in the JSON-RPC stream. Codex reads the key from the environment.
+        for entry in [
+            "model_provider=\"deepseek\"",
+            "model=\"deepseek-flash\"",
+            "model_providers.deepseek.name=\"DeepSeek\"",
+            "model_providers.deepseek.base_url=\"https://api.deepseek.com\"",
+            "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+            "model_providers.deepseek.wire_api=\"responses\"",
+            "model_providers.deepseek.requires_openai_auth=false",
+            "model_providers.deepseek.supports_websockets=false",
+        ] { command.arg("-c").arg(entry); }
+    }
+    let mut child = command
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -1,4 +1,5 @@
 mod agent;
+mod agent_cli;
 mod execution;
 mod hardware;
 mod verification;
@@ -11,6 +12,7 @@ use agent::{
     agent_harness_capabilities, agent_session_start, agent_session_stop, agent_turn_interrupt,
     agent_turn_start, agent_turn_steer, AgentManager,
 };
+use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
 use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
@@ -27,6 +29,7 @@ pub fn run() {
         .manage(ProcessManager::default())
         .manage(WatchManager::default())
         .manage(AgentManager::default())
+        .manage(CliAgentManager::default())
         .manage(VerificationManager::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -51,6 +54,11 @@ pub fn run() {
             agent_turn_start,
             agent_turn_steer,
             agent_turn_interrupt,
+            agent_cli_capabilities,
+            agent_cli_session_start,
+            agent_cli_session_stop,
+            agent_cli_turn_start,
+            agent_cli_turn_interrupt,
             verification_run,
             verification_cancel,
             verification_import_artifact,

@@ -1,10 +1,10 @@
 import type { HarnessAdapter } from "./agentHarness";
-import { codexAppServerAdapter } from "./agentHarness";
+import { getHarnessAdapter } from "./agentHarness";
 import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions";
 import type { AgentSessionBinding } from "@/types/agent";
 
 export class WorkspaceAgentService {
-  constructor(private readonly adapter: HarnessAdapter = codexAppServerAdapter) {}
+  constructor(private readonly adapter: HarnessAdapter = getHarnessAdapter("codex")) {}
 
   async attach(workspaceRoot: string): Promise<AgentSessionBinding> {
     const root = workspaceRoot.trim();
@@ -17,7 +17,7 @@ export class WorkspaceAgentService {
     const binding = await this.adapter.startOrResumeSession({
       workspaceRoot: root,
       harness: this.adapter.kind,
-      threadId: saved?.threadId ?? null,
+      threadId: saved?.harness === this.adapter.kind ? saved.threadId : null,
     });
 
     if (agentWorkspaceKey(binding.workspaceRoot) !== key) {
@@ -28,7 +28,7 @@ export class WorkspaceAgentService {
       await this.adapter.stopSession(root).catch(() => undefined);
       throw new Error("Agent harness returned an unexpected harness kind.");
     }
-    if (saved && saved.threadId !== binding.threadId) {
+    if (saved?.harness === this.adapter.kind && saved.threadId !== binding.threadId) {
       await this.adapter.stopSession(root).catch(() => undefined);
       throw new Error("Agent harness resumed a different thread than the persisted workspace binding.");
     }
