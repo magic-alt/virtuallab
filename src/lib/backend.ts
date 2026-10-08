@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
   DiffRequest,
   DiffResponse,
@@ -55,7 +55,7 @@ export async function deleteLocalBranchAfterConfirmation(
   branch: string,
 ): Promise<boolean> {
   requireDesktop();
-  const confirmed = await ask(
+  const confirmed = await confirm(
     `Delete the LOCAL branch "${branch}"?\n\n` +
       "This does not delete a branch on GitHub. Git will refuse to delete a branch with unmerged commits. " +
       "Stale origin branches are removed with Fetch + prune.",
