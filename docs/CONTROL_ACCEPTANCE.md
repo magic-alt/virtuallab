@@ -221,3 +221,35 @@ The GitHub adapter exposes no merge, reset, clean, force-push or release command
 8. Run the no-`gh` / offline fallback, path spaces/Unicode, refresh while a diff is open and Windows/macOS/Linux native workflows.
 
 Do not claim this manual checklist PASS based only on GitHub Actions CI.
+
+
+## Windows — recurring console flash regression
+
+VirtualLab is a GUI desktop application. `git.exe`, `gh.exe`, `where.exe`,
+`cmd.exe` shims, Codex capability checks, and structured build/test runners
+must launch through `src-tauri/src/process.rs::background_command`. On Windows
+this applies Win32 `CREATE_NO_WINDOW` and preserves stdout/stderr/exit status.
+The `portable-pty` interactive terminal is intentionally separate.
+
+**Automated checks:** `cargo test --locked --manifest-path src-tauri/Cargo.toml`
+includes the background process stdout/status smoke tests, including a
+Windows `cmd.exe` wrapper, plus a static guard against unreviewed native
+`Command::new` spawn sites. CI cannot inspect a human desktop for flicker.
+
+**Manual Windows GUI acceptance (not automated):**
+
+1. Build a standalone Tauri Windows GUI binary with `npm run tauri:build:debug`
+   or `npm run tauri:build`; launch the binary outside PowerShell.
+2. Add/select a Git repository and keep VirtualLab open. Confirm there are no
+   recurring console windows during initial Git status/worktree/log inspection.
+3. Modify a tracked file in an external editor and verify filesystem refresh
+   works **without** a console flash; click Refresh repeatedly.
+4. Open GitHub context (with and without `gh` on PATH), select Changes and
+   reload diff; verify background Git/GitHub probes show no console windows.
+5. Execute an approved structured Run profile and (when configured) native
+   Verification software gates; output stays inside the UI/evidence files.
+6. Open **Terminal → New terminal**. The explicitly created interactive PTY
+   must still accept input, Ctrl+C and resize, with no separate pop-up shell.
+
+Do not treat a passing GitHub Actions build as proof that the desktop flicker
+has been observed and resolved on a physical Windows session.

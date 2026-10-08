@@ -39,6 +39,23 @@ mod tests {
         assert!(String::from_utf8_lossy(&output.stdout).contains("git version"));
     }
 
+    #[test]
+    fn no_native_background_service_bypasses_hidden_launcher() {
+        // Guard this desktop regression when future adapters are added.
+        // Deliberately excludes portable-pty::CommandBuilder, which creates
+        // an explicitly requested interactive terminal.
+        for (name, source) in [
+            ("git", include_str!("git.rs")),
+            ("github", include_str!("github.rs")),
+            ("execution", include_str!("execution.rs")),
+            ("agent", include_str!("agent.rs")),
+            ("verification", include_str!("verification.rs")),
+        ] {
+            assert!(!source.contains("Command::new("),
+                "{name} bypassed background_command and may flash a console on Windows");
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn background_cmd_wrapper_keeps_stdout_available() {

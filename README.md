@@ -231,3 +231,14 @@ npm run tauri:build
 ## Implementation contracts
 
 See [V0.3 review and GitHub](docs/V0.3_REVIEW_GITHUB.md), [V0.4 verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md), [V0.4/V0.5 agent foundation](docs/V0.4_V0.5_AGENT_FOUNDATION.md), and the [control acceptance matrix](docs/CONTROL_ACCEPTANCE.md). CI uses Windows/macOS/Linux desktop acceptance; actual third-party GitHub authentication and PR posting are manual desktop checks.
+
+
+### Windows: terminal windows repeatedly flash open and closed
+
+Background Git/GitHub/where/Codex/build probes are launched with the Windows
+`CREATE_NO_WINDOW` flag. This prevents short-lived console windows from
+appearing during workspace startup and watcher-driven refresh, without
+disabling the explicit embedded xterm.js terminal. The fix requires
+**rebuilding the native executable**; running an older built `.exe` will
+still exhibit the old behavior. Refer to
+[Windows console flash regression acceptance](docs/CONTROL_ACCEPTANCE.md#windows--recurring-console-flash-regression).
