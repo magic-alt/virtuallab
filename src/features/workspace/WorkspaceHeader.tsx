@@ -73,10 +73,10 @@ export function WorkspaceHeader({
             onClick={onFetch}
             variant="outline"
             size="sm"
-            title="Fetch origin and update remote-tracking branches"
+            title="Fetch origin and prune deleted remote-tracking branches"
           >
             <Cloud size={13} />
-            Fetch
+            Fetch + prune
           </Button>
           <Button
             disabled={
