@@ -1262,7 +1262,12 @@ mod tests {
         assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "updated upstream\\n");
 
         fs::write(repo.join("untracked.txt"), "local only").expect("dirty fixture");
-        assert!(git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string()).is_err());
+        git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string())
+            .expect("safe switch preserves untracked artifacts");
+        assert_eq!(
+            fs::read_to_string(repo.join("untracked.txt")).unwrap(),
+            "local only"
+        );
         assert!(git_pull_current_blocking(repo_path.clone(), repo_path.clone()).is_err());
         fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");
         let _ = fs::remove_dir_all(sandbox);
