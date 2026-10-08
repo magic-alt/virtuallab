@@ -62,6 +62,16 @@ The first native build can take several minutes because Cargo must compile the T
 
 A complete native build also requires the MSVC linker/toolchain. If you see `link.exe`, Windows SDK or MSVC errors, install Visual Studio Build Tools with **Desktop development with C++**.
 
+If a MinGW compiler is also on `PATH`, run the acceptance command from a Visual Studio Developer Command Prompt and select MSVC for Cargo's C/C++ build dependencies:
+
+```cmd
+set "CC=cl"
+set "CXX=cl"
+npm run acceptance:local
+```
+
+This avoids linking MinGW C++ objects with the MSVC linker. The acceptance runner also preserves the existing Windows `Path` variable when adding Cargo to the child process path.
+
 Tauri renders through WebView2 on Windows. Current Windows 10/11 systems normally already have the Edge WebView2 runtime; install/update it if the native window cannot initialize.
 
 ## Why the old control-test command failed
@@ -165,3 +175,12 @@ V0.1 closeout commits both lockfiles:
 - `src-tauri/Cargo.lock`
 
 Normal local/CI setup should use `npm ci`. Rust checks/tests should use Cargo `--locked` so dependency drift fails fast instead of silently updating the graph.
+
+
+## V0.3 review-loop development checks
+
+For updates to the issue/PR review workflow run `npm run test:controls`, `npm run typecheck`, `npm run build` and `npm run acceptance:local`. The acceptance runner covers Rust Git tests and UI fixtures; it does not authenticate to GitHub or post review comments.
+
+To exercise the actual Issue/PR → worktree flow, open the Tauri app with a user-selected local Git repository, authenticate the optional `gh` CLI, and follow `docs/CONTROL_ACCEPTANCE.md`. A new review worktree uses a user-confirmed local base ref and does not fetch/checkout PR code. After editing, use **Refresh and re-review** to invalidate cached Diff before re-opening it.
+
+No other repository is a required build dependency or hard-coded integration.

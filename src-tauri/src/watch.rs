@@ -1,5 +1,5 @@
 use crate::execution::WorkbenchEvent;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -55,6 +55,12 @@ fn watch_start_blocking(
             let Ok(event) = result else {
                 return;
             };
+            // Read/access notifications are not source changes. On some
+            // platforms Git status scans can otherwise feed the watcher and
+            // repeatedly trigger more Git scans.
+            if !should_refresh_for_event(&event.kind) {
+                return;
+            }
 
             let Some(changed) = event.paths.into_iter().find(|path| !is_ignored_path(path)) else {
                 return;
@@ -120,6 +126,10 @@ fn watch_stop_blocking(state: WatchManager, id: String) -> Result<(), String> {
     Ok(())
 }
 
+fn should_refresh_for_event(kind: &EventKind) -> bool {
+    matches!(kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_))
+}
+
 fn emit_due(last: Option<Instant>, now: Instant) -> bool {
     last.map(|instant| now.saturating_duration_since(instant) >= WATCH_EMIT_MIN_INTERVAL)
         .unwrap_or(true)
@@ -148,6 +158,16 @@ mod tests {
             Some(now),
             now + WATCH_EMIT_MIN_INTERVAL + Duration::from_millis(1),
         ));
+    }
+
+    #[test]
+    fn git_inspection_access_events_do_not_trigger_recursive_rescans() {
+        use notify::event::{AccessKind, ModifyKind};
+        assert!(!should_refresh_for_event(&EventKind::Access(AccessKind::Any)));
+        assert!(!should_refresh_for_event(&EventKind::Any));
+        assert!(should_refresh_for_event(&EventKind::Modify(ModifyKind::Any)));
+        assert!(should_refresh_for_event(&EventKind::Create(notify::event::CreateKind::Any)));
+        assert!(should_refresh_for_event(&EventKind::Remove(notify::event::RemoveKind::Any)));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Local verification runner and evidence storage.
 //! This module intentionally does NOT authorize hardware execution.
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -7,7 +8,7 @@ use std::{
     fs::{self, File},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -190,7 +191,7 @@ fn execute_verification(
     if !root.is_dir() {
         return Err("Verification workspace is not a directory.".into());
     }
-    let head = Command::new("git")
+    let head = background_command("git")
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&root)
         .output()
@@ -282,7 +283,7 @@ fn run_gate(
         return ("blocked".into(), "Unknown process cwd scope.".into(), None);
     };
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
-    let mut child = match Command::new(program)
+    let mut child = match background_command(program)
         .args(args)
         .current_dir(working)
         .stdin(Stdio::null())

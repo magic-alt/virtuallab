@@ -36,7 +36,7 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.3 — Review and GitHub
 
-**Status: IN PROGRESS** — local diff/Monaco review is merged on `main`; A/B completion is developed on `feat/v0.3-review-drafts-github` and tracked by issue #4.
+**Status: C implementation submitted for review (PR #12).** A/B were merged into `main`; the issue/worktree review flow and fresh documentation are being verified. Manual authenticated GitHub acceptance remains a separate task.
 
 Goal: make the workspace a complete local review lane before introducing agent harnesses.
 
@@ -60,18 +60,18 @@ Goal: make the workspace a complete local review lane before introducing agent h
 
 ### C. Review loop
 
-- [ ] issue → isolated workspace flow
-- [ ] review → fix → refresh → re-review state
-- [ ] correlate local HEAD with PR head/base
-- [ ] surface stale review/diff state after HEAD changes
-- [ ] no merge/force-push/destructive Git path in V0.3
+- [x] issue → isolated workspace flow
+- [x] review → fix → refresh → re-review state
+- [x] correlate local HEAD with PR head/base
+- [x] surface stale review/diff state after HEAD changes
+- [x] no merge/force-push/destructive Git path in V0.3
 
 ### V0.3 quality gate
 
 - [x] Git diff parser/adapter tests including rename/binary/large-file cases
 - [x] Monaco/review UI control tests
 - [x] GitHub adapter fixtures + offline/error cases
-- [ ] Windows/macOS/Linux acceptance remains green
+- [ ] PR #12 Windows/macOS/Linux automated acceptance + manual GitHub/worktree desktop walkthrough recorded
 - [x] all network mutations require an explicit user gesture
 - [x] architecture and control-acceptance docs updated
 
@@ -84,10 +84,12 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 - [x] process gates keep executable + argument vectors structured
 - [x] versioned `EvidenceManifest` contract bound to workspace + repository HEAD
 - [x] evidence check/artifact normalization and final status derivation
-- [ ] verification runner
-- [ ] durable evidence artifact registry/history
+- [x] bounded native software-gate runner (build/unit/evidence only; adapters and hardware are blocked)
+- [x] per-run manifest/log/artifact SHA-256 persistence
+- [ ] searchable evidence history / immutable registry
 - [ ] release readiness summary
-- [ ] explicit human approval gates for hardware-affecting operations
+- [x] private L0–L4 lease and human-grant *policy contract* (not an exposed authorization API)
+- [ ] real human approval UI + independent hardware-side enforcement
 
 ## V0.5 — Agent harnesses
 
@@ -99,14 +101,14 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 - [x] normalized structured `agent://event` stream
 - [x] one active agent runtime per workspace
 - [ ] agent workspace UI / event timeline
-- [ ] eight embedded-agent roles
-- [ ] embedded/HIL skill catalog
-- [ ] hardware resource lease integration
+- [ ] configurable, repository-neutral agent roles
+- [ ] optional, repository-neutral engineering skill catalog
+- [ ] enforce leases in an explicit optional provider (no bundled project backend)
 - [ ] approval broker for motion/power/flash/release
 - [ ] Claude Code adapter
 - [ ] OpenCode adapter
 
-The first bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md`. The Codex baseline intentionally runs `workspace-write` with `approvalPolicy = "never"` until VirtualLab owns approval routing.
+The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md`. The Codex baseline intentionally runs `workspace-write` with `approvalPolicy = "never"` until VirtualLab owns approval routing.
 
 ## Non-goals for the first releases
 

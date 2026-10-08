@@ -4,6 +4,7 @@ import type {
   ProcessProfile,
   RepositoryRecord,
   ReviewDraft,
+  ReviewLoopPhase,
   WorkspacePersistedState,
   WorkspaceReviewState,
 } from "@/types/workbench";
@@ -25,6 +26,7 @@ interface WorkbenchState {
   markReviewDraftsStale: (workspaceRoot: string, headSha: string) => void;
   markReviewDraftPosted: (workspaceRoot: string, draftId: string, postedUrl: string) => void;
   setGithubReference: (workspaceRoot: string, reference: string | null) => void;
+  setReviewPhase: (workspaceRoot: string, phase: ReviewLoopPhase, headSha?: string) => void;
 }
 
 export function reviewWorkspaceKey(path: string) {
@@ -243,6 +245,8 @@ export const useWorkbenchStore = create<WorkbenchState>()(
             workspaceRoot,
             (current) => ({
               ...current,
+              phase: current.phase === "reviewed" &&
+                current.lastReviewedHead !== headSha ? "needs_rereview" : current.phase,
               drafts: current.drafts.map((draft) =>
                 draft.status === "active" && draft.headSha !== headSha
                   ? {
@@ -278,6 +282,17 @@ export const useWorkbenchStore = create<WorkbenchState>()(
               updatedAt: Date.now(),
             }),
           ),
+        })),
+
+      setReviewPhase: (workspaceRoot, phase, headSha) =>
+        set((state) => ({
+          reviewStates: updateReviewState(state.reviewStates,workspaceRoot,(current)=>({
+            ...current,
+            phase,
+            lastReviewedHead: phase === "reviewed" ? (headSha ?? null) : current.lastReviewedHead,
+            lastRefreshAt: phase === "needs_rereview" ? Date.now() : current.lastRefreshAt,
+            updatedAt: Date.now(),
+          })),
         })),
 
       setGithubReference: (workspaceRoot, reference) =>

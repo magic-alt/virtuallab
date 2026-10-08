@@ -1,3 +1,4 @@
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -701,7 +702,7 @@ fn now_ms() -> u128 {
 
 #[cfg(target_os = "windows")]
 fn codex_command() -> Command {
-    let resolved = Command::new("where")
+    let resolved = background_command("where")
         .arg("codex")
         .output()
         .ok()
@@ -716,17 +717,17 @@ fn codex_command() -> Command {
     if resolved.to_ascii_lowercase().ends_with(".cmd")
         || resolved.to_ascii_lowercase().ends_with(".bat")
     {
-        let mut command = Command::new("cmd.exe");
+        let mut command = background_command("cmd.exe");
         command.arg("/d").arg("/s").arg("/c").arg(resolved);
         command
     } else {
-        Command::new(resolved)
+        background_command(resolved)
     }
 }
 
 #[cfg(not(target_os = "windows"))]
 fn codex_command() -> Command {
-    Command::new("codex")
+    background_command("codex")
 }
 
 #[cfg(test)]

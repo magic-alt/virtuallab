@@ -27,7 +27,8 @@ export function resolveCargoEnv(baseEnv = process.env) {
   const executable = isWindows ? "cargo.exe" : "cargo";
   const fallback = path.join(homedir(), ".cargo", "bin", executable);
   if (existsSync(fallback)) {
-    env.PATH = [path.dirname(fallback), env.PATH || ""].filter(Boolean).join(path.delimiter);
+    const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") || "PATH";
+    env[pathKey] = [path.dirname(fallback), env[pathKey] || ""].filter(Boolean).join(path.delimiter);
     const recovered = probe(fallback, ["--version"], env);
     if (recovered.ok) {
       return { env, cargo: fallback, version: recovered.text, recoveredPath: true };

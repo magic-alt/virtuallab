@@ -1,8 +1,9 @@
+use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Component, Path};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +53,7 @@ pub struct GithubPullRequest {
     base_ref: String,
     head_ref: String,
     head_sha: String,
+    base_sha: Option<String>,
     is_draft: bool,
     author: Option<String>,
     changed_files: Vec<GithubChangedFile>,
@@ -139,7 +141,7 @@ pub async fn github_post_review_comment(
 fn github_capabilities_blocking(workspace_root: &str) -> GithubCapabilities {
     let repository = repository_from_workspace(workspace_root).ok().flatten();
 
-    let version_probe = Command::new("gh").arg("--version").output();
+    let version_probe = background_command("gh").arg("--version").output();
     let installed = version_probe.as_ref().is_ok_and(|output| output.status.success());
     if !installed {
         let detail = match version_probe {
@@ -158,7 +160,7 @@ fn github_capabilities_blocking(workspace_root: &str) -> GithubCapabilities {
         );
     }
 
-    let auth = Command::new("gh")
+    let auth = background_command("gh")
         .args(["auth", "status", "--hostname", "github.com"])
         .current_dir(workspace_root)
         .output();
@@ -314,6 +316,24 @@ fn github_post_review_comment_blocking(
         ));
     }
 
+    // Defense in depth: do not rely on a possibly stale client-side HEAD check.
+    // A second user action, explicit confirmation, is still required in the UI.
+    let latest_pr = load_pull_request(&request.workspace_root, repository, Some(request.pr_number))?;
+    let output = background_command("git")
+        .args(["-C", &request.workspace_root, "rev-parse", "--verify", "HEAD"])
+        .output()
+        .map_err(|error| format!("Failed to inspect review HEAD: {error}"))?;
+    if !output.status.success() {
+        return Err("Cannot verify the current workspace HEAD".into());
+    }
+    let local_head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    validate_review_comment_head(
+        &local_head,
+        &latest_pr,
+        &request.commit_id,
+        &request.path,
+    )?;
+
     let payload = json!({
         "body": body,
         "commit_id": request.commit_id,
@@ -326,7 +346,7 @@ fn github_post_review_comment_blocking(
         repository, request.pr_number
     );
 
-    let mut child = Command::new("gh")
+    let mut child = background_command("gh")
         .args(["api", "--method", "POST", endpoint.as_str(), "--input", "-"])
         .current_dir(&request.workspace_root)
         .stdin(Stdio::piped())
@@ -367,6 +387,25 @@ fn github_post_review_comment_blocking(
     Ok(GithubPostReviewCommentResponse { id, url })
 }
 
+fn validate_review_comment_head(
+    local_head: &str,
+    latest_pr: &GithubPullRequest,
+    requested_commit: &str,
+    path: &str,
+) -> Result<(), String> {
+    if requested_commit.len() != 40
+        || !requested_commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || local_head != requested_commit
+        || latest_pr.head_sha != requested_commit
+    {
+        return Err("Local HEAD, requested commit and current PR HEAD must match exactly".into());
+    }
+    if !latest_pr.changed_files.iter().any(|file| file.path == path) {
+        return Err("Review comment path is not part of the current PR changes".into());
+    }
+    Ok(())
+}
+
 fn load_pull_request(
     workspace_root: &str,
     repository: &str,
@@ -380,7 +419,7 @@ fn load_pull_request(
         "--repo".to_string(),
         repository.to_string(),
         "--json".to_string(),
-        "number,title,state,url,baseRefName,headRefName,headRefOid,isDraft,author,files,statusCheckRollup"
+        "number,title,state,url,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,author,files,statusCheckRollup"
             .to_string(),
     ]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -408,7 +447,7 @@ fn load_issue(
 }
 
 fn run_gh_json(workspace_root: &str, args: &[&str]) -> Result<Value, String> {
-    let output = Command::new("gh")
+    let output = background_command("gh")
         .args(args)
         .current_dir(workspace_root)
         .output()
@@ -454,6 +493,7 @@ fn parse_pull_request(value: &Value) -> Result<GithubPullRequest, String> {
         base_ref: required_string(value, "baseRefName")?,
         head_ref: required_string(value, "headRefName")?,
         head_sha: required_string(value, "headRefOid")?,
+        base_sha: value.get("baseRefOid").and_then(Value::as_str).map(ToOwned::to_owned),
         is_draft: value.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
         author: value
             .get("author")
@@ -606,7 +646,7 @@ fn parse_number(value: &str) -> Result<u64, String> {
 }
 
 fn repository_from_workspace(workspace_root: &str) -> Result<Option<String>, String> {
-    let output = Command::new("git")
+    let output = background_command("git")
         .arg("-C")
         .arg(workspace_root)
         .args(["remote", "get-url", "origin"])
@@ -687,6 +727,35 @@ fn failure_detail(output: &Output, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_target_requires_matching_live_pr_head_and_changed_file() {
+        let mut pr = parse_pull_request(&json!({
+            "number": 3, "title": "Fixture", "state": "OPEN",
+            "url": "https://github.com/example-org/sample-repo/pull/3",
+            "baseRefName": "main", "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "headRefName": "feature",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "isDraft": false, "files": [
+              {"path":"src/changed.ts","additions":1,"deletions":1}
+            ],"statusCheckRollup":[]
+        })).unwrap();
+        assert_eq!(pr.base_sha.as_deref(),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        assert!(validate_review_comment_head(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",&pr,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","src/changed.ts").is_ok());
+        assert!(validate_review_comment_head(
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",&pr,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","src/changed.ts").is_err());
+        assert!(validate_review_comment_head(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",&pr,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","src/other.ts").is_err());
+        pr.head_sha = "cccccccccccccccccccccccccccccccccccccccc".into();
+        assert!(validate_review_comment_head(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",&pr,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","src/changed.ts").is_err());
+    }
 
     #[test]
     fn parses_https_and_ssh_github_remotes() {

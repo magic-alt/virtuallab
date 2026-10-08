@@ -16,6 +16,8 @@ VirtualLab is a local Engineering Workbench. Preserve the workspace-first archit
 - Never hard-code, import, or depend on another named application repository, user project, hardware lab, device ID, or project-specific path. Repositories are user-selected; integrations must be opt-in, provider-neutral adapters, not bundled project connectors.
 - Generic HIL/hardware gate types do not imply a default backend. Do not implement project-specific adapter wiring in VirtualLab core.
 - Update `docs/ARCHITECTURE.md` when a boundary or domain model changes.
+- Review-loop worktrees must always require a user-triggered create action, remain scoped to the selected repository, and never implicitly fetch/checkout/merge a remote PR.
+- Invalidate open diff content after workspace refresh; a PR base commit is not a matching PR head for comment posting. Stale drafts must never be posted.
 
 ## Pull request quality bar
 

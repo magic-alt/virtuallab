@@ -158,4 +158,64 @@ describe("GithubPanel", () => {
     ).toBe("posted");
     confirmSpy.mockRestore();
   });
+  it("offers an explicit issue-to-worktree action without a Git mutation", async () => {
+    adapter.capabilities.mockResolvedValue(connected);
+    adapter.loadContext.mockResolvedValue({
+      capabilities: connected,
+      reference: "issue:42",
+      pullRequest: null,
+      issue: { number:42, title:"Review issue", state:"OPEN",
+        url:"https://github.com/example-org/sample-repo/issues/42",
+        author:"example-user", labels:[] },
+    });
+    const onNewReviewWorkspace=vi.fn();
+    const user=userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled
+      onNewReviewWorkspace={onNewReviewWorkspace} />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox",{name:"GitHub reference"}),"issue:42");
+    await user.click(screen.getByRole("button",{name:"Load"}));
+    await user.click(await screen.findByRole("button",{name:"New issue worktree"}));
+    expect(onNewReviewWorkspace).toHaveBeenCalledWith({
+      kind:"issue",number:42,reference:"https://github.com/example-org/sample-repo/issues/42",
+    });
+  });
+
+  it("differentiates PR base from head, and blocks posting at base",async()=>{
+    adapter.capabilities.mockResolvedValue(connected);
+    adapter.loadContext.mockResolvedValue({
+      capabilities:connected,reference:"pr:7",issue:null,
+      pullRequest:{ number:7,title:"Review",state:"OPEN",
+        url:"https://github.com/example-org/sample-repo/pull/7",
+        baseRef:"main",headRef:"feat/review",
+        headSha:"fedcba9876543210",baseSha:"abcdef1234567890",
+        isDraft:false,changedFiles:[{path:"src/a.ts",additions:2,deletions:1}],
+        checks:{total:0,success:0,pending:0,failure:0,neutral:0,checks:[]}},
+    });
+    useWorkbenchStore.getState().addReviewDraft({
+      id:"draft-base",workspaceRoot:"D:/repo",headSha:snapshot.headSha,path:"src/a.ts",
+      line:1,side:"RIGHT",body:"Review",status:"active",createdAt:1,updatedAt:1,
+    });
+    const user=userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox",{name:"GitHub reference"}),"pr:7");
+    await user.click(screen.getByRole("button",{name:"Load"}));
+    expect(await screen.findByText("At PR base")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Post"})).toBeDisabled();
+  });
+
+  it("restores persisted issue metadata after switching back to a workspace",async()=>{
+    const url="https://github.com/example-org/sample-repo/issues/9";
+    useWorkbenchStore.getState().setGithubReference("D:/repo",url);
+    adapter.capabilities.mockResolvedValue(connected);
+    adapter.loadContext.mockResolvedValue({
+      capabilities:connected,reference:url,pullRequest:null,
+      issue:{number:9,title:"Restored",state:"OPEN",url,labels:[]},
+    });
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    expect(await screen.findByText(/#9 Restored/)).toBeInTheDocument();
+    expect(adapter.loadContext).toHaveBeenCalledWith("D:/repo",url);
+  });
+
 });

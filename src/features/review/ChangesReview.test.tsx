@@ -182,4 +182,47 @@ describe("ChangesReview", () => {
     await user.click(screen.getByRole("button", { name: "src/a.ts" }));
     expect(backend.gitDiff).not.toHaveBeenCalled();
   });
+  it("invalidates an open diff on workspace refresh until it is loaded again", async()=>{
+    const user=userEvent.setup();
+    const view=render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={1} />);
+    await user.click(screen.getByRole("button",{name:"src/a.ts"}));
+    expect(await screen.findByTestId("monaco-review")).toBeInTheDocument();
+    view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={2} />);
+    expect(screen.getByText(/Diff invalidated by workspace refresh/)).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"src/a.ts"}));
+    expect(await screen.findByTestId("monaco-review")).toBeInTheDocument();
+    expect(screen.queryByText(/Diff invalidated by workspace refresh/)).not.toBeInTheDocument();
+  });
+
+  it("tracks the fix and re-review phase without editing repository files",async()=>{
+    const user=userEvent.setup();
+    const onRefreshForRereview=vi.fn().mockResolvedValue(undefined);
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled onRefreshForRereview={onRefreshForRereview} />);
+    await user.click(screen.getByRole("button",{name:"Mark fix in progress"}));
+    expect(useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey("D:/repo")]?.phase).toBe("fix");
+    await user.click(screen.getByRole("button",{name:"Refresh and re-review"}));
+    expect(onRefreshForRereview).toHaveBeenCalledWith("D:/repo");
+  });
+
+  it("discards an in-flight diff response after workspace refresh", async()=>{
+    let resolveDiff: ((value: ReturnType<typeof response>) => void) | undefined;
+    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveDiff = resolve;
+    }));
+    const user=userEvent.setup();
+    const view=render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={1} />);
+    await user.click(screen.getByRole("button",{name:"src/a.ts"}));
+    view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={2} />);
+    resolveDiff?.(response());
+    expect(await screen.findByText(/Diff invalidated by workspace refresh/)).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+  });
+
+
 });

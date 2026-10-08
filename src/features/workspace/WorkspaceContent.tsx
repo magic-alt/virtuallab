@@ -24,6 +24,7 @@ import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
   RepositorySnapshot,
+  ReviewWorkspaceRequest,
   WorkspaceTab,
 } from "@/types/workbench";
 
@@ -32,6 +33,9 @@ interface Props {
   profileRepositoryRoot: string;
   tab: WorkspaceTab;
   isPreview: boolean;
+  snapshotRevision?: number;
+  onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
+  onNewReviewWorkspace?: (request: ReviewWorkspaceRequest) => void;
   onTabChange: (tab: WorkspaceTab) => void;
 }
 
@@ -60,6 +64,9 @@ export function WorkspaceContent({
   profileRepositoryRoot,
   tab,
   isPreview,
+  snapshotRevision = 0,
+  onRefreshForRereview,
+  onNewReviewWorkspace,
   onTabChange,
 }: Props) {
   return (
@@ -101,6 +108,8 @@ export function WorkspaceContent({
             repositoryRoot={profileRepositoryRoot}
             workspaceRoot={snapshot.root}
             enabled={!isPreview && isDesktopRuntime()}
+            refreshRevision={snapshotRevision}
+            onRefreshForRereview={onRefreshForRereview}
           />
         )}
         {tab === "github" && (
@@ -108,6 +117,8 @@ export function WorkspaceContent({
             snapshot={snapshot}
             workspaceRoot={snapshot.root}
             enabled={!isPreview && isDesktopRuntime()}
+            onNewReviewWorkspace={onNewReviewWorkspace}
+            onRefreshForRereview={onRefreshForRereview}
           />
         )}
         {tab === "terminal" && (
@@ -238,8 +249,8 @@ function Overview({
           <CapabilityCard
             icon={<CircleDot size={16} />}
             title="Agent harness"
-            description="Claude/Codex attach to a workspace later; they do not own it."
-            state="planned"
+            description="Native Codex App Server foundation is present; its full agent workspace UI is not yet enabled."
+            state="next"
           />
         </div>
       </Panel>
