@@ -23,6 +23,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run version:check
       - run: npm run icons:check
       - run: npm run typecheck
       - run: npm test
@@ -93,6 +94,9 @@ jobs:
           npm run tauri:build -- --bundles app
           APP="src-tauri/target/release/bundle/macos/VirtualLab.app"
           test -d "$APP"
+          EXPECTED_VERSION="$(node -p "require('./package.json').version")"
+          ACTUAL_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")"
+          test "$EXPECTED_VERSION" = "$ACTUAL_VERSION"
           ICON_NAME="$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")"
           test -n "$ICON_NAME"
           cmp "src-tauri/icons/icon.icns" "$APP/Contents/Resources/$ICON_NAME"
