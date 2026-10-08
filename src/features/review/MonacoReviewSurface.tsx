@@ -21,6 +21,7 @@ export function MonacoReviewSurface({
 }) {
   const language = reviewLanguage(path);
   const diffEditorRef = useRef<editor.IStandaloneDiffEditor | null>(null);
+  const wrapFrameRef = useRef<number | null>(null);
   const listenersRef = useRef<IDisposable[]>([]);
   const selectionCallbackRef = useRef(onReviewLineSelect);
   selectionCallbackRef.current = onReviewLineSelect;
@@ -49,26 +50,25 @@ export function MonacoReviewSurface({
 
   const handleMount = useCallback(
     (instance: editor.IStandaloneDiffEditor) => {
+      // A fresh diff editor is created for each layout. Never let a deferred
+      // layout pass touch the previously mounted (and now disposed) editor.
+      if (wrapFrameRef.current !== null) window.cancelAnimationFrame(wrapFrameRef.current);
       diffEditorRef.current = instance;
       applyWrapping(instance);
       bindReviewSelection(instance);
+      wrapFrameRef.current = window.requestAnimationFrame(() => {
+        wrapFrameRef.current = null;
+        if (diffEditorRef.current === instance) applyWrapping(instance);
+      });
     },
     [applyWrapping, bindReviewSelection],
   );
 
-  useEffect(() => {
-    const instance = diffEditorRef.current;
-    if (!instance) return;
-
-    const frame = window.requestAnimationFrame(() => {
-      applyWrapping(instance);
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [applyWrapping, layout]);
-
   useEffect(
     () => () => {
+      if (wrapFrameRef.current !== null) window.cancelAnimationFrame(wrapFrameRef.current);
+      wrapFrameRef.current = null;
+      diffEditorRef.current = null;
       listenersRef.current.forEach((listener) => listener.dispose());
       listenersRef.current = [];
     },
@@ -78,6 +78,9 @@ export function MonacoReviewSurface({
   return (
     <div className="h-full min-h-0 w-full" data-testid="monaco-diff-surface">
       <DiffEditor
+        // Monaco can retain stale original-pane wrapping when toggling
+        // renderSideBySide in place (microsoft/monaco-editor#4701).
+        key={layout}
         height="100%"
         width="100%"
         language={language}
@@ -90,7 +93,9 @@ export function MonacoReviewSurface({
           readOnly: true,
           originalEditable: false,
           renderSideBySide: layout === "side-by-side",
-          useInlineViewWhenSpaceIsLimited: true,
+          // Respect the explicit split mode even at narrower widths. Monaco's
+          // automatic inline fallback can leave the original pane unwrapped.
+          useInlineViewWhenSpaceIsLimited: false,
           enableSplitViewResizing: true,
           renderOverviewRuler: false,
           minimap: { enabled: false },

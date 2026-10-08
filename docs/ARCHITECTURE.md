@@ -130,6 +130,8 @@ Repository readiness and process outcomes share a typed `CheckResult` contract w
 
 V0.3 starts read-oriented: Git diff retrieval and GitHub PR/check metadata are read-only adapters. Inline review drafts may be edited locally before network mutation. Posting comments, changing PR state and merge/release remain explicit user actions.
 
+The local change count includes tracked and untracked status entries. Changes/Worktree lists unstaged tracked changes and untracked files or grouped directories; Staged lists index changes, while Base lists committed changes against the chosen base. Untracked entries show their status and path without calling the tracked Git diff adapter or enabling line drafts / mark-reviewed. Directory grouping follows the native Git status snapshot, so one untracked directory is one counted entry. Selecting any entry invalidates a pending diff request to prevent an older response from replacing the selected state.
+
 
 ## V0.4 → V0.5 agent and verification bridge
 
