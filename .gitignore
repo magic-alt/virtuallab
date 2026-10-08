@@ -4,9 +4,17 @@ dist/
 .vite/
 *.log
 
+# TypeScript build cache and emitted tooling configs
+/tsconfig.*.tsbuildinfo
+/vite.config.js
+/vite.config.d.ts
+/vitest.config.js
+/vitest.config.d.ts
+
 # Rust / Tauri
 src-tauri/target/
 target/
+/src-tauri/gen/
 
 # Editors / OS
 .vscode/
