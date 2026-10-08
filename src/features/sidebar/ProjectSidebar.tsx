@@ -23,6 +23,7 @@ interface Props {
   onSelectWorkspace: (path: string) => void;
   onRemoveWorkspace: (path: string) => void;
   onSwitchBranch: (branch: string) => void;
+  onDeleteBranch: (branch: string) => void;
   branchActionsEnabled: boolean;
   workspaceActionsEnabled: boolean;
   repositoryActionsEnabled: boolean;
@@ -41,6 +42,7 @@ export function ProjectSidebar({
   onSelectWorkspace,
   onRemoveWorkspace,
   onSwitchBranch,
+  onDeleteBranch,
   branchActionsEnabled,
   workspaceActionsEnabled,
   repositoryActionsEnabled,
@@ -177,7 +179,7 @@ export function ProjectSidebar({
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
           <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
-            Local and origin branches, separate from worktree lanes.
+            Local and origin branches. Fetch + prune removes stale origin refs; delete removes only local branches.
           </p>
           <div className="mt-2 space-y-1">
             {visibleBranches.map((branch) => {
@@ -186,26 +188,47 @@ export function ProjectSidebar({
                 branch.worktreePath &&
                 branch.worktreePath.replaceAll("\\", "/").toLowerCase() !== snapshot.root.replaceAll("\\", "/").toLowerCase(),
               );
+              const protectedBranch = branch.name === "main" || branch.name === "master";
               return (
-                <button
+                <div
                   key={branch.name}
-                  type="button"
-                  aria-label={inOtherWorktree ? `Open worktree for ${branch.name}` : `Switch to ${branch.name}`}
-                  onClick={() => onSwitchBranch(branch.name)}
-                  disabled={!branchActionsEnabled}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition disabled:opacity-40",
+                    "group flex w-full items-center rounded-lg border transition",
                     active
                       ? "border-orange-400/30 bg-orange-400/10 text-orange-200"
                       : "border-white/[0.05] text-slate-300 hover:bg-white/[0.04]",
                   )}
                 >
-                  <GitBranch size={12} className="shrink-0 text-slate-600" />
-                  <span className="min-w-0 flex-1 truncate" title={branch.name}>{branch.name}</span>
-                  <span className="shrink-0 text-[10px] text-slate-600">
-                    {active ? "active" : inOtherWorktree ? "worktree" : branch.local ? "local" : "origin"}
-                  </span>
-                </button>
+                  <button
+                    type="button"
+                    aria-label={inOtherWorktree ? `Open worktree for ${branch.name}` : `Switch to ${branch.name}`}
+                    onClick={() => onSwitchBranch(branch.name)}
+                    disabled={!branchActionsEnabled}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-xs disabled:opacity-40"
+                  >
+                    <GitBranch size={12} className="shrink-0 text-slate-600" />
+                    <span className="min-w-0 flex-1 truncate" title={branch.name}>{branch.name}</span>
+                    <span className="shrink-0 text-[10px] text-slate-600">
+                      {active ? "active" : inOtherWorktree ? "worktree" : branch.local && branch.remote ? "local+origin" : branch.local ? "local" : "origin"}
+                    </span>
+                  </button>
+                  {branch.local && !protectedBranch && (
+                    <button
+                      type="button"
+                      aria-label={`Delete local branch ${branch.name}`}
+                      title={
+                        branch.worktreePath
+                          ? "Switch away from this branch in its worktree before deleting"
+                          : "Delete local branch only (safe, merged-only); origin is unchanged"
+                      }
+                      disabled={!branchActionsEnabled || Boolean(branch.worktreePath)}
+                      onClick={() => onDeleteBranch(branch.name)}
+                      className="shrink-0 rounded-md p-1.5 text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-25"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
               );
             })}
             {visibleBranches.length === 0 && (
