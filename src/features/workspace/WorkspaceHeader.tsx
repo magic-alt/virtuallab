@@ -14,14 +14,20 @@ interface Props {
   snapshot: RepositorySnapshot;
   isPreview: boolean;
   loading: boolean;
+  gitBusy: boolean;
   onRefresh: () => void;
+  onFetch: () => void;
+  onPull: () => void;
 }
 
 export function WorkspaceHeader({
   snapshot,
   isPreview,
   loading,
+  gitBusy,
   onRefresh,
+  onFetch,
+  onPull,
 }: Props) {
   const clean = snapshot.dirtyCount === 0;
 
@@ -61,15 +67,40 @@ export function WorkspaceHeader({
           </div>
         </div>
 
-        <Button
-          disabled={isPreview || loading}
-          onClick={onRefresh}
-          variant="outline"
-          size="sm"
-        >
-          <RefreshCw size={13} className={loading ? "animate-spin" : undefined} />
-          Refresh
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button
+            disabled={isPreview || loading || gitBusy || !snapshot.remoteUrl}
+            onClick={onFetch}
+            variant="outline"
+            size="sm"
+            title="Fetch origin and update remote-tracking branches"
+          >
+            <Cloud size={13} />
+            Fetch
+          </Button>
+          <Button
+            disabled={
+              isPreview || loading || gitBusy || !snapshot.remoteUrl ||
+              snapshot.dirtyCount > 0 || snapshot.currentBranch.startsWith("detached@")
+            }
+            onClick={onPull}
+            variant="outline"
+            size="sm"
+            title="Fast-forward the current branch from origin (no merge or reset)"
+          >
+            <GitBranch size={13} />
+            Pull
+          </Button>
+          <Button
+            disabled={isPreview || loading || gitBusy}
+            onClick={onRefresh}
+            variant="outline"
+            size="sm"
+          >
+            <RefreshCw size={13} className={loading ? "animate-spin" : undefined} />
+            Refresh
+          </Button>
+        </div>
       </div>
     </header>
   );
