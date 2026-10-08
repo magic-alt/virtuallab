@@ -49,6 +49,7 @@ mod tests {
             ("github", include_str!("github.rs")),
             ("execution", include_str!("execution.rs")),
             ("agent", include_str!("agent.rs")),
+            ("agent_cli", include_str!("agent_cli.rs")),
             ("verification", include_str!("verification.rs")),
         ] {
             assert!(!source.contains("Command::new("),

@@ -2,6 +2,7 @@
 //! CLI sessions are ephemeral; provider session IDs are fed back as binding events.
 //! This is NOT a hardware authorization or sandbox boundary.
 use crate::process::background_command;
+use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -147,6 +148,7 @@ pub fn agent_cli_capabilities(harness: String) -> Result<CliCapabilities, String
 #[tauri::command]
 pub fn agent_cli_session_start(
     state: State<'_, CliAgentManager>,
+    owner: State<'_, AgentOwnership>,
     request: CliStart,
 ) -> Result<CliBinding, String> {
     binary(&request.harness)?;
@@ -166,6 +168,7 @@ pub fn agent_cli_session_start(
         }
         return Ok(binding);
     }
+    owner.claim(root, &request.harness)?;
     let stamp = now();
     let binding = CliBinding {
         workspace_root: root.into(), harness: request.harness,
@@ -197,7 +200,7 @@ fn provider_session_id(value: &Value) -> Option<&str> {
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
 }
-fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, stdout: impl std::io::Read) {
+fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, stdout: impl std::io::Read + Send + 'static) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if line.len() > 128 * 1024 { continue; }
@@ -227,7 +230,7 @@ fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, std
         }
     });
 }
-fn process_stderr(app: AppHandle, session: Arc<CliSession>, turn_id: String, stderr: impl std::io::Read) {
+fn process_stderr(app: AppHandle, session: Arc<CliSession>, turn_id: String, stderr: impl std::io::Read + Send + 'static) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             if let Ok(binding) = session.binding.lock() {
@@ -280,13 +283,15 @@ pub async fn agent_cli_turn_start(
         *active = Some((turn_id.clone(), process.clone()));
         drop(active);
         emit(&app, "agent.turn_started", &binding, Some(&turn_id), None);
-        process_stdout(app.clone(), entry.clone(), turn_id.clone(), stdout);
-        process_stderr(app.clone(), entry.clone(), turn_id.clone(), stderr);
+        let stdout_thread = process_stdout(app.clone(), entry.clone(), turn_id.clone(), stdout);
+        let stderr_thread = process_stderr(app.clone(), entry.clone(), turn_id.clone(), stderr);
         let watcher_turn = turn_id.clone();
         thread::spawn(move || {
             loop {
                 let status = process.lock().ok().and_then(|mut child| child.try_wait().ok()).flatten();
                 if let Some(status) = status {
+                    let _ = stdout_thread.join();
+                    let _ = stderr_thread.join();
                     if let Ok(mut current) = entry.active.lock() {
                         if current.as_ref().is_some_and(|(id, _)| id == &watcher_turn) { *current = None; }
                     }
@@ -312,11 +317,12 @@ pub fn agent_cli_turn_interrupt(state: State<'_, CliAgentManager>, request: CliI
     child.lock().map_err(err_lock)?.kill().map_err(|e| e.to_string())
 }
 #[tauri::command]
-pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, workspace_root: String) -> Result<(), String> {
+pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, owner: State<'_, AgentOwnership>, workspace_root: String) -> Result<(), String> {
     if let Some(entry) = state.sessions.lock().map_err(err_lock)?.remove(&key(&workspace_root)) {
         if let Some((_, child)) = entry.active.lock().map_err(err_lock)?.take() {
             let _ = child.lock().map_err(err_lock)?.kill();
         }
+        if let Ok(binding) = entry.binding.lock() { owner.release(&workspace_root, &binding.harness); }
     }
     Ok(())
 }

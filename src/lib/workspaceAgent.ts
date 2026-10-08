@@ -14,6 +14,9 @@ export class WorkspaceAgentService {
 
     const key = agentWorkspaceKey(root);
     const saved = useAgentSessionStore.getState().bindings[key];
+    if (saved && saved.harness !== this.adapter.kind) {
+      throw new Error("Stop and forget the previous harness binding before switching providers.");
+    }
     const binding = await this.adapter.startOrResumeSession({
       workspaceRoot: root,
       harness: this.adapter.kind,

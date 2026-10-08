@@ -1,4 +1,5 @@
 use crate::process::background_command;
+use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -12,7 +13,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
@@ -261,7 +262,15 @@ pub async fn agent_session_start(
     request: AgentSessionStartRequest,
 ) -> Result<AgentSessionBinding, String> {
     let manager = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || start_session(app, manager, request))
+    let owner = app.state::<AgentOwnership>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        owner.claim(&request.workspace_root, &request.harness)?;
+        let root = request.workspace_root.clone();
+        let kind = request.harness.clone();
+        let result = start_session(app, manager, request);
+        if result.is_err() { owner.release(&root, &kind); }
+        result
+    })
         .await
         .map_err(|error| format!("Agent session task failed: {error}"))?
 }
@@ -457,6 +466,8 @@ pub fn agent_session_stop(
             ),
         );
     }
+    app.state::<AgentOwnership>().release(&workspace_root, "codex");
+    app.state::<AgentOwnership>().release(&workspace_root, "deepseek");
     Ok(())
 }
 

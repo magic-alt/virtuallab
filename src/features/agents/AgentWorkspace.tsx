@@ -128,7 +128,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   });
   const forget = () => run(async () => {
     if (!window.confirm("Forget the saved thread association for this workspace? This cannot be undone.")) return;
-    await adapter.stopSession(workspaceRoot);
+    await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
     setAttached(false); setTurn(null);
   });
