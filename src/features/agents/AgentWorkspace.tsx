@@ -32,12 +32,13 @@ function describe(event: AgentEvent): string {
 }
 const timeLabel = (time: number) => new Date(time).toLocaleTimeString();
 const emptyCapabilities: AgentHarnessCapabilities | null = null;
+const EMPTY_EVENTS: AgentEvent[] = [];
 
 export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const key = agentWorkspaceKey(workspaceRoot);
   const binding = useAgentSessionStore((s) => s.bindings[key]);
   const setBinding = useAgentSessionStore((s) => s.setBinding);
-  const events = useAgentTimeline((s) => s.entries[key] ?? []);
+  const events = useAgentTimeline((s) => s.entries[key] ?? EMPTY_EVENTS);
   const turn = useAgentTimeline((s) => s.activeTurns[key] ?? null);
   const setActiveTurn = useAgentTimeline((s) => s.setActiveTurn);
   const clearTimeline = useAgentTimeline((s) => s.clear);
