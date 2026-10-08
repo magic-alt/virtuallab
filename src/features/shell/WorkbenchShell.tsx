@@ -121,7 +121,8 @@ export function WorkbenchShell() {
     }
 
     setLoading(true);
-    setError(null);
+    // A filesystem watcher refresh must not erase a meaningful Git error
+    // (e.g. an untracked file collision) before the user can read it.
 
     const request = inspectRepository(path)
       .then((next) => {
@@ -352,6 +353,7 @@ export function WorkbenchShell() {
       // Git will not check out the same branch into two worktrees. Navigate
       // to the existing owner instead of forcing the checkout.
       try {
+        setError(null);
         const next = await loadSnapshot(occupied, true);
         saveWorkspaceState({
           repositoryId: activeRepository.id,
@@ -418,7 +420,7 @@ export function WorkbenchShell() {
       {error && (
         <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-rose-400/15 bg-rose-400/[0.06] px-4 py-2 text-xs text-rose-200">
           <TriangleAlert size={14} />
-          <span className="truncate">{error}</span>
+          <span className="truncate" title={error}>{error}</span>
           <button className="ml-auto text-[10px] text-rose-300/60 hover:text-rose-200" onClick={() => setError(null)} type="button">
             dismiss
           </button>
@@ -472,6 +474,7 @@ export function WorkbenchShell() {
               if (activeRepository) void runGitMutation(() => gitPullCurrent(activeRepository.path, snapshot.root));
             }}
             onRefresh={() => {
+              setError(null);
               const path = activePathRef.current;
               if (path) void loadSnapshot(path).catch(() => undefined);
             }}
