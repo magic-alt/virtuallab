@@ -1,13 +1,3 @@
-## Git branch management (desktop)
-
-**Git branches** in the sidebar lists all local branches plus origin-tracking branches; **Workspace lanes** lists checked-out worktrees only. The two lists are intentionally different.
-
-1. Click **Fetch** to update origin-tracking branches (including `origin/main`). **Refresh** inspects local state only; it does not contact the remote.
-2. In **Git branches**, click `main`. If it is only present on origin, VirtualLab creates a local tracking branch. If `main` is already checked out in another worktree, VirtualLab opens that worktree instead of forcing a second checkout.
-3. Click **Pull** to fast-forward the selected branch from the matching `origin/<branch>`. Diverged histories are refused; nothing is reset or force-merged.
-
-Switch and pull reject staged, unstaged or untracked changes; commit or stash them first. Fetch never changes the working files. This UI operates on the currently selected worktree; no workspace is deleted by branch switching. Network authentication and remote failures are reported by Git. A local branch with no corresponding origin branch cannot be pulled until its remote is configured; pushing and remote management remain terminal workflows.
-
 # Local build guide
 
 ## Cross-platform quick path
@@ -233,3 +223,13 @@ killall Dock
 ```
 
 Check `mdfind 'kMDItemCFBundleIdentifier == "io.magic-alt.virtuallab"'` to find duplicate installed copies. The cache reset only changes display state; it cannot fix an old or incorrectly built bundle.
+
+## Git branch management (desktop)
+
+**Git branches** in the sidebar lists all local branches plus origin-tracking branches; **Workspace lanes** lists checked-out worktrees only. The two lists are intentionally different.
+
+1. Click **Fetch** to update origin-tracking branches (including `origin/main`). **Refresh** inspects local state only; it does not contact the remote.
+2. In **Git branches**, click `main`. If it is only present on origin, VirtualLab creates a local tracking branch. If `main` is already checked out in another worktree, VirtualLab opens that worktree instead of forcing a second checkout.
+3. Click **Pull** to fast-forward the selected branch from the matching `origin/<branch>`. Diverged histories are refused; nothing is reset or force-merged.
+
+Switch and pull reject staged, unstaged or untracked changes; commit or stash them first. Fetch never changes the working files. This UI operates on the currently selected worktree; no workspace is deleted by branch switching. Network authentication and remote failures are reported by Git. A local branch with no corresponding origin branch cannot be pulled until its remote is configured; pushing and remote management remain terminal workflows.
