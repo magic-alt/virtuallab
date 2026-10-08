@@ -12,7 +12,7 @@ function isAgentSessionBinding(value: unknown): value is AgentSessionBinding {
   return (
     typeof item.workspaceRoot === "string" &&
     item.workspaceRoot.trim().length > 0 &&
-    item.harness === "codex" &&
+    ["codex", "deepseek", "claude", "opencode"].includes(item.harness ?? "") &&
     typeof item.threadId === "string" &&
     item.threadId.trim().length > 0 &&
     typeof item.createdAtMs === "number" &&

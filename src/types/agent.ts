@@ -1,4 +1,4 @@
-export type AgentHarnessKind = "codex";
+export type AgentHarnessKind = "codex" | "deepseek" | "claude" | "opencode";
 
 export interface AgentHarnessFeatures {
   persistentThreads: boolean;

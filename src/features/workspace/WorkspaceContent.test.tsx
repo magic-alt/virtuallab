@@ -28,7 +28,7 @@ describe("WorkspaceContent navigation", () => {
       />,
     );
 
-    for (const tab of ["Overview", "Changes", "GitHub", "Terminal", "Run", "Checks", "History"]) {
+    for (const tab of ["Overview", "Changes", "GitHub", "Agents", "Terminal", "Run", "Checks", "History"]) {
       await user.click(screen.getByRole("button", { name: new RegExp(tab, "i") }));
     }
 
@@ -36,6 +36,7 @@ describe("WorkspaceContent navigation", () => {
       "overview",
       "changes",
       "github",
+      "agents",
       "terminal",
       "run",
       "checks",

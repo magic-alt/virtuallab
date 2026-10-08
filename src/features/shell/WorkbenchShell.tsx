@@ -24,6 +24,8 @@ import {
   watchStop,
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
+import { useAgentTimeline } from "@/stores/agentTimeline";
+import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
   RepositorySnapshot,
@@ -50,6 +52,17 @@ export function WorkbenchShell() {
     () => repositories.find((item) => item.id === activeRepositoryId) ?? null,
     [activeRepositoryId, repositories],
   );
+
+  const appendAgentEvent = useAgentTimeline((s) => s.append);
+  useEffect(() => {
+    if (!isDesktopRuntime()) return;
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+    void listen<AgentEvent>("agent://event", (event) => appendAgentEvent(event.payload))
+      .then((stop) => { if (cancelled) stop(); else unlisten = stop; })
+      .catch(() => undefined);
+    return () => { cancelled = true; unlisten?.(); };
+  }, [appendAgentEvent]);
 
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
   const [tab, setTab] = useState<WorkspaceTab>("overview");
@@ -413,7 +426,7 @@ export function WorkbenchShell() {
               </span>
               <span>workspace owns execution context</span>
             </div>
-            <span className="mono text-orange-300/70">V0.3 review loop · V0.4 contracts</span>
+            <span className="mono text-orange-300/70">V0.5 multi-harness workbench</span>
           </footer>
         </section>
       </div>

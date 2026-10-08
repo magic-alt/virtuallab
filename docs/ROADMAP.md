@@ -36,7 +36,7 @@ Goal: useful on day one without any AI dependency.
 
 ## V0.3 — Review and GitHub
 
-**Status: C implementation submitted for review (PR #12).** A/B were merged into `main`; the issue/worktree review flow and fresh documentation are being verified. Manual authenticated GitHub acceptance remains a separate task.
+**Status:** A/B/C merged into `main` (including PR #12). Manual authenticated GitHub/worktree desktop acceptance remains a separate task.
 
 Goal: make the workspace a complete local review lane before introducing agent harnesses.
 
@@ -71,7 +71,7 @@ Goal: make the workspace a complete local review lane before introducing agent h
 - [x] Git diff parser/adapter tests including rename/binary/large-file cases
 - [x] Monaco/review UI control tests
 - [x] GitHub adapter fixtures + offline/error cases
-- [ ] PR #12 Windows/macOS/Linux automated acceptance + manual GitHub/worktree desktop walkthrough recorded
+- [x] PR #12 merged with automated acceptance; [ ] manual authenticated desktop GitHub/worktree walkthrough recorded
 - [x] all network mutations require an explicit user gesture
 - [x] architecture and control-acceptance docs updated
 
@@ -100,13 +100,19 @@ See `docs/V0.3_REVIEW_GITHUB.md` for the implementation contract.
 - [x] thread start/resume and turn start/steer/interrupt
 - [x] normalized structured `agent://event` stream
 - [x] one active agent runtime per workspace
-- [ ] agent workspace UI / event timeline
-- [ ] configurable, repository-neutral agent roles
-- [ ] optional, repository-neutral engineering skill catalog
-- [ ] enforce leases in an explicit optional provider (no bundled project backend)
-- [ ] approval broker for motion/power/flash/release
-- [ ] Claude Code adapter
-- [ ] OpenCode adapter
+- [x] agent workspace UI / bounded live structured event timeline (not durable event history)
+- [x] configurable, repository-neutral agent roles
+- [x] optional, repository-neutral engineering skill catalog (user-created, no bundled project skills)
+- [x] provider-neutral external lease enforcement interface; default DENY with no provider
+- [x] human acknowledgement / one-use approval broker for motion/power/flash/release (control-plane only; no hardware authority)
+- [x] Claude Code CLI adapter (provider plan mode, structured NDJSON)
+- [x] OpenCode CLI adapter (provider plan agent, structured NDJSON)
+- [x] DeepSeek adapter through Codex app-server Responses provider, with environment-only API key
+- [x] exclusive native workspace runtime ownership across all four harnesses
+- [ ] independent optional hardware provider with on-device lease enforcement and interlocks (no backend bundled)
+- [ ] cross-platform V0.5 CI and authenticated desktop acceptance recorded
+
+**V0.5 feature-scope note:** a UI approval or TypeScript lease is never device authorization; the provider boundary remains intentionally fail-closed until an independently enforcing hardware implementation is configured. See `docs/V0.5_AGENT_HARNESSES.md`.
 
 The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md`. The Codex baseline intentionally runs `workspace-write` with `approvalPolicy = "never"` until VirtualLab owns approval routing.
 

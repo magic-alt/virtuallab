@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   CheckCircle2,
   CircleDot,
   FileCode2,
@@ -15,6 +16,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { AgentWorkspace } from "@/features/agents/AgentWorkspace";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
@@ -53,6 +55,7 @@ const tabs: Array<{
     counter: (snapshot) => snapshot.dirtyCount || null,
   },
   { id: "github", label: "GitHub", icon: <GitPullRequest size={14} /> },
+  { id: "agents", label: "Agents", icon: <Bot size={14} /> },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
@@ -120,6 +123,9 @@ export function WorkspaceContent({
             onNewReviewWorkspace={onNewReviewWorkspace}
             onRefreshForRereview={onRefreshForRereview}
           />
+        )}
+        {tab === "agents" && (
+          <AgentWorkspace workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
         {tab === "terminal" && (
           <TerminalWorkspace cwd={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />

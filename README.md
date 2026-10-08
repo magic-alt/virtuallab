@@ -23,9 +23,9 @@ Optional agent harnesses can attach to this model, but the workbench remains use
 
 **V0.1/V0.2:** completed local workbench foundation and workspace execution.  
 **V0.3 A/B:** completed local Git diff + read-only Monaco review, persisted line drafts, and optional `gh` GitHub PR/issue integration.  
-**V0.3 C:** Review loop implementation in PR #12: explicit Issue/PR → worktree creation, Review → Fix → Refresh → Re-review phase, HEAD/base correlation and stale-diff invalidation. Desktop manual acceptance remains a separate verification step.  
+**V0.3 C:** Review loop merged in PR #12: explicit Issue/PR → worktree creation, Review → Fix → Refresh → Re-review phase, HEAD/base correlation and stale-diff invalidation. Desktop manual acceptance remains a separate verification step.  
 **V0.4:** versioned verification profile, native process runner, cancellation/timeout, per-run evidence directory, SHA-256 artifacts and restricted hardware lease/approval *contract*. Full evidence history/release UI and physical hardware integration are not implemented.  
-**V0.5:** Codex app-server harness foundation and persisted workspace↔thread binding. Agent workspace UI, automatic hardware permissions and additional adapters are not yet available.
+**V0.5 (development branch):** Agent tab with bounded live event timeline, workspace-scoped custom roles and opt-in skills; Codex, DeepSeek-through-Codex, Claude Code and OpenCode adapters. Protected hardware operations remain DENY without an independently enforcing external provider. Cross-platform CI and manual desktop acceptance are required before release.
 
 This repo ships independently of other application repositories or hardware labs. Local review works without GitHub authentication; the optional GitHub panel uses an existing `gh` login and never stores a token.
 
@@ -61,7 +61,7 @@ Refresh/re-review is a local workflow, not a proof that the remote PR has been u
 - **Zustand**
 - **Lucide**
 
-Implemented adapters include xterm.js/PTy, Monaco read-only diff, optional `gh` GitHub context, native verification runner and Codex app-server foundation. Planned work includes durable searchable event history, release gates UI, full agent event timeline, other harness adapters and independently enforced hardware controls.
+Implemented adapters include xterm.js/PTy, Monaco read-only diff, optional `gh` GitHub context, native verification runner and four optional agent adapter identities. The Agent tab shows a bounded live event timeline; durable searchable agent history and independently enforced hardware controls remain future work.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -114,7 +114,7 @@ V0.3 adds diff/review, optional GitHub PR/issue context and the explicit Review 
 
 V0.4 adds a restricted native verification runner, evidence files and policy contracts; hardware gates remain blocked pending real enforcement.
 
-V0.5 provides the initial Codex harness bridge, without an Agent workspace UI yet. The invariant remains:
+V0.5 adds the Agent workspace UI, optional roles/skills and Codex, DeepSeek, Claude Code and OpenCode harness support. See [V0.5 harness guide](docs/V0.5_AGENT_HARNESSES.md) for setup, provider limitations and acceptance. The invariant remains:
 
 > **Agent belongs to Workspace. Workspace does not belong to Agent.**
 
@@ -230,7 +230,7 @@ npm run tauri:build
 
 ## Implementation contracts
 
-See [V0.3 review and GitHub](docs/V0.3_REVIEW_GITHUB.md), [V0.4 verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md), [V0.4/V0.5 agent foundation](docs/V0.4_V0.5_AGENT_FOUNDATION.md), and the [control acceptance matrix](docs/CONTROL_ACCEPTANCE.md). CI uses Windows/macOS/Linux desktop acceptance; actual third-party GitHub authentication and PR posting are manual desktop checks.
+See [V0.5 agent harnesses](docs/V0.5_AGENT_HARNESSES.md), [V0.3 review and GitHub](docs/V0.3_REVIEW_GITHUB.md), [V0.4 verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md), [V0.4/V0.5 agent foundation](docs/V0.4_V0.5_AGENT_FOUNDATION.md), and the [control acceptance matrix](docs/CONTROL_ACCEPTANCE.md). CI uses Windows/macOS/Linux desktop acceptance; actual third-party GitHub authentication and PR posting are manual desktop checks.
 
 
 ### Windows: terminal windows repeatedly flash open and closed
