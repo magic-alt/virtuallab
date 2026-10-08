@@ -23,6 +23,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: npm run icons:check
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
@@ -60,6 +61,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm run icons:check
       - run: npm run acceptance:local
       - name: Build standalone Windows release host
         run: npm run tauri:build -- --no-bundle
@@ -75,6 +77,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm run icons:check
       - name: Run desktop acceptance
         run: npm run acceptance:local
         env:
@@ -82,3 +85,14 @@ jobs:
           # on the arm64 macOS runner while Vite transforms worker/language
           # modules. Keep this scoped to the build-bearing acceptance step.
           NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Build macOS .app and assert bundled orange-V icon
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          npm run tauri:build -- --bundles app
+          APP="src-tauri/target/release/bundle/macos/VirtualLab.app"
+          test -d "$APP"
+          ICON_NAME="$(plutil -extract CFBundleIconFile raw -o - "$APP/Contents/Info.plist")"
+          test -n "$ICON_NAME"
+          cmp "src-tauri/icons/icon.icns" "$APP/Contents/Resources/$ICON_NAME"
