@@ -2,10 +2,10 @@ import type { RepositorySnapshot } from "@/types/workbench";
 
 export const PREVIEW_SNAPSHOT: RepositorySnapshot = {
   root: "Preview workspace — add a local Git repository to inspect real data",
-  name: "VirtualLab Workbench",
+  name: "Sample Repository",
   currentBranch: "feat/engineering-workbench-foundation",
   headSha: "preview",
-  remoteUrl: "github.com/magic-alt/virtuallab",
+  remoteUrl: "github.com/example-org/sample-repo",
   dirtyCount: 3,
   stagedCount: 1,
   unstagedCount: 1,
@@ -32,13 +32,13 @@ export const PREVIEW_SNAPSHOT: RepositorySnapshot = {
   ],
   worktrees: [
     {
-      path: "/workspace/virtuallab",
+      path: "/workspace/sample-repo",
       head: "main",
       branch: "main",
       detached: false,
     },
     {
-      path: "/workspace/virtuallab-workbench",
+      path: "/workspace/sample-repo-feature",
       head: "feature",
       branch: "feat/engineering-workbench-foundation",
       detached: false,

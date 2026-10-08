@@ -691,12 +691,12 @@ mod tests {
     #[test]
     fn parses_https_and_ssh_github_remotes() {
         assert_eq!(
-            parse_github_remote("https://github.com/magic-alt/virtuallab.git"),
-            Some("magic-alt/virtuallab".to_string())
+            parse_github_remote("https://github.com/example-org/sample-repo.git"),
+            Some("example-org/sample-repo".to_string())
         );
         assert_eq!(
-            parse_github_remote("git@github.com:magic-alt/virtuallab.git"),
-            Some("magic-alt/virtuallab".to_string())
+            parse_github_remote("git@github.com:example-org/sample-repo.git"),
+            Some("example-org/sample-repo".to_string())
         );
         assert_eq!(parse_github_remote("https://example.com/a/b.git"), None);
     }
@@ -705,19 +705,19 @@ mod tests {
     fn parses_reference_urls_and_rejects_cross_repository_urls() {
         assert_eq!(
             parse_reference(
-                Some("https://github.com/magic-alt/virtuallab/pull/7"),
-                "magic-alt/virtuallab"
+                Some("https://github.com/example-org/sample-repo/pull/7"),
+                "example-org/sample-repo"
             )
             .unwrap(),
             GithubReference::PullRequest(7)
         );
         assert_eq!(
-            parse_reference(Some("issue:4"), "magic-alt/virtuallab").unwrap(),
+            parse_reference(Some("issue:4"), "example-org/sample-repo").unwrap(),
             GithubReference::Issue(4)
         );
         assert!(parse_reference(
-            Some("https://github.com/other/project/issues/1"),
-            "magic-alt/virtuallab"
+            Some("https://github.com/another-org/other-repo/issues/1"),
+            "example-org/sample-repo"
         )
         .is_err());
     }
@@ -743,12 +743,12 @@ mod tests {
             "number": 7,
             "title": "Review",
             "state": "OPEN",
-            "url": "https://github.com/magic-alt/virtuallab/pull/7",
+            "url": "https://github.com/example-org/sample-repo/pull/7",
             "baseRefName": "main",
             "headRefName": "feat/review",
             "headRefOid": "abcdef",
             "isDraft": false,
-            "author": {"login":"magic-alt"},
+            "author": {"login":"example-user"},
             "files": [{"path":"src/a.ts","additions":4,"deletions":2}],
             "statusCheckRollup": []
         }))
@@ -760,8 +760,8 @@ mod tests {
             "number": 4,
             "title": "V0.3",
             "state": "OPEN",
-            "url": "https://github.com/magic-alt/virtuallab/issues/4",
-            "author": {"login":"magic-alt"},
+            "url": "https://github.com/example-org/sample-repo/issues/4",
+            "author": {"login":"example-user"},
             "labels": [{"name":"enhancement"}]
         }))
         .unwrap();
@@ -773,7 +773,7 @@ mod tests {
         let missing = capability_from_probes(
             false,
             false,
-            Some("magic-alt/virtuallab".to_string()),
+            Some("example-org/sample-repo".to_string()),
             "gh missing".to_string(),
         );
         assert_eq!(missing.mode, "local_only");
@@ -782,7 +782,7 @@ mod tests {
         let offline = capability_from_probes(
             true,
             false,
-            Some("magic-alt/virtuallab".to_string()),
+            Some("example-org/sample-repo".to_string()),
             "network unavailable".to_string(),
         );
         assert_eq!(offline.mode, "local_only");

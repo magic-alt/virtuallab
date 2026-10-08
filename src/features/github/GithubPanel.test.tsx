@@ -21,7 +21,7 @@ const snapshot: RepositorySnapshot = {
   name: "repo",
   currentBranch: "feat/review",
   headSha: "abcdef1234",
-  remoteUrl: "https://github.com/magic-alt/virtuallab.git",
+  remoteUrl: "https://github.com/example-org/sample-repo.git",
   dirtyCount: 0,
   stagedCount: 0,
   unstagedCount: 0,
@@ -34,7 +34,7 @@ const snapshot: RepositorySnapshot = {
 const connected = {
   installed: true,
   authenticated: true,
-  repository: "magic-alt/virtuallab",
+  repository: "example-org/sample-repo",
   mode: "connected" as const,
   detail: "connected",
 };
@@ -52,7 +52,7 @@ describe("GithubPanel", () => {
     adapter.capabilities.mockResolvedValue({
       installed: false,
       authenticated: false,
-      repository: "magic-alt/virtuallab",
+      repository: "example-org/sample-repo",
       mode: "local_only",
       detail: "GitHub CLI is unavailable",
     });
@@ -70,12 +70,12 @@ describe("GithubPanel", () => {
         number: 7,
         title: "Review lane",
         state: "OPEN",
-        url: "https://github.com/magic-alt/virtuallab/pull/7",
+        url: "https://github.com/example-org/sample-repo/pull/7",
         baseRef: "main",
         headRef: "feat/review",
         headSha: "abcdef1234567890",
         isDraft: false,
-        author: "magic-alt",
+        author: "example-user",
         changedFiles: [{ path: "src/a.ts", additions: 4, deletions: 2 }],
         checks: {
           total: 1,
@@ -113,12 +113,12 @@ describe("GithubPanel", () => {
         number: 7,
         title: "Review lane",
         state: "OPEN",
-        url: "https://github.com/magic-alt/virtuallab/pull/7",
+        url: "https://github.com/example-org/sample-repo/pull/7",
         baseRef: "main",
         headRef: "feat/review",
         headSha: "abcdef1234567890",
         isDraft: false,
-        author: "magic-alt",
+        author: "example-user",
         changedFiles: [{ path: "src/a.ts", additions: 4, deletions: 2 }],
         checks: { total: 0, success: 0, pending: 0, failure: 0, neutral: 0, checks: [] },
       },
@@ -126,7 +126,7 @@ describe("GithubPanel", () => {
     });
     adapter.postReviewComment.mockResolvedValue({
       id: 99,
-      url: "https://github.com/magic-alt/virtuallab/pull/7#discussion_r99",
+      url: "https://github.com/example-org/sample-repo/pull/7#discussion_r99",
     });
     useWorkbenchStore.getState().addReviewDraft({
       id: "draft-1",
