@@ -17,6 +17,7 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
+  gitDeleteLocalBranch,
   gitFetchOrigin,
   gitPullCurrent,
   gitSwitchBranch,
@@ -342,6 +343,19 @@ export function WorkbenchShell() {
     await runGitMutation(() => gitSwitchBranch(activeRepository.path, snapshot.root, name));
   };
 
+  const deleteLocalBranch = async (name: string) => {
+    if (!activeRepository || gitBusy || loading) return;
+    const branch = snapshot.branches.find((item) => item.name === name);
+    if (!branch?.local || branch.worktreePath || name === "main" || name === "master") return;
+    const confirmed = window.confirm(
+      `Delete the LOCAL branch "${name}"?\n\n` +
+      "This does not delete a branch on GitHub. Git will refuse to delete branches with unmerged commits. " +
+      "Remote-tracking branches are cleaned using Fetch + prune.",
+    );
+    if (!confirmed) return;
+    await runGitMutation(() => gitDeleteLocalBranch(activeRepository.path, name));
+  };
+
   const isPreview = !activeRepository;
   const native = isDesktopRuntime();
 
@@ -422,6 +436,7 @@ export function WorkbenchShell() {
           workspaceActionsEnabled={native && Boolean(activeRepository)}
           branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
+          onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
         />
 
         <section className="vl-stage flex min-w-0 flex-1 flex-col">
