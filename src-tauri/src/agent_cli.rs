@@ -314,7 +314,8 @@ pub fn agent_cli_turn_interrupt(state: State<'_, CliAgentManager>, request: CliI
     let active = entry.active.lock().map_err(err_lock)?;
     let (_, child) = active.as_ref().filter(|(id, _)| id == &request.turn_id)
         .ok_or("No matching running turn.")?;
-    child.lock().map_err(err_lock)?.kill().map_err(|e| e.to_string())
+    let result = child.lock().map_err(err_lock)?.kill().map_err(|e| e.to_string());
+    result
 }
 #[tauri::command]
 pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, owner: State<'_, AgentOwnership>, workspace_root: String) -> Result<(), String> {

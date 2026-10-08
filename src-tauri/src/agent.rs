@@ -231,7 +231,7 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let version = if stdout.is_empty() { stderr } else { stdout };
             Ok(AgentHarnessCapabilities {
-                harness,
+                harness: harness.clone(),
                 available: true,
                 version: (!version.is_empty()).then_some(version),
                 detail: if harness == "deepseek" { "DeepSeek provider via Codex Responses app-server; requires DEEPSEEK_API_KEY and a local Codex model catalog.".into() } else { "Codex CLI available; VirtualLab uses app-server stdio JSON-RPC.".into() },
