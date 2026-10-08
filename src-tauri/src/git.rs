@@ -1,5 +1,6 @@
 use crate::process::background_command;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path};
@@ -20,6 +21,7 @@ pub struct RepositorySnapshot {
     untracked_count: usize,
     changes: Vec<ChangeEntry>,
     worktrees: Vec<WorktreeSummary>,
+    branches: Vec<BranchSummary>,
     recent_commits: Vec<CommitSummary>,
 }
 
@@ -40,6 +42,15 @@ pub struct WorktreeSummary {
     head: String,
     branch: Option<String>,
     detached: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchSummary {
+    name: String,
+    local: bool,
+    remote: bool,
+    worktree_path: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +141,7 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
     }
 
     let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    let branches = read_branches(&root, &worktrees)?;
     let recent_commits = parse_commits(&git_read(
         &root,
         &["log", "-n", "8", "--format=%h%x1f%s%x1f%ct"],
@@ -147,6 +159,7 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         untracked_count,
         changes,
         worktrees,
+        branches,
         recent_commits,
     })
 }
@@ -247,6 +260,46 @@ fn parse_worktrees(raw: &str) -> Vec<WorktreeSummary> {
     }
 
     result
+}
+
+// Worktrees represent checked-out branches, not the full branch inventory.
+fn read_branches(root: &str, worktrees: &[WorktreeSummary]) -> Result<Vec<BranchSummary>, String> {
+    let refs = git_read(
+        root,
+        &["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin"],
+    )?;
+    let mut branches = BTreeMap::<String, BranchSummary>::new();
+    for reference in refs.lines() {
+        let (name, local) = if let Some(name) = reference.strip_prefix("refs/heads/") {
+            (name, true)
+        } else if let Some(name) = reference.strip_prefix("refs/remotes/origin/") {
+            (name, false)
+        } else {
+            continue;
+        };
+        if name == "HEAD" || name.is_empty() {
+            continue;
+        }
+        let entry = branches.entry(name.to_string()).or_insert_with(|| BranchSummary {
+            name: name.to_string(),
+            local: false,
+            remote: false,
+            worktree_path: None,
+        });
+        if local {
+            entry.local = true;
+        } else {
+            entry.remote = true;
+        }
+    }
+    for worktree in worktrees {
+        if let Some(name) = &worktree.branch {
+            if let Some(branch) = branches.get_mut(name) {
+                branch.worktree_path = Some(worktree.path.clone());
+            }
+        }
+    }
+    Ok(branches.into_values().collect())
 }
 
 fn parse_commits(raw: &str) -> Vec<CommitSummary> {
@@ -825,6 +878,100 @@ fn truncate_lines(text: String, max_lines: usize) -> (String, bool) {
 }
 
 
+// Native Git mutations deliberately require registered worktrees and preserve
+// uncommitted changes. Pull is always fast-forward-only, never rebase/reset.
+fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<(String, String), String> {
+    let repository = git_read(repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim().to_string();
+    let workspace = git_read(workspace_root, &["rev-parse", "--show-toplevel"])?
+        .trim().to_string();
+    ensure_registered_worktree(&repository, &workspace)?;
+    Ok((repository, workspace))
+}
+
+fn require_clean_workspace(workspace: &str) -> Result<(), String> {
+    if !git_read(workspace, &["status", "--porcelain=v1", "--untracked-files=normal"])?.is_empty() {
+        Err("Commit or stash local changes (including untracked files) before switching or pulling.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn git_switch_branch(
+    repository_root: String,
+    workspace_root: String,
+    branch: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_switch_branch_blocking(repository_root, workspace_root, branch)
+    })
+    .await
+    .map_err(|error| format!("Git branch switch task failed: {error}"))?
+}
+
+fn git_switch_branch_blocking(repository_root: String, workspace_root: String, branch: String) -> Result<(), String> {
+    let (_, workspace) = resolve_git_workspace(&repository_root, &workspace_root)?;
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Select a Git branch first".to_string());
+    }
+    git(&workspace, &["check-ref-format", "--branch", branch])?;
+    let current = git_read(&workspace, &["branch", "--show-current"])?;
+    if current.trim() == branch {
+        return Ok(());
+    }
+    require_clean_workspace(&workspace)?;
+    let local_ref = format!("refs/heads/{branch}");
+    if git_read(&workspace, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_ok() {
+        git(&workspace, &["switch", branch])?;
+    } else {
+        let remote_ref = format!("refs/remotes/origin/{branch}");
+        if git_read(&workspace, &["show-ref", "--verify", "--quiet", remote_ref.as_str()]).is_err() {
+            return Err(format!("Branch '{branch}' is not available locally or on origin. Fetch origin first."));
+        }
+        let tracking = format!("origin/{branch}");
+        git(&workspace, &["switch", "--track", "-c", branch, tracking.as_str()])?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_fetch_origin(repository_root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git_fetch_origin_blocking(repository_root))
+        .await
+        .map_err(|error| format!("Git fetch task failed: {error}"))?
+}
+
+fn git_fetch_origin_blocking(repository_root: String) -> Result<(), String> {
+    let repository = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?;
+    git(repository.trim(), &["fetch", "origin"])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_pull_current(repository_root: String, workspace_root: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_pull_current_blocking(repository_root, workspace_root)
+    })
+    .await
+    .map_err(|error| format!("Git pull task failed: {error}"))?
+}
+
+fn git_pull_current_blocking(repository_root: String, workspace_root: String) -> Result<(), String> {
+    let (_, workspace) = resolve_git_workspace(&repository_root, &workspace_root)?;
+    require_clean_workspace(&workspace)?;
+    let branch = git_read(&workspace, &["branch", "--show-current"])?;
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Cannot pull a detached HEAD; switch to a branch first.".to_string());
+    }
+    // Supplying origin and the checked-out branch avoids pulling from a
+    // surprising upstream; --ff-only refuses diverged histories.
+    git(&workspace, &["pull", "--ff-only", "origin", branch])?;
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceMutationResult {
@@ -1008,6 +1155,71 @@ mod tests {
             .status()
             .expect("git should start");
         assert!(status.success(), "git command failed: {args:?}");
+    }
+
+    #[test]
+    fn branch_inventory_and_safe_switch_pull_cover_origin_main() {
+        let (sandbox, repo) = init_fixture_repo("branch-management");
+        let origin = sandbox.join("origin.git");
+        let peer = sandbox.join("peer");
+        let repo_path = repo.to_string_lossy().to_string();
+        let origin_path = origin.to_string_lossy().to_string();
+        let peer_path = peer.to_string_lossy().to_string();
+
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", &origin_path]);
+        git_ok(&repo, &["remote", "add", "origin", &origin_path]);
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/local"]);
+        git_ok(&repo, &["branch", "-D", "main"]);
+
+        let inventory = inspect_repository_blocking(repo_path.clone()).expect("branch inspection");
+        let main = inventory.branches.iter().find(|item| item.name == "main").expect("remote main");
+        assert!(!main.local);
+        assert!(main.remote);
+        assert!(main.worktree_path.is_none());
+        assert!(inventory.branches.iter().any(|item| item.name == "feat/local" && item.local));
+
+        git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "main".to_string())
+            .expect("track remote main");
+        let main = inspect_repository_blocking(repo_path.clone()).expect("local main");
+        let tracked = main.branches.iter().find(|item| item.name == "main").expect("main");
+        assert!(tracked.local && tracked.remote && tracked.worktree_path.is_some());
+        assert_eq!(main.current_branch, "main");
+
+        git_ok(&repo, &["clone", &origin_path, &peer_path]);
+        git_ok(&peer, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&peer, &["config", "user.name", "VirtualLab Tests"]);
+        git_ok(&peer, &["switch", "main"]);
+        fs::write(peer.join("README.md"), "updated upstream\\n").expect("peer write");
+        git_ok(&peer, &["add", "README.md"]);
+        git_ok(&peer, &["commit", "-m", "update upstream"]);
+        git_ok(&peer, &["push", "origin", "main"]);
+
+        git_fetch_origin_blocking(repo_path.clone()).expect("fetch origin");
+        git_pull_current_blocking(repo_path.clone(), repo_path.clone()).expect("fast forward main");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "updated upstream\\n");
+
+        fs::write(repo.join("untracked.txt"), "local only").expect("dirty fixture");
+        assert!(git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "feat/local".to_string()).is_err());
+        assert!(git_pull_current_blocking(repo_path.clone(), repo_path.clone()).is_err());
+        fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_refuses_unregistered_worktree() {
+        let (sandbox, repo) = init_fixture_repo("switch-guard");
+        let stranger = sandbox.join("stranger");
+        fs::create_dir_all(&stranger).unwrap();
+        git_ok(&stranger, &["init"]);
+        let result = git_switch_branch_blocking(
+            repo.to_string_lossy().to_string(),
+            stranger.to_string_lossy().to_string(),
+            "main".to_string(),
+        );
+        assert!(result.unwrap_err().contains("not a registered worktree"));
+        let _ = fs::remove_dir_all(sandbox);
     }
 
     #[test]

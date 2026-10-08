@@ -44,6 +44,11 @@ export const PREVIEW_SNAPSHOT: RepositorySnapshot = {
       detached: false,
     },
   ],
+  branches: [
+    { name: "main", local: true, remote: true, worktreePath: "/workspace/sample-repo" },
+    { name: "feat/sample-workspace", local: true, remote: false, worktreePath: "/workspace/sample-repo-feature" },
+    { name: "feat/remote-only", local: false, remote: true, worktreePath: null },
+  ],
   recentCommits: [
     {
       sha: "9f8e4c1",

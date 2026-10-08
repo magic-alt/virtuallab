@@ -19,7 +19,7 @@ use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
 };
-use git::{create_worktree, git_diff, inspect_repository, remove_worktree};
+use git::{create_worktree, git_diff, git_fetch_origin, git_pull_current, git_switch_branch, inspect_repository, remove_worktree};
 use github::{github_capabilities, github_context, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
 use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
@@ -38,6 +38,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             inspect_repository,
             git_diff,
+            git_switch_branch,
+            git_fetch_origin,
+            git_pull_current,
             github_capabilities,
             github_context,
             github_post_review_comment,

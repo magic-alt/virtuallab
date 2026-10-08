@@ -35,6 +35,21 @@ export async function inspectRepository(path: string): Promise<RepositorySnapsho
   return invoke<RepositorySnapshot>("inspect_repository", { path });
 }
 
+export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: string, branch: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_switch_branch", { repositoryRoot, workspaceRoot, branch });
+}
+
+export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_fetch_origin", { repositoryRoot });
+}
+
+export async function gitPullCurrent(repositoryRoot: string, workspaceRoot: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_pull_current", { repositoryRoot, workspaceRoot });
+}
+
 export async function gitDiff(request: DiffRequest): Promise<DiffResponse> {
   requireDesktop();
   return invoke<DiffResponse>("git_diff", { request });
