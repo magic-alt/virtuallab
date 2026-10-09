@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AgentSessionBinding } from "@/types/agent";
+import { workspaceKey } from "@/lib/workspaceKey";
 
 export function agentWorkspaceKey(path: string) {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return workspaceKey(path);
 }
 
 function isAgentSessionBinding(value: unknown): value is AgentSessionBinding {
@@ -72,7 +73,7 @@ export const useAgentSessionStore = create<AgentSessionState>()(
     {
       name: "virtuallab-agent-sessions-v1",
       storage: createJSONStorage(() => window.localStorage),
-      version: 1,
+      version: 2,
       migrate: (persistedState) => {
         const saved = persistedState as Partial<AgentSessionState>;
         return {

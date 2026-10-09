@@ -33,6 +33,7 @@ import {
   watchStop,
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
+import { workspaceKey } from "@/lib/workspaceKey";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
@@ -567,5 +568,5 @@ export function WorkbenchShell() {
 
 
 function normalizePath(path: string) {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return workspaceKey(path);
 }

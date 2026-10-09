@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::{Arc, Mutex}};
 #[derive(Clone, Default)]
 pub struct AgentOwnership(Arc<Mutex<HashMap<String, String>>>);
 fn key(path: &str) -> String {
-    path.replace('\\', "/").trim_end_matches('/').to_ascii_lowercase()
+    crate::workspace_identity::key(path)
 }
 impl AgentOwnership {
     pub fn claim(&self, root: &str, kind: &str) -> Result<(), String> {
@@ -30,6 +30,7 @@ impl AgentOwnership {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
     #[test]
     fn only_one_harness_can_own_a_workspace() {
         let owner = AgentOwnership::default();
