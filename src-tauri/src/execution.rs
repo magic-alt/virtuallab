@@ -533,11 +533,16 @@ fn resolve_windows_program(program: &str) -> Option<String> {
         return None;
     }
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
+    let resolved = String::from_utf8_lossy(&output.stdout);
+    let candidates: Vec<&str> = resolved.lines().map(str::trim)
+        .filter(|line| !line.is_empty()).collect();
+    // Node's Windows distribution ships both a POSIX 'npm' shell shim and
+    // 'npm.cmd'. where.exe can list the extensionless shim first, but it
+    // cannot be spawned by CreateProcess. Prefer actual Windows launchers.
+    candidates.iter().find(|line| {
+        let name = line.to_ascii_lowercase();
+        [".exe", ".com", ".cmd", ".bat"].iter().any(|ext| name.ends_with(ext))
+    }).or_else(|| candidates.first()).map(|line| (*line).to_owned())
 }
 
 
