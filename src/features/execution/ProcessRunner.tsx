@@ -23,7 +23,8 @@ import {
   processSpawn,
   processStop,
 } from "@/lib/backend";
-import { formatStep, profileFromSuggestion, stepsForProfile } from "@/lib/buildProfiles";
+import { formatStep, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
+import { BuildLogSanitizer } from "@/lib/buildLogSanitizer";
 import { processCheckResult } from "@/lib/checks";
 import { useWorkbenchStore } from "@/stores/workbench";
 import type {
@@ -97,6 +98,7 @@ export function ProcessRunner({
   const [editorProfile, setEditorProfile] = useState<ProcessProfile | null | undefined>(undefined);
   const outputRef = useRef<HTMLPreElement | null>(null);
   const pendingOutputRef = useRef(new Map<string, string>());
+  const sanitizerRef = useRef(new Map<string, BuildLogSanitizer>());
   const outputFlushTimerRef = useRef<number | undefined>(undefined);
   const startingRef = useRef(false);
 
@@ -136,25 +138,41 @@ export function ProcessRunner({
       );
     };
 
-    const queueOutput = (id: string, chunk: string) => {
+    const queueOutput = (id: string, chunk: string, stream = "system") => {
+      // Keep a distinct ANSI parser per process/stream so an escape sequence
+      // split across native read() calls is not shown as junk in the log.
+      const key = id + "\u0000" + stream;
+      let sanitizer = sanitizerRef.current.get(key);
+      if (!sanitizer) {
+        sanitizer = new BuildLogSanitizer();
+        sanitizerRef.current.set(key, sanitizer);
+      }
+      const text = sanitizer.write(chunk);
+      if (!text) return;
       const current = pendingOutputRef.current.get(id) ?? "";
-      pendingOutputRef.current.set(id, (current + chunk).slice(-OUTPUT_LIMIT));
+      pendingOutputRef.current.set(id, (current + text).slice(-OUTPUT_LIMIT));
       if (outputFlushTimerRef.current === undefined) {
         outputFlushTimerRef.current = window.setTimeout(flushPendingOutput, OUTPUT_FLUSH_MS);
       }
     };
 
     const finishOutput = (id: string, output: string) => {
+      let trailing = "";
+      for (const [key, sanitizer] of sanitizerRef.current) {
+        if (key.startsWith(id + "\u0000")) {
+          trailing += sanitizer.finish();
+          sanitizerRef.current.delete(key);
+        }
+      }
       const pending = pendingOutputRef.current.get(id) ?? "";
       pendingOutputRef.current.delete(id);
-      return pending ? (output + pending).slice(-OUTPUT_LIMIT) : output;
+      return (output + pending + trailing).slice(-OUTPUT_LIMIT);
     };
 
     void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (!payload.eventType.startsWith("process.")) return;
       if (payload.eventType === "process.output" || payload.eventType === "process.error") {
-        const prefix = payload.stream === "stderr" ? "[stderr] " : "";
-        queueOutput(payload.id, prefix + (payload.data ?? ""));
+        queueOutput(payload.id, payload.data ?? "", payload.stream ?? "system");
         return;
       }
       setRuns((items) =>
@@ -192,8 +210,7 @@ export function ProcessRunner({
 
     void Promise.resolve(listen<BuildWorkflowEvent>("build://event", ({ payload }) => {
       if (payload.eventType === "build.output") {
-        const prefix = payload.stream === "stderr" ? "[stderr] " : "";
-        queueOutput(payload.id, prefix + (payload.data ?? ""));
+        queueOutput(payload.id, payload.data ?? "", payload.stream ?? "system");
         return;
       }
       if (payload.eventType === "build.step_started") {
@@ -232,6 +249,7 @@ export function ProcessRunner({
         outputFlushTimerRef.current = undefined;
       }
       pendingOutputRef.current.clear();
+      sanitizerRef.current.clear();
       unlistenProcess?.();
       unlistenBuild?.();
     };
@@ -323,7 +341,7 @@ export function ProcessRunner({
             <div>
               <div className="text-sm font-medium text-slate-200">One-click project builds</div>
               <p className="mb-0 mt-1 text-[11px] text-slate-500">
-                Auto-detected from this worktree. No shell strings, flash or publish.
+                Tauri builds the desktop app; npm Build is frontend-only. No flash or publish.
               </p>
             </div>
             <Button aria-label="Rescan build workflows" size="sm" variant="ghost"
@@ -364,7 +382,7 @@ export function ProcessRunner({
                     size="sm"
                   >
                     <Play size={11} />
-                    {suggestion.kind === "package" ? "Package now" : "Build now"}
+                    {suggestionActionLabel(suggestion)}
                   </Button>
                   <Button
                     size="sm" variant="outline"
@@ -457,7 +475,7 @@ export function ProcessRunner({
 
       <section className="vl-editor-surface flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07]">
         <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2">
-          <div className="text-xs font-medium text-slate-300">Build output</div>
+          <div className="text-xs font-medium text-slate-300">Build / package output</div>
           <div className="flex min-w-0 items-center gap-2">
             {runs.length > 1 && (
               <select aria-label="Run history" className="field max-w-40 py-1 text-xs"

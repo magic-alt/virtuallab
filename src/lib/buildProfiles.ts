@@ -30,3 +30,10 @@ export function formatStep(step: BuildStep): string {
   // Presentation only, never parsed or passed as a shell string.
   return [step.program, ...step.args].join(" ");
 }
+
+/** Explicitly distinguish a Tauri desktop build from a frontend-only npm build. */
+export function suggestionActionLabel(suggestion: BuildSuggestion): string {
+  if (suggestion.id === "npm-tauri-package") return "Build desktop app";
+  if (suggestion.id === "npm-build") return "Build frontend";
+  return suggestion.kind === "package" ? "Package now" : "Build now";
+}

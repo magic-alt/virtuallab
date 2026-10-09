@@ -1,4 +1,5 @@
 use crate::process::background_command;
+use crate::output_decode::Utf8StreamDecoder;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -333,11 +334,12 @@ fn process_spawn_blocking(
         .map_err(|_| "Process manager lock poisoned".to_string())?
         .insert(spec.id.clone(), child.clone());
 
+    let mut readers = Vec::new();
     if let Some(stdout) = stdout {
-        spawn_stream_reader(app.clone(), spec.id.clone(), "stdout", stdout);
+        readers.push(spawn_stream_reader(app.clone(), spec.id.clone(), "stdout", stdout));
     }
     if let Some(stderr) = stderr {
-        spawn_stream_reader(app.clone(), spec.id.clone(), "stderr", stderr);
+        readers.push(spawn_stream_reader(app.clone(), spec.id.clone(), "stderr", stderr));
     }
 
     let app_for_monitor = app.clone();
@@ -354,6 +356,8 @@ fn process_spawn_blocking(
 
         match status {
             Ok(Some(status)) => {
+                // Output must be drained before the exit event reaches the UI.
+                for reader in readers.drain(..) { let _ = reader.join(); }
                 if let Ok(mut map) = children.lock() {
                     map.remove(&id_for_monitor);
                 }
@@ -428,23 +432,25 @@ fn terminal_session(
         .ok_or_else(|| "Terminal session is not running".to_string())
 }
 
-fn spawn_stream_reader<R>(app: AppHandle, id: String, stream: &'static str, reader: R)
+fn spawn_stream_reader<R>(app: AppHandle, id: String, stream: &'static str, reader: R) -> thread::JoinHandle<()>
 where
     R: Read + Send + 'static,
 {
     thread::spawn(move || {
         let mut reader = std::io::BufReader::new(reader);
+        let mut decoder = Utf8StreamDecoder::default();
         let mut buffer = [0u8; 4096];
+        let emit_data = |data: String| {
+            if data.is_empty() { return; }
+            let _ = app.emit(
+                "workbench://event",
+                WorkbenchEvent::new("process.output", id.clone()).stream(stream, data),
+            );
+        };
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
-                Ok(read) => {
-                    let data = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    let _ = app.emit(
-                        "workbench://event",
-                        WorkbenchEvent::new("process.output", id.clone()).stream(stream, data),
-                    );
-                }
+                Ok(read) => emit_data(decoder.push(&buffer[..read])),
                 Err(error) => {
                     let _ = app.emit(
                         "workbench://event",
@@ -455,7 +461,8 @@ where
                 }
             }
         }
-    });
+        emit_data(decoder.finish());
+    })
 }
 
 fn default_shell() -> (String, Vec<String>) {

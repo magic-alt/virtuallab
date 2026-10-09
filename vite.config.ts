@@ -8,7 +8,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Monaco ships an embedded older copy; npm overrides alone do not replace it.
+      "./dompurify/dompurify.js": path.resolve(__dirname, "./node_modules/dompurify/dist/purify.es.mjs"),
     },
+  },
+  optimizeDeps: {
+    // esbuild prebundling bypasses relative aliases; serve Monaco through Vite instead.
+    exclude: ["monaco-editor"],
   },
   clearScreen: false,
   server: {

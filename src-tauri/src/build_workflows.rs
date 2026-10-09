@@ -2,6 +2,7 @@
 //! Only explicitly requested user actions start processes. Presets never flash,
 //! publish, or deploy, and the executor never interprets a shell command string.
 use crate::execution::process_command;
+use crate::output_decode::Utf8StreamDecoder;
 use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -128,26 +129,28 @@ fn discover(root: &Path) -> Vec<BuildSuggestion> {
         if let Ok(content) = fs::read_to_string(package) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 let scripts = json.get("scripts").and_then(|s| s.as_object());
-                if scripts.and_then(|s| s.get("build")).and_then(|v| v.as_str()).is_some() {
-                    found.push(BuildSuggestion {
-                        id: "npm-build".into(),
-                        name: "npm · Build".into(),
-                        kind: "build".into(),
-                        tool: "Node.js / npm".into(),
-                        description: "Run the project's existing build script (npm run build).".into(),
-                        supported: true,
-                        steps: vec![step("Build", "npm", &["run", "build"])],
-                    });
-                }
+                // Tauri packaging builds the frontend and native host. Prefer it
+                // over npm build, which generally outputs web assets only.
                 if scripts.and_then(|s| s.get("tauri:build")).and_then(|v| v.as_str()).is_some() {
                     found.push(BuildSuggestion {
                         id: "npm-tauri-package".into(),
-                        name: "Tauri · Package".into(),
+                        name: "Tauri · Desktop build".into(),
                         kind: "package".into(),
                         tool: "Node.js / Tauri".into(),
-                        description: "Build a distributable desktop app; does not install or publish it.".into(),
+                        description: "Build the frontend, Rust backend and desktop bundle (npm run tauri:build). Does not install or publish.".into(),
                         supported: true,
-                        steps: vec![step("Package", "npm", &["run", "tauri:build"])],
+                        steps: vec![step("Build desktop app", "npm", &["run", "tauri:build"])],
+                    });
+                }
+                if scripts.and_then(|s| s.get("build")).and_then(|v| v.as_str()).is_some() {
+                    found.push(BuildSuggestion {
+                        id: "npm-build".into(),
+                        name: "npm · Frontend only".into(),
+                        kind: "build".into(),
+                        tool: "Node.js / npm".into(),
+                        description: "Build frontend assets into dist/ (npm run build). This does not compile Rust or generate an installer.".into(),
+                        supported: true,
+                        steps: vec![step("Build frontend", "npm", &["run", "build"])],
                     });
                 }
             }
@@ -428,20 +431,24 @@ fn stream_output<R: Read + Send + 'static>(
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = std::io::BufReader::new(reader);
+        let mut decoder = Utf8StreamDecoder::default();
         let mut buf = [0u8; 4096];
+        let emit_data = |data: String| {
+            if data.is_empty() { return; }
+            let mut event = BuildEvent::new("build.output", &id);
+            event.step_index = Some(index);
+            event.stream = Some(stream);
+            event.data = Some(data);
+            emit(&app, event);
+        };
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
-                Ok(n) => {
-                    let mut event = BuildEvent::new("build.output", &id);
-                    event.step_index = Some(index);
-                    event.stream = Some(stream);
-                    event.data = Some(String::from_utf8_lossy(&buf[..n]).into_owned());
-                    emit(&app, event);
-                }
+                Ok(n) => emit_data(decoder.push(&buf[..n])),
                 Err(_) => break,
             }
         }
+        emit_data(decoder.finish());
     })
 }
 
@@ -483,6 +490,10 @@ mod tests {
         fs::write(root.join("CMakeLists.txt"), "find_package(Qt6 REQUIRED COMPONENTS Core)").unwrap();
         let presets = discover(&root);
         assert_eq!(presets.len(), 3);
+        assert_eq!(presets[0].id, "npm-tauri-package");
+        assert_eq!(presets[0].steps[0].args, vec!["run", "tauri:build"]);
+        assert_eq!(presets[1].id, "npm-build");
+        assert_eq!(presets[1].steps[0].args, vec!["run", "build"]);
         assert_eq!(presets[2].steps.len(), 2);
         assert_eq!(presets[2].tool, "Qt / CMake");
         fs::remove_dir_all(root).unwrap();

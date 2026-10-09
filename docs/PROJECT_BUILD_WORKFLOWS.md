@@ -20,8 +20,8 @@ Recipe detection is bounded, local and read-only. It does not execute project fi
 
 | Source in active worktree | Recipe | Steps | Platform |
 | --- | --- | --- | --- |
-| package.json with scripts.build | npm · Build | npm run build | Windows/macOS/Linux |
-| package.json with scripts.tauri:build | Tauri · Package | npm run tauri:build | Windows/macOS/Linux |
+| package.json with scripts.tauri:build | Tauri · Desktop build (displayed first) | npm run tauri:build — includes frontend + Rust + OS package | Windows/macOS/Linux |
+| package.json with scripts.build | npm · Frontend only | npm run build — dist/ web assets, no desktop installer | Windows/macOS/Linux |
 | CMakeLists.txt | CMake · Build (Qt label when detected) | cmake -S . -B build/virtuallab; cmake --build build/virtuallab --config Release | Windows/macOS/Linux |
 | *.uvprojx under the worktree (up to 3 folders deep) | Keil · project | UV4.exe -b <relative-project-path> | Windows |
 
@@ -33,7 +33,7 @@ The project manifests and npm scripts are user-controlled: npm itself may invoke
 
 ### Example: JavaScript / Tauri
 
-Use the auto-detected npm Build or Tauri Package button. It runs the package's scripts as authored; it does not automatically run npm ci, install/update dependencies or upload artifacts. If dependencies are missing, add a deliberate npm ci step to a saved profile.
+For a desktop executable or installer, choose **Tauri · Desktop build → Build desktop app** (`npm run tauri:build`). This invokes its configured frontend build and compiles the native Rust application. Choose **npm · Frontend only → Build frontend** (`npm run build`) only when you want Vite/React `dist/` assets; a PASS exit code for that command does not mean a desktop installer was produced. Typical Tauri bundle output is under `src-tauri/target/release/bundle/`, but the actual path depends on the project/target configuration. Neither recipe automatically runs npm ci or installs, updates or uploads any artifacts. If dependencies are missing, add a deliberate npm ci step to a saved profile.
 
 ### Example: Keil MDK firmware
 
@@ -93,8 +93,9 @@ The on-screen output ring is bounded and session-local. It is not an immutable l
 | Check | Expected result |
 | --- | --- |
 | Existing one-step Build/Test | Executes through legacy typed process path; Run/Stop preserved |
-| npm package.json build | Build now → npm run build, stdout/stderr and exit status shown |
-| Tauri packaging script | Package now → npm run tauri:build, no install/publish |
+| npm package.json build | Build frontend → npm run build, stdout/stderr and exit status shown; no installer implied |
+| Tauri packaging script | Build desktop app → npm run tauri:build, preset appears before npm frontend, no install/publish |
+| ANSI / Unicode output | Compiler color codes and OSC controls are removed in the Run log; valid UTF-8 split across native pipe reads survives intact; final output is drained before status |
 | Qt CMake | Configure must succeed before Compile; failure skips Compile |
 | Keil *.uvprojx | Windows-only suggestion; missing UV4 path fails visibly; no flash |
 | Custom two-step editor | Saves across app restart and runs in selected worktree |
