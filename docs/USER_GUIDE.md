@@ -2,7 +2,7 @@
 
 > **面向**：开发工程师、项目维护者、第三方集成商、团队评审人员。  
 > **适用版本**：主线 0.5.x（以实际软件和源码为准）。  
-> **程序内阅读**：桌面版顶部 **Guide** → 选择章节，无需打开浏览器，也可离线浏览图文手册。
+> **程序内阅读**：GUI 顶部菜单栏 **Help → 使用文档** → 选择章节；打开独立阅读界面，不占用工作区标签，也可在未导入仓库时离线阅读。
 
 VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元，集成代码差异、终端、可重复构建、GitHub PR/Issue 上下文和可选 Coding Agent。**应用不绑定其他工程仓库，不包含任何硬件操作提供方或物理安全授权。**
 
@@ -14,12 +14,12 @@ VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元�
 
 | 区域 | 可以做什么 | 注意 |
 | --- | --- | --- |
-| 顶部栏 | Native / Web preview 状态，**Guide** 使用指南 | Guide 不要求先导入仓库 |
+| 应用顶部菜单栏 | **Help → 使用文档**、Native / Web preview 状态、搜索 | 文档为应用级界面，不要求先导入仓库；关闭后返回原工作区 |
 | Local repositories | **Add repository** 导入现有本地 Git 项目 | 需要桌面运行时 |
 | Workspace lanes | 创建、导航 Git worktree | 工作目录互相独立 |
 | Git branches | 切换与删除 local/origin 分支 | 不可绕过分支保护 |
 | 工作区头部 | HEAD、remote、dirty；Fetch + prune / Pull / Refresh | Pull 仅快进 |
-| 功能标签 | Overview、Changes、GitHub、Agents、Terminal、Run、Checks、History、Guide | 按当前 worktree 执行 |
+| 功能标签 | Overview、Changes、GitHub、Agents、Terminal、Run、Checks、History | 按当前 worktree 执行；文档不在标签栏中 |
 | 底部状态栏 | 本地执行边界、程序版本 | 不代替正式验收记录 |
 
 ### Repository、Workspace 与 Worktree
