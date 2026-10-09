@@ -12,7 +12,7 @@ export function profileFromSuggestion(suggestion: BuildSuggestion, repositoryRoo
   const first = suggestion.steps[0];
   if (!first) throw new Error("Cannot create a workflow without a step.");
   return {
-    id: "preset-" + suggestion.id,
+    id: "preset-" + encodeURIComponent(repositoryRoot) + "-" + encodeURIComponent(suggestion.id),
     name: suggestion.name,
     kind: suggestion.kind,
     repositoryRoot,
