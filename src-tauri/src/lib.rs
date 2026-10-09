@@ -9,6 +9,7 @@ mod git;
 mod github;
 mod watch;
 mod process;
+mod output_decode;
 
 use agent::{
     agent_harness_capabilities, agent_session_start, agent_session_stop, agent_turn_interrupt,
