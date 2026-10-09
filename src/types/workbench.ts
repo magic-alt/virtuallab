@@ -142,7 +142,8 @@ export type WorkspaceTab =
   | "terminal"
   | "run"
   | "checks"
-  | "history";
+  | "history"
+  | "guide";
 
 export interface WorkspacePersistedState {
   repositoryId: string;

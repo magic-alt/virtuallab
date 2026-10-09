@@ -1,5 +1,6 @@
 import {
   Activity,
+  BookOpen,
   Bot,
   CheckCircle2,
   CircleDot,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { AgentWorkspace } from "@/features/agents/AgentWorkspace";
+import { HelpCenter } from "@/features/help/HelpCenter";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
@@ -60,6 +62,7 @@ const tabs: Array<{
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
   { id: "history", label: "History", icon: <History size={14} /> },
+  { id: "guide", label: "Guide", icon: <BookOpen size={14} /> },
 ];
 
 export function WorkspaceContent({
@@ -103,7 +106,12 @@ export function WorkspaceContent({
         })}
       </nav>
 
-      <main className="vl-main surface-grid scrollbar-thin min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto p-3 sm:p-5">
+      <main className={cn(
+          "vl-main scrollbar-thin min-h-0 min-w-0 flex-1",
+          tab === "guide"
+            ? "overflow-hidden p-0"
+            : "surface-grid overflow-x-auto overflow-y-auto p-3 sm:p-5",
+        )}>
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && (
           <ChangesReview
@@ -140,6 +148,7 @@ export function WorkspaceContent({
         )}
         {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
         {tab === "history" && <HistoryView snapshot={snapshot} />}
+        {tab === "guide" && <HelpCenter />}
       </main>
     </div>
   );
@@ -237,7 +246,7 @@ function Overview({
 
       <Panel
         title="Control plane"
-        subtitle="V0.2 separates interactive PTY, structured processes and reversible worktree mutation behind typed native commands."
+        subtitle="Git, PTY terminals, build workflows and optional agent harnesses are organized by workspace."
         icon={<MonitorDot size={16} />}
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -256,8 +265,8 @@ function Overview({
           <CapabilityCard
             icon={<CircleDot size={16} />}
             title="Agent harness"
-            description="Native Codex App Server foundation is present; its full agent workspace UI is not yet enabled."
-            state="next"
+            description="Codex, DeepSeek, Claude Code and OpenCode adapters are available from Agents when configured on this host."
+            state="available"
           />
         </div>
       </Panel>
@@ -278,7 +287,7 @@ function Checks({
     <div className="mx-auto max-w-[980px]">
       <Panel
         title="Local readiness checks"
-        subtitle="Normalized V0.2 check results; durable evidence and release gates arrive in V0.4."
+        subtitle="Local repository readiness; the restricted native verification evidence pipeline is separate from these checks."
         icon={<ListChecks size={16} />}
       >
         <div className="space-y-2">
