@@ -24,3 +24,4 @@ Thumbs.db
 
 # Local workbench state
 .virtuallab/
+.local-backups/

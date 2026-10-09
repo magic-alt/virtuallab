@@ -3884,10 +3884,10 @@ name = "virtuallab"
 version = "0.5.0"
 dependencies = [
  "notify",
- "sha2",
  "portable-pty",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

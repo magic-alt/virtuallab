@@ -47,6 +47,11 @@ jobs:
           node-version: "26"
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify Cargo does not rewrite the committed lockfile
+        shell: bash
+        run: |
+          cargo metadata --format-version 1 --manifest-path src-tauri/Cargo.toml > /dev/null
+          git diff --exit-code -- src-tauri/Cargo.lock
       - run: npm ci
       - run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - run: npm run acceptance:local
@@ -61,6 +66,11 @@ jobs:
           node-version: "26"
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify Cargo does not rewrite the committed lockfile
+        shell: bash
+        run: |
+          cargo metadata --format-version 1 --manifest-path src-tauri/Cargo.toml > /dev/null
+          git diff --exit-code -- src-tauri/Cargo.lock
       - run: npm ci
       - run: npm run icons:check
       - run: npm run acceptance:local
@@ -77,6 +87,11 @@ jobs:
           node-version: "26"
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify Cargo does not rewrite the committed lockfile
+        shell: bash
+        run: |
+          cargo metadata --format-version 1 --manifest-path src-tauri/Cargo.toml > /dev/null
+          git diff --exit-code -- src-tauri/Cargo.lock
       - run: npm ci
       - run: npm run icons:check
       - name: Run desktop acceptance
