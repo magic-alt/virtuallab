@@ -39,11 +39,22 @@ function isScopedProfile(value: unknown): value is ProcessProfile {
   return (
     typeof profile.id === "string" &&
     typeof profile.name === "string" &&
-    (profile.kind === "build" || profile.kind === "test") &&
+    ["build", "test", "package", "deploy"].includes(profile.kind ?? "") &&
     typeof profile.repositoryRoot === "string" &&
     profile.repositoryRoot.trim().length > 0 &&
     typeof profile.program === "string" &&
-    Array.isArray(profile.args)
+    Array.isArray(profile.args) &&
+    profile.args.every((arg) => typeof arg === "string") &&
+    (profile.steps === undefined ||
+      (Array.isArray(profile.steps) &&
+        profile.steps.length > 0 &&
+        profile.steps.length <= 12 &&
+        profile.steps.every((step) =>
+          typeof step.name === "string" &&
+          typeof step.program === "string" &&
+          Array.isArray(step.args) &&
+          step.args.every((arg) => typeof arg === "string"),
+        )))
   );
 }
 
@@ -311,7 +322,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     {
       name: "virtuallab-workbench-v2",
       storage: createJSONStorage(() => window.localStorage),
-      version: 5,
+      version: 6,
       migrate: (persistedState) => {
         const saved = persistedState as Partial<WorkbenchState>;
         return {
