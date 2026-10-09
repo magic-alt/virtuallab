@@ -1,7 +1,7 @@
 {
   "name": "virtuallab",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,15 +9,17 @@
     "typecheck": "tsc -b",
     "tauri": "tauri",
     "tauri:dev": "node scripts/tauri-run.mjs dev",
-    "tauri:build": "node scripts/tauri-run.mjs build",
+    "tauri:build": "node scripts/version.mjs check && node scripts/tauri-run.mjs build",
     "doctor": "node scripts/doctor.mjs",
     "test": "vitest run",
     "test:controls": "vitest run",
     "test:watch": "vitest",
     "acceptance:local": "node scripts/acceptance.mjs",
-    "tauri:build:debug": "node scripts/tauri-run.mjs build --debug",
+    "tauri:build:debug": "node scripts/version.mjs check && node scripts/tauri-run.mjs build --debug",
     "icons:generate": "node scripts/generate-icons.mjs",
-    "icons:check": "node scripts/generate-icons.mjs --check"
+    "icons:check": "node scripts/generate-icons.mjs --check",
+    "version:check": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

@@ -65,6 +65,10 @@ The preview uses representative data. Native folder selection, Git operations, t
 
 For code review, select a changed tracked file and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
 
+## Application version
+
+The current application version is **0.5.0**. This is distinct from roadmap feature milestones and does not imply a published GitHub Release. `package.json` is the authoritative version; Tauri, Cargo, and both lockfiles must match. Run `npm run version:check` to verify consistency, or `npm run version:set -- 0.5.1` for a controlled bump. See the [versioning and release policy](docs/VERSIONING.md) for tags, CI enforcement, and packaged About metadata.
+
 ## Build and install
 
 Run the automated acceptance checks, then build a standalone release application:
@@ -133,3 +137,4 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 | [Verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md) | Process gates, evidence storage, and hardware restrictions |
 | [Control acceptance](docs/CONTROL_ACCEPTANCE.md) | Automated coverage and manual desktop checks |
 | [Roadmap](docs/ROADMAP.md) | Planned capabilities and project direction |
+| [Versioning](docs/VERSIONING.md) | Version bump procedure, release tags, and About metadata |
