@@ -9,7 +9,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; identify untracked files and directories; save local line comments and track review state.
 - **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
-- **GitHub context** — load repository-related pull requests, issues, and checks through the optional GitHub CLI; associate a workspace with an issue or pull request and explicitly confirm comment posting.
+- **GitHub PR and CI dashboard** — browse open pull requests from any workspace, inspect all GitHub CI checks and failed jobs, review merge readiness, and explicitly confirm a SHA-pinned remote merge (Squash/Merge/Rebase). Existing issue context and review drafts remain supported.
 - **Agent workspace** — connect optional Codex, DeepSeek-through-Codex, Claude Code, or OpenCode adapters, with workspace-specific session bindings, custom roles, opt-in skills, and a live event timeline.
 - **Verification infrastructure** — run supported process gates and record workspace-local evidence with Git revision metadata and SHA-256 artifact hashes.
 - **Offline illustrated Guide** — open **Help → 使用文档** from the application menu bar (not a workspace tab), search Chinese how-to articles, see bundled diagrams, follow end-to-end npm/Qt/Keil/GitHub examples, and copy commands without a web connection or repository.
@@ -64,7 +64,7 @@ The preview uses representative data. Native folder selection, Git operations, t
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
 3. Use **Changes**, **History**, and **Overview** to inspect the selected workspace. Worktree lists unstaged and untracked entries; Staged shows index changes; Base compares committed changes against a selected ref. Untracked entries have status information but no tracked diff preview.
 4. Use **Terminal** for interactive work. In **Run**, choose an automatically detected one-click build/package recipe or save an editable multi-step Build/Test/Package/Deploy profile. Steps run sequentially in the selected worktree; Deploy requires explicit confirmation every time. See [Project Build Workflows](docs/PROJECT_BUILD_WORKFLOWS.md).
-5. Use **GitHub** or **Agents** when the corresponding optional integration is configured.
+5. Use **GitHub** to select an open PR, inspect failing/pending CI jobs, and confirm a merge once GitHub reports `CLEAN`; see [PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md). Use **Agents** when an optional agent provider is configured.
 
 For code review, select a changed tracked file and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
 
@@ -138,6 +138,7 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 | [Project build workflows](docs/PROJECT_BUILD_WORKFLOWS.md) | npm, Keil and Qt/CMake presets, multi-step builds, deployment scope and acceptance |
 | [Architecture](docs/ARCHITECTURE.md) | Workspace model, native boundaries, events, and execution contracts |
 | [Review and GitHub](docs/V0.3_REVIEW_GITHUB.md) | Diff modes, local drafts, and GitHub integration |
+| [GitHub PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md) | Open PR list, check/job status interpretation, merge qualification and safety |
 | [Agent harnesses](docs/V0.5_AGENT_HARNESSES.md) | Provider setup, session behavior, and integration limits |
 | [Verification and hardware policy](docs/V0.4_VERIFICATION_HARDWARE_POLICY.md) | Process gates, evidence storage, and hardware restrictions |
 | [Control acceptance](docs/CONTROL_ACCEPTANCE.md) | Automated coverage and manual desktop checks |
