@@ -13,6 +13,14 @@ npm run tauri:build
 
 `acceptance:local` is a Node script and runs TypeScript type checking, all frontend control tests, the production frontend build and Rust native tests on Windows, macOS and Linux before the release build.
 
+## Dependency security checks
+
+Run `npm audit` after `npm ci` to check both runtime and development dependencies. Commit `package.json` and `package-lock.json` together when updating dependencies, then rerun `npm run acceptance:local` and `npm run tauri:build`.
+
+Vitest requires version 4.1.11 or later in the 4.x line to avoid the vulnerable mocker and former Tinypool dependency. The lockfile also includes the source-map-js 1.2.2 security patch.
+
+Monaco 0.56.0 both pins and embeds an older DOMPurify. `dompurify` is a direct runtime dependency at 3.4.16 or later, and a scoped npm override keeps Monaco's dependency on the same version. The aliases in `vite.config.ts` and `vitest.config.ts` also replace Monaco's embedded sanitizer import with that patched ESM dependency; an npm override alone does not fix the code shipped to users. Vite excludes Monaco from development dependency prebundling because esbuild would bypass its relative-import alias; Monaco's ESM files instead pass through Vite's resolver, at the cost of more requests during development. `scripts/monaco-security.test.mjs` checks the real production module graph and HTML handling, and `scripts/monaco-development-security.test.mjs` checks the development optimizer against the app's actual Monaco entry. Remove the override, aliases and prebundling exclusion only once Monaco itself includes the security fixes and a fresh audit and acceptance run pass.
+
 ## Development modes
 
 ### Frontend preview only
