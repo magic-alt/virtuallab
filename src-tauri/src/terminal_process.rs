@@ -230,6 +230,7 @@ mod tests {
     struct Fixture {
         child: Box<dyn portable_pty::Child + Send + Sync>,
         _master: Box<dyn portable_pty::MasterPty + Send>,
+        _reader: std::thread::JoinHandle<()>,
         owner: TerminalProcess,
         jobs: Vec<i32>,
         directory: std::path::PathBuf,
@@ -239,6 +240,34 @@ mod tests {
             let pair = native_pty_system().openpty(PtySize::default()).unwrap();
             let mut command = CommandBuilder::new("/bin/bash");
             command.args(["--noprofile", "--norc", "-i"]);
+            command.env("PS1", "VIRTUALLAB_PTY_READY> ");
+            command.env("PROMPT_COMMAND", "");
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                use std::io::Read;
+                let mut tail = Vec::new();
+                let mut buffer = [0u8; 2048];
+                let mut ready = false;
+                while let Ok(read) = reader.read(&mut buffer) {
+                    if read == 0 {
+                        break;
+                    }
+                    if !ready {
+                        tail.extend_from_slice(&buffer[..read]);
+                        if tail
+                            .windows(b"VIRTUALLAB_PTY_READY> ".len())
+                            .any(|s| s == b"VIRTUALLAB_PTY_READY> ")
+                        {
+                            let _ = ready_tx.send(());
+                            ready = true;
+                        }
+                        if tail.len() > 512 {
+                            tail.drain(..tail.len() - 512);
+                        }
+                    }
+                }
+            });
             let child = pair.slave.spawn_command(command).unwrap();
             drop(pair.slave);
             let owner = TerminalProcess::capture(child.process_id().unwrap()).unwrap();
@@ -259,15 +288,22 @@ mod tests {
             let finish = if exit_shell { "exit" } else { &job };
             let script = format!("trap '' HUP TERM; {job} & {finish}\n");
             let mut writer = pair.master.take_writer().unwrap();
-            writer.write_all(script.as_bytes()).unwrap();
-            writer.flush().unwrap();
             let mut fixture = Self {
                 child,
                 _master: pair.master,
+                _reader: reader,
                 owner,
                 jobs: vec![],
                 directory,
             };
+            // Wait for readline to enter interactive mode. macOS has a small
+            // canonical input queue; writing a long line before the prompt can
+            // truncate it. Continuously drain output just like a real terminal.
+            ready_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("shell prompt not ready");
+            writer.write_all(script.as_bytes()).unwrap();
+            writer.flush().unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 fixture.jobs = std::fs::read_to_string(&file)
@@ -300,7 +336,9 @@ mod tests {
             // Test failure cleanup must itself be bounded so CI can print the
             // original failure instead of waiting forever in a destructor.
             if unsafe { libc::getsid(self.owner.session) } == self.owner.session {
-                unsafe { libc::kill(self.owner.session, libc::SIGKILL); }
+                unsafe {
+                    libc::kill(self.owner.session, libc::SIGKILL);
+                }
             }
             let deadline = Instant::now() + Duration::from_secs(1);
             while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
