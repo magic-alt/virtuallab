@@ -1,3 +1,4 @@
+import { confirmNativeAction } from "@/lib/backend";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleStop, Play, ShieldAlert } from "lucide-react";
 import { getHarnessAdapter } from "@/lib/agentHarness";
@@ -112,7 +113,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setAttached(false); setActiveTurn(workspaceRoot, null);
   });
   const forget = () => run(async () => {
-    if (!window.confirm("Forget the saved thread association for this workspace? This cannot be undone.")) return;
+    if (!await confirmNativeAction("Forget the saved thread association for this workspace? This cannot be undone.")) return;
     await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
     setAttached(false); setActiveTurn(workspaceRoot, null);
@@ -138,7 +139,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     config.toggleSkill(workspaceRoot, id);
     setSkillName(""); setSkillPrompt("");
   };
-  const requestApproval = () => {
+  const requestApproval = async () => {
     try {
       const stamp = Date.now();
       const id = "approval-" + stamp;
@@ -147,7 +148,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         reason: "Explicit user-initiated control-plane request",
         createdAtMs: stamp, expiresAtMs: stamp + 60_000,
       });
-      if (!window.confirm("Record a human acknowledgement for this protected action? This does NOT authorize device access.")) {
+      if (!await confirmNativeAction("Record a human acknowledgement for this protected action? This does NOT authorize device access.")) {
         broker.current.decide(id, "denied", true);
         setApprovalMessage("Human decision recorded: denied. No operation executed.");
         return;

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { confirmNativeAction } from "@/lib/backend";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   CloudOff,
@@ -59,6 +60,9 @@ export function GithubPanel({
   const [error, setError] = useState<string | null>(null);
 
   const drafts = reviewState?.drafts ?? [];
+  const liveContext = useRef("");
+  const actionPending = useRef(false);
+  useEffect(() => () => { liveContext.current = "disposed"; }, []);
 
   useEffect(() => {
     setReference(reviewState?.githubReference ?? "");
@@ -150,6 +154,7 @@ export function GithubPanel({
   );
   const headRelation = pr ? correlatePrHead(snapshot.headSha, pr) : "unknown";
   const headMatches = headRelation === "head";
+  liveContext.current = JSON.stringify([workspaceRoot, snapshot.headSha, pr?.number, pr?.headSha, capabilities?.repository]);
 
   const postableDrafts = useMemo(
     () =>
@@ -164,10 +169,16 @@ export function GithubPanel({
 
   const postDraft = async (draft: ReviewDraft) => {
     if (!pr || !capabilities?.repository || !headMatches) return;
-    const confirmed = window.confirm(
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const expectedContext = liveContext.current;
+    const confirmed = await confirmNativeAction(
       `Post this review comment to GitHub PR #${pr.number}?\n\n${draft.path}:${draft.line} ${draft.side}\n\n${draft.body}`,
     );
-    if (!confirmed) return;
+    actionPending.current = false;
+    const currentDraft = useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(workspaceRoot)]?.drafts.find((item) => item.id === draft.id);
+    if (!confirmed || liveContext.current !== expectedContext || currentDraft?.status !== "active"
+      || currentDraft.headSha !== snapshot.headSha || currentDraft.body !== draft.body) return;
 
     setPostingId(draft.id);
     setError(null);
@@ -205,13 +216,17 @@ export function GithubPanel({
 
   const mergePr = async () => {
     if (!pr || !capabilities?.repository || merging || loading || mergeBlockers.length) return;
-    const approved = window.confirm(
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const expectedContext = liveContext.current;
+    const approved = await confirmNativeAction(
       `Merge GitHub PR #${pr.number} into ${pr.baseRef} using ${mergeMethod}?\n\n` +
       `${pr.title}\nHead: ${pr.headSha}\n` +
       `Checks: ${pr.checks.success} passed, ${pr.checks.failure} failed, ${pr.checks.pending} pending.\n\n` +
       "This updates the remote base branch. Review the PR and confirm before proceeding.",
     );
-    if (!approved) return;
+    actionPending.current = false;
+    if (!approved || liveContext.current !== expectedContext) return;
 
     setMerging(true);
     setError(null);

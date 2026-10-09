@@ -3,20 +3,21 @@
 //! publish, or deploy, and the executor never interprets a shell command string.
 use crate::execution::process_command;
 use crate::output_decode::Utf8StreamDecoder;
-use crate::process::background_command;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::Stdio;
+use crate::managed_process::ManagedChild as Child;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use crate::run_registry::RunRegistry;
 
 const MAX_STEPS: usize = 12;
 const MAX_ARGS: usize = 64;
@@ -48,6 +49,7 @@ pub struct BuildSuggestion {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildWorkflowSpec {
+    presentation: Option<crate::run_registry::RunPresentation>,
     id: String,
     cwd: String,
     steps: Vec<BuildStep>,
@@ -91,6 +93,7 @@ fn now_ms() -> u128 {
 }
 
 fn emit(app: &AppHandle, event: BuildEvent) {
+    if let Ok(value) = serde_json::to_value(&event) { app.state::<RunRegistry>().record(value); }
     let _ = app.emit("build://event", event);
 }
 
@@ -469,6 +472,11 @@ pub fn build_workflow_start(
         active.insert(spec.id.clone(), run.clone());
     }
 
+    if let Err(error) = app.state::<RunRegistry>().begin(&spec.id, &root.to_string_lossy(), &spec.steps[0].name, true, spec.presentation.clone()) {
+        manager.active.lock().map_err(|_| "Build manager lock poisoned")?.remove(&spec.id);
+        return Err(error);
+    }
+    let registry_app = app.clone();
     let id = spec.id.clone();
     let thread_manager = manager.clone();
     let task = thread::Builder::new()
@@ -476,6 +484,7 @@ pub fn build_workflow_start(
         .spawn(move || execute_workflow(app, thread_manager, run, spec, root));
     if let Err(error) = task {
         if let Ok(mut active) = manager.active.lock() { active.remove(&id); }
+        registry_app.state::<RunRegistry>().fail(&id, &error.to_string());
         return Err(format!("Cannot start workflow thread: {error}"));
     }
     Ok(())
@@ -483,6 +492,7 @@ pub fn build_workflow_start(
 
 #[tauri::command]
 pub fn build_workflow_cancel(
+    app: AppHandle,
     state: State<'_, BuildWorkflowManager>,
     id: String,
 ) -> Result<(), String> {
@@ -490,6 +500,7 @@ pub fn build_workflow_cancel(
         .map_err(|_| "Build manager lock poisoned".to_string())?
         .get(&id).cloned();
     if let Some(active) = active {
+        app.state::<RunRegistry>().record(serde_json::json!({"id": id, "eventType": "build.stop_requested"}));
         active.cancel.store(true, Ordering::SeqCst);
         // The workflow worker terminates its own process group. This avoids
         // blocking the UI on slow compiler shutdown or on a held child lock.
@@ -529,7 +540,7 @@ fn execute_workflow(
             command.process_group(0);
         }
 
-        let mut child = match command.spawn() {
+        let mut child = match crate::managed_process::spawn(&mut command) {
             Ok(child) => child,
             Err(error) => {
                 let mut event = BuildEvent::new("build.output", &spec.id);
@@ -575,6 +586,27 @@ fn execute_workflow(
                 Err(error) => break Err(format!("Build wait failed: {error}")),
             }
         };
+        let mut cleanup_reported = false;
+        loop {
+            let cleanup = active.child.lock().map_err(|_| "Build child lock poisoned".to_string())
+                .and_then(|mut slot| slot.as_mut().ok_or_else(|| "Build child disappeared".to_string())?
+                    .terminate_remaining().map_err(|e| e.to_string()));
+            match cleanup {
+                Ok(()) => break,
+                Err(error) => {
+                    // A cleanup failure must never advance the workflow to another step.
+                    active.cancel.store(true, Ordering::SeqCst);
+                    if !cleanup_reported {
+                        app.state::<RunRegistry>().record(serde_json::json!({"id": spec.id, "eventType": "build.stop_requested"}));
+                        let mut event = BuildEvent::new("build.output", &spec.id);
+                        event.stream = Some("system"); event.data = Some(format!("Cleanup not confirmed: {error}\n"));
+                        emit(&app, event);
+                        cleanup_reported = true;
+                    }
+                    thread::sleep(Duration::from_millis(120));
+                }
+            }
+        }
         // Wait for all output readers before reporting a finished step, so
         // the UI does not lose the last compiler diagnostic on fast exits.
         for reader in readers { let _ = reader.join(); }
@@ -647,20 +679,19 @@ fn stream_output<R: Read + Send + 'static>(
 }
 
 fn terminate_tree(child: &mut Child) {
-    let pid = child.id().to_string();
-    #[cfg(windows)]
-    {
-        let _ = background_command("taskkill").args(["/PID", &pid, "/T", "/F"])
-            .stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = crate::process::terminate_tree(child);
+}
+impl BuildWorkflowManager {
+    pub fn shutdown(&self) {
+        if let Ok(active) = self.active.lock() {
+            for run in active.values() {
+                run.cancel.store(true, Ordering::SeqCst);
+                if let Ok(mut child) = run.child.lock() {
+                    if let Some(child) = child.as_mut() { let _ = crate::process::terminate_tree(child); }
+                }
+            }
+        }
     }
-    #[cfg(unix)]
-    {
-        // Child is launched as its own process group; negative PID targets
-        // descendants too. Fallback kill handles missing system kill.
-        let _ = background_command("kill").args(["-TERM", "--", &format!("-{pid}")])
-            .stdout(Stdio::null()).stderr(Stdio::null()).status();
-    }
-    let _ = child.kill();
 }
 
 #[cfg(test)]
@@ -796,7 +827,7 @@ mod tests {
     #[test]
     fn workflow_rejects_shell_strings_and_missing_steps() {
         let root = fixture();
-        let mut spec = BuildWorkflowSpec { id: "run".into(), cwd: root.to_string_lossy().to_string(), steps: vec![] };
+        let mut spec = BuildWorkflowSpec { presentation: None, id: "run".into(), cwd: root.to_string_lossy().to_string(), steps: vec![] };
         assert!(validate_spec(&spec).is_err());
         spec.steps.push(step("Compile", "cmake\nrm -rf /", &["--build", "build"]));
         assert!(validate_spec(&spec).is_err());

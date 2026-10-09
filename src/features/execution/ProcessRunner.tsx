@@ -20,6 +20,7 @@ import {
   buildWorkflowDiscover,
   buildWorkflowStart,
   confirmDeploymentWorkflow,
+  listRuns,
   processSpawn,
   processStop,
 } from "@/lib/backend";
@@ -43,10 +44,11 @@ const OUTPUT_LIMIT = 180_000;
 interface RunRecord {
   id: string;
   profileId: string;
+  startedAt?: number;
   profileName: string;
   profileKind: ProcessProfileKind;
   isWorkflow: boolean;
-  status: "running" | "passed" | "failed" | "stopped";
+  status: "running" | "stopping" | "passed" | "failed" | "stopped";
   stepName?: string;
   output: string;
   exitCode?: number | null;
@@ -180,7 +182,7 @@ export function ProcessRunner({
           if (run.id !== payload.id || run.isWorkflow) return run;
           const output = finishOutput(run.id, run.output);
           if (payload.eventType === "process.exited") {
-            if (run.status === "stopped") return { ...run, output, exitCode: payload.exitCode };
+            if ((run.status === "stopped" || run.status === "stopping")) return { ...run, status: "stopped", output, exitCode: payload.exitCode, checkResult: processCheckResult({ id: run.id, label: run.profileName, kind: run.profileKind, stopped: true, exitCode: payload.exitCode }) };
             const checkResult = processCheckResult({
               id: run.id, label: run.profileName, kind: run.profileKind,
               exitCode: payload.exitCode ?? -1, observedAtMs: payload.timestampMs,
@@ -193,10 +195,10 @@ export function ProcessRunner({
           }
           if (payload.eventType === "process.stop_requested") {
             return {
-              ...run, output, status: "stopped",
+              ...run, output, status: "stopping",
               checkResult: processCheckResult({
                 id: run.id, label: run.profileName, kind: run.profileKind,
-                exitCode: run.exitCode, stopped: true, observedAtMs: payload.timestampMs,
+                exitCode: null, observedAtMs: payload.timestampMs,
               }),
             };
           }
@@ -256,6 +258,42 @@ export function ProcessRunner({
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const attach = async () => {
+      const requestedAt = Date.now();
+      try {
+        const snapshots = await listRuns(cwd);
+        if (disposed) return;
+        setRuns((items) => [...snapshots.map((snapshot) => {
+          const existing = items.find((item) => item.id === snapshot.id);
+          const sanitizer = new BuildLogSanitizer();
+          const output = sanitizer.write(snapshot.output) + sanitizer.finish();
+          const label = existing?.profileName ?? snapshot.presentation?.profileName ?? snapshot.label;
+          const kind = existing?.profileKind ?? snapshot.presentation?.profileKind ?? "build";
+          return {
+            id: snapshot.id, profileId: existing?.profileId ?? snapshot.presentation?.profileId ?? snapshot.id,
+            profileName: label, profileKind: kind, isWorkflow: snapshot.isWorkflow,
+            status: snapshot.status, stepName: snapshot.stepName ?? undefined,
+            output, exitCode: snapshot.exitCode,
+            checkResult: processCheckResult({ id: snapshot.id, label, kind,
+              exitCode: snapshot.status === "running" || snapshot.status === "stopping" ? null : snapshot.exitCode,
+              stopped: snapshot.status === "stopped" }),
+          };
+        }), ...items.filter((item) => !snapshots.some((snapshot) => snapshot.id === item.id)
+          && (startingRef.current || item.status === "failed" || (item.startedAt ?? 0) >= requestedAt))]);
+      } catch (error) {
+        if (!disposed) setActionError(readableError(error));
+      } finally {
+        if (!disposed) timer = setTimeout(() => void attach(), 2000);
+      }
+    };
+    void attach();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [cwd, enabled]);
+
+  useEffect(() => {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
   }, [runs, activeRunId]);
 
@@ -263,7 +301,7 @@ export function ProcessRunner({
     () => runs.find((item) => item.id === activeRunId) ?? runs.at(-1) ?? null,
     [activeRunId, runs],
   );
-  const anyRunning = runs.some((run) => run.status === "running");
+  const anyRunning = runs.some((run) => (run.status === "running" || run.status === "stopping"));
 
   const runProfile = async (profile: ProcessProfile) => {
     if (!enabled || startingRef.current || anyRunning) return;
@@ -282,6 +320,7 @@ export function ProcessRunner({
         ...items.slice(-19),
         {
           id,
+          startedAt: Date.now(),
           profileId: profile.id,
           profileName: profile.name,
           profileKind: profile.kind,
@@ -298,9 +337,9 @@ export function ProcessRunner({
       setActiveRunId(id);
       try {
         if (isWorkflow) {
-          await buildWorkflowStart({ id, cwd, steps });
+          await buildWorkflowStart({ id, cwd, steps, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
         } else {
-          await processSpawn({ id, cwd, program: steps[0].program, args: steps[0].args });
+          await processSpawn({ id, cwd, program: steps[0].program, args: steps[0].args, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
         }
       } catch (error) {
         setRuns((items) =>
@@ -325,6 +364,7 @@ export function ProcessRunner({
   };
 
   const stopRun = async (run: RunRecord) => {
+    setRuns((items) => items.map((item) => item.id === run.id ? { ...item, status: "stopping" } : item));
     try {
       if (run.isWorkflow) await buildWorkflowCancel(run.id);
       else await processStop(run.id);
@@ -422,7 +462,7 @@ export function ProcessRunner({
             )}
             {scopedProfiles.map((profile) => {
               const runningRecord = [...runs].reverse().find(
-                (run) => run.profileId === profile.id && run.status === "running",
+                (run) => run.profileId === profile.id && (run.status === "running" || run.status === "stopping"),
               );
               const steps = stepsForProfile(profile);
               return (
@@ -485,10 +525,16 @@ export function ProcessRunner({
               </select>
             )}
             {activeRun && <RunStatus run={activeRun} />}
+            {activeRun && (activeRun.status === "running" || activeRun.status === "stopping")
+              && !scopedProfiles.some((profile) => profile.id === activeRun.profileId) && (
+                <Button size="sm" variant="outline" onClick={() => void stopRun(activeRun)}>
+                  <Square size={11} /> Stop active run
+                </Button>
+              )}
           </div>
         </div>
         {actionError && <div role="alert" className="border-b border-rose-400/15 px-4 py-2 text-xs text-rose-300">{actionError}</div>}
-        {activeRun?.stepName && activeRun.status === "running" && (
+        {activeRun?.stepName && (activeRun.status === "running" || activeRun.status === "stopping") && (
           <div className="border-b border-white/[0.05] px-4 py-1.5 text-[11px] text-orange-300">
             Current step: {activeRun.stepName}
           </div>
@@ -524,7 +570,7 @@ function RunStatus({ run }: { run: RunRecord }) {
   const tone =
     run.status === "passed" ? "green"
       : run.status === "failed" ? "red"
-        : run.status === "running" ? "orange" : "neutral";
+        : (run.status === "running" || run.status === "stopping") ? "orange" : "neutral";
 
   return (
     <Badge tone={tone}>

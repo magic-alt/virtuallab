@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   Plus,
   Square,
+  X,
   TerminalSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -51,6 +52,7 @@ export function TerminalWorkspace({
     let disposed = false;
 
     void Promise.resolve(listen<TerminalOutput>("terminal://output", ({ payload }) => {
+      if (!sessionsRef.current.some((session) => session.id === payload.id)) return;
       const handle = handles.current.get(payload.id);
       if (handle) {
         handle.terminal.write(new Uint8Array(payload.data));
@@ -117,14 +119,16 @@ export function TerminalWorkspace({
   }, [cwd]);
 
   const start = async () => {
-    if (!enabled) return;
+    if (!enabled || sessionsRef.current.length >= 8) return;
 
     const id =
       globalThis.crypto?.randomUUID?.() ??
       `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const title = `Terminal ${sessions.length + 1}`;
 
-    setSessions((items) => [...items, { id, title, status: "starting" }]);
+    const next: Session[] = [...sessionsRef.current, { id, title, status: "starting" }];
+    sessionsRef.current = next;
+    setSessions(next);
     setActiveId(id);
     pending.current.set(id, []);
     setError(null);
@@ -144,13 +148,19 @@ export function TerminalWorkspace({
   const stop = async (id: string) => {
     try {
       await terminalStop(id);
-    } finally {
-      setSessions((items) =>
-        items.map((item) =>
-          item.id === id ? { ...item, status: "stopped" } : item,
-        ),
-      );
-    }
+      setSessions((items) => items.map((item) => item.id === id ? { ...item, status: "stopped" } : item));
+    } catch (cause) { setError(String(cause)); }
+  };
+
+  const close = async (id: string) => {
+    try {
+      await terminalStop(id);
+      const next = sessionsRef.current.filter((session) => session.id !== id);
+      sessionsRef.current = next;
+      pending.current.delete(id);
+      setSessions(next);
+      setActiveId((current) => current === id ? next.at(-1)?.id ?? null : current);
+    } catch (cause) { setError(String(cause)); }
   };
 
   const handleAttach = useCallback((id: string, handle: TerminalHandle) => {
@@ -199,11 +209,12 @@ export function TerminalWorkspace({
           ))}
         </div>
 
-        <Button disabled={!enabled} onClick={start} size="sm" variant="ghost">
+        <Button disabled={!enabled || sessions.length >= 8} onClick={start} size="sm" variant="ghost">
           <Plus size={14} />
           New terminal
         </Button>
 
+        {activeId && <Button aria-label="Close terminal" onClick={() => void close(activeId)} size="sm" variant="ghost"><X size={12} /> Close</Button>}
         {activeId && (
           <Button
             onClick={() => void stop(activeId)}

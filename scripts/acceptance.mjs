@@ -87,6 +87,15 @@ console.log("[ ] Base mode loads baseRef...HEAD files even when the working tree
 console.log("[ ] Rename / Unicode / space-containing paths remain selectable and preserve old → new identity.");
 console.log("[ ] Binary files show the explicit binary state.");
 console.log("[ ] Large diffs show the truncated state without freezing the desktop window.");
+console.log("\nRelease gate regression checklist (see docs/RELEASE_GATE_V0.5.0.md):");
+console.log("[ ] Native confirmation: PR merge/comment, worktree removal, agent forget; cancellation never mutates.");
+console.log("[ ] Run reattachment after tab/workspace switches restores output, profile and Stop; Stop stays stopping until exit.");
+console.log("[ ] Rapid start/stop and application exit leave no child/grandchild processes or late terminal sessions.");
+console.log("[ ] Unix terminal: HUP/TERM-ignoring foreground/background jobs stop across job groups; shell exit cleans inherited PTY holders; other sessions survive.");
+console.log("[ ] Windows launcher paths with spaces/Unicode and .cmd/.bat arguments work without shell reinterpretation.");
+console.log("[ ] Watcher rapid workspace switching never reinstalls a stopped/obsolete watch.");
+console.log("[ ] Monaco local workers and native IPC work under production CSP in the packaged WebView.");
+console.log("[ ] Signed installer first launch, upgrade, uninstall and SHA-256 recorded per platform.");
 console.log("\nRecord failures with command/output and workspace path before merging the current PR.");
 
 if (launch) {

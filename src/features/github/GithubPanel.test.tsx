@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as backend from "@/lib/backend";
 import { githubAdapter } from "@/lib/github";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { GithubPanel } from "./GithubPanel";
@@ -151,7 +152,7 @@ describe("GithubPanel", () => {
       createdAt: 1,
       updatedAt: 1,
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmSpy = vi.spyOn(backend, "confirmNativeAction").mockResolvedValue(true);
 
     const user = userEvent.setup();
     render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
@@ -303,7 +304,7 @@ describe("GithubPanel", () => {
       capabilities: connected, reference: "pr:77", pullRequest: { ...readyPr, state: "MERGED" }, issue: null,
     });
     adapter.mergePullRequest.mockResolvedValue({ merged: true, sha: "c".repeat(40) });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const confirmSpy = vi.spyOn(backend, "confirmNativeAction").mockResolvedValue(true);
     const user = userEvent.setup();
     render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
     await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
@@ -327,13 +328,32 @@ describe("GithubPanel", () => {
     adapter.loadContext.mockResolvedValue({
       capabilities: connected, reference: "pr:77", pullRequest: readyPr, issue: null,
     });
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const confirmSpy = vi.spyOn(backend, "confirmNativeAction").mockResolvedValue(false);
     const user = userEvent.setup();
     render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
     await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
     await user.click(await screen.findByRole("button", { name: "Merge PR" }));
     expect(adapter.mergePullRequest).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
+  });
+
+  it("does not post a draft invalidated while native confirmation is open", async () => {
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [] });
+    adapter.loadContext.mockResolvedValue({ capabilities: connected, reference: "pr:77", issue: null,
+      pullRequest: { ...readyPr, headSha: snapshot.headSha + "567890", changedFiles: [{ path: "src/a.ts", additions: 1, deletions: 0 }] } });
+    useWorkbenchStore.getState().addReviewDraft({ id: "stale-dialog", workspaceRoot: "D:/repo",
+      headSha: snapshot.headSha, path: "src/a.ts", line: 1, side: "RIGHT", body: "Guard this", status: "active", createdAt: 1, updatedAt: 1 });
+    let decide!: (approved: boolean) => void;
+    vi.spyOn(backend, "confirmNativeAction").mockImplementation(() => new Promise<boolean>((resolve) => { decide = resolve; }));
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    await user.click(await screen.findByRole("button", { name: "Post" }));
+    act(() => useWorkbenchStore.getState().markReviewDraftsStale("D:/repo", "different-head"));
+    await act(async () => decide(true));
+    expect(adapter.postReviewComment).not.toHaveBeenCalled();
   });
 
 });

@@ -9,6 +9,7 @@ const backend = vi.hoisted(() => ({
   buildWorkflowStart: vi.fn().mockResolvedValue(undefined),
   buildWorkflowCancel: vi.fn().mockResolvedValue(undefined),
   confirmDeploymentWorkflow: vi.fn().mockResolvedValue(true),
+  listRuns: vi.fn().mockResolvedValue([]),
   processSpawn: vi.fn().mockResolvedValue(undefined),
   processStop: vi.fn().mockResolvedValue(undefined),
 }));
@@ -18,6 +19,7 @@ vi.mock("@/lib/backend", () => ({
   buildWorkflowStart: backend.buildWorkflowStart,
   buildWorkflowCancel: backend.buildWorkflowCancel,
   confirmDeploymentWorkflow: backend.confirmDeploymentWorkflow,
+  listRuns: backend.listRuns,
   processSpawn: backend.processSpawn,
   processStop: backend.processStop,
 }));
@@ -32,6 +34,7 @@ describe("ProcessRunner controls", () => {
     backend.buildWorkflowStart.mockReset().mockResolvedValue(undefined);
     backend.buildWorkflowCancel.mockReset().mockResolvedValue(undefined);
     backend.confirmDeploymentWorkflow.mockReset().mockResolvedValue(true);
+    backend.listRuns.mockReset().mockResolvedValue([]);
     backend.processSpawn.mockReset().mockResolvedValue(undefined);
     backend.processStop.mockReset().mockResolvedValue(undefined);
     useWorkbenchStore.setState({
@@ -63,6 +66,8 @@ describe("ProcessRunner controls", () => {
 
     await user.click(screen.getByRole("button", { name: /^stop$/i }));
     expect(backend.processStop).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("stopping")).toBeInTheDocument();
+    expect(screen.queryByText("stopped")).not.toBeInTheDocument();
   });
 
   it("creates, closes and removes profiles", async () => {
@@ -252,4 +257,17 @@ describe("ProcessRunner controls", () => {
     expect(await screen.findByRole("button", { name: "Build now" })).toBeDisabled();
   });
 
+});
+
+it("reattaches to a native run after the panel remounts", async () => {
+  backend.listRuns.mockResolvedValue([{ id: "native-one", cwd: "D:/workspace", label: "Restored build",
+    isWorkflow: false, status: "running", output: "compiler output", exitCode: null, stepName: null, revision: 1 }]);
+  const user = userEvent.setup();
+  const view = render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+  expect(await screen.findByText("compiler output", { exact: false })).toBeInTheDocument();
+  view.unmount();
+  render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+  expect(await screen.findByText("compiler output", { exact: false })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /stop/i }));
+  expect(backend.processStop).toHaveBeenCalledWith("native-one");
 });

@@ -70,7 +70,7 @@ export function ProjectSidebar({
         `${worktree.branch ?? ""} ${worktree.path}`.toLowerCase().includes(query),
       )
     : snapshot.worktrees
-  ).slice(0, 6);
+  );
 
   return (
     <aside className="vl-sidebar flex min-h-0 w-[clamp(220px,20vw,286px)] shrink-0 flex-col border-r">

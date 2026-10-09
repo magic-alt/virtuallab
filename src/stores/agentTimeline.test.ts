@@ -31,3 +31,12 @@ describe("agent timeline", () => {
     expect(useAgentTimeline.getState().activeTurns["d:/workspace/a"]).toBeUndefined();
   });
 });
+
+it("bounds oversized event payloads without losing completion identity", () => {
+  useAgentTimeline.setState({ entries: {}, activeTurns: {} });
+  useAgentTimeline.getState().append({ ...event(1), eventType: "agent.turn_started" });
+  useAgentTimeline.getState().append({ ...event(2), eventType: "agent.turn_completed", payload: { delta: "中".repeat(40000) } });
+  const state = useAgentTimeline.getState();
+  expect(new TextEncoder().encode(JSON.stringify(state.entries["d:/workspace/a"]?.at(-1)?.payload)).byteLength).toBeLessThanOrEqual(16_384);
+  expect(state.activeTurns["d:/workspace/a"]).toBeUndefined();
+});

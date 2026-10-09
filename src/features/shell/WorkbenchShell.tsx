@@ -1,3 +1,4 @@
+import { confirmNativeAction } from "@/lib/backend";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import appManifest from "../../../package.json";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -310,7 +311,7 @@ export function WorkbenchShell() {
 
   const deleteWorkspace = async (path: string) => {
     if (!activeRepository) return;
-    const confirmed = window.confirm(
+    const confirmed = await confirmNativeAction(
       `Remove this clean Git worktree?\n\n${path}\n\nDirty worktrees are refused by Git and are never force-removed.`,
     );
     if (!confirmed) return;

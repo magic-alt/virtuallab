@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: native.invoke,
 }));
 
-import { deleteLocalBranchAfterConfirmation, deleteOriginBranchAfterConfirmation } from "./backend";
+import { confirmNativeAction, deleteLocalBranchAfterConfirmation, deleteOriginBranchAfterConfirmation } from "./backend";
 
 describe("native local branch deletion confirmation", () => {
   beforeEach(() => {
@@ -156,5 +156,19 @@ describe("native origin branch deletion confirmation", () => {
       .rejects.toThrow("desktop runtime");
     expect(native.confirm).not.toHaveBeenCalled();
     expect(native.invoke).not.toHaveBeenCalled();
+  });
+});
+
+ describe("shared native action gate", () => {
+  it("fails closed outside desktop", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    await expect(confirmNativeAction("Remove workspace?")).resolves.toBe(false);
+  });
+  it("fails closed when dialog cannot open", async () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    native.confirm.mockRejectedValueOnce(new Error("dialog denied"));
+    await expect(confirmNativeAction("Merge PR?")).resolves.toBe(false);
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    expect(window.confirm).not.toHaveBeenCalled();
   });
 });

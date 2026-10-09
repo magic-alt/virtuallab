@@ -63,3 +63,13 @@ describe("TerminalWorkspace controls", () => {
     expect(screen.getByRole("button", { name: /new terminal/i })).toBeDisabled();
   });
 });
+
+it("closes an individual terminal and releases its tab", async () => {
+  const user = userEvent.setup();
+  render(<TerminalWorkspace cwd="D:/workspace" enabled />);
+  await user.click(screen.getByRole("button", { name: /start terminal/i }));
+  expect(screen.getByRole("button", { name: /terminal 1/i })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: /close terminal/i }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: /terminal 1/i })).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: /start terminal/i })).toBeInTheDocument();
+});
