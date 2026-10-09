@@ -341,7 +341,7 @@ export function ProcessRunner({
             <div>
               <div className="text-sm font-medium text-slate-200">One-click project builds</div>
               <p className="mb-0 mt-1 text-[11px] text-slate-500">
-                Tauri builds the desktop app; npm Build is frontend-only. No flash or publish.
+                Recipes are detected from this worktree. Only explicitly selected builds run; no automatic flash or publish.
               </p>
             </div>
             <Button aria-label="Rescan build workflows" size="sm" variant="ghost"
