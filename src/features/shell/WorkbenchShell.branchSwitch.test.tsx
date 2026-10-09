@@ -90,6 +90,43 @@ describe("workbench branch switching with untracked artifacts", () => {
     });
   });
 
+  it("opens documentation from the application Help menu, not a workspace tab", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+
+    const menu = screen.getByRole("button", { name: "Help" });
+    expect(screen.queryByRole("button", { name: "Guide" })).not.toBeInTheDocument();
+    await user.click(menu);
+    await user.click(screen.getByRole("menuitem", { name: /使用文档/ }));
+    expect(screen.getByRole("dialog", { name: "VirtualLab 使用文档" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "快速入门" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "VirtualLab 使用文档" })).not.toBeInTheDocument();
+    expect(menu).toHaveFocus();
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeTab).toBe("overview");
+  });
+
+  it("does not change the workspace tab when opening and closing documentation", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    await user.click(screen.getByRole("menuitem", { name: /使用文档/ }));
+    await user.click(screen.getByRole("button", { name: "关闭文档" }));
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeTab).toBe("history");
+    expect(screen.getByRole("button", { name: "History" })).toHaveClass("text-slate-100");
+  });
+
+  it("makes documentation available even before adding a repository", async () => {
+    const user = userEvent.setup();
+    useWorkbenchStore.setState({ repositories: [], activeRepositoryId: null, workspaceStates: {} });
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    await user.click(screen.getByRole("menuitem", { name: /使用文档/ }));
+    expect(screen.getByRole("dialog", { name: "VirtualLab 使用文档" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "快速入门" })).toBeInTheDocument();
+  });
+
   it("updates the active branch when switching codex/pr-15 to main and back", async () => {
     const user = userEvent.setup();
     render(<WorkbenchShell />);
