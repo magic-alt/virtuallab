@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import appManifest from "../../../package.json";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
-  BookOpen,
   Command,
   Cpu,
   Layers3,
@@ -10,6 +9,8 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
+import { HelpMenu } from "@/features/help/HelpMenu";
+import { GuideDialog } from "@/features/help/GuideDialog";
 import { WorkspaceSearch } from "@/features/search/WorkspaceSearch";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { NewWorkspaceDialog } from "@/features/workspace/NewWorkspaceDialog";
@@ -73,7 +74,7 @@ export function WorkbenchShell() {
 
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
   const [tab, setTab] = useState<WorkspaceTab>("overview");
-  const previousWorkbenchTabRef = useRef<WorkspaceTab>("overview");
+  const [guideOpen, setGuideOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
   // A synchronous guard prevents rapid double-clicks before React re-renders.
@@ -83,6 +84,7 @@ export function WorkbenchShell() {
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
   const snapshotLoadsRef = useRef(new Map<string, Promise<RepositorySnapshot>>());
@@ -393,9 +395,6 @@ export function WorkbenchShell() {
   const native = isDesktopRuntime();
 
   const switchTab = (nextTab: WorkspaceTab) => {
-    if (nextTab === "guide" && tab !== "guide") {
-      previousWorkbenchTabRef.current = tab;
-    }
     setTab(nextTab);
     if (!activeRepository) return;
     saveWorkspaceState({
@@ -404,12 +403,6 @@ export function WorkbenchShell() {
       activeTab: nextTab,
       updatedAt: Date.now(),
     });
-  };
-
-  const toggleGuide = () => {
-    switchTab(tab === "guide"
-      ? (previousWorkbenchTabRef.current === "guide" ? "overview" : previousWorkbenchTabRef.current)
-      : "guide");
   };
 
   return (
@@ -432,21 +425,18 @@ export function WorkbenchShell() {
           </div>
         </div>
 
+        <nav aria-label="Application menu" className="shrink-0">
+          <HelpMenu
+            triggerRef={helpMenuTriggerRef}
+            onOpenGuide={() => setGuideOpen(true)}
+          />
+        </nav>
+
         <div className="mx-auto min-w-0 w-full max-w-[420px] flex-1">
           <WorkspaceSearch value={searchQuery} onChange={setSearchQuery} />
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={toggleGuide}
-            aria-label={tab === "guide" ? "Return to workspace" : "Open guide"}
-            aria-pressed={tab === "guide"}
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded border border-orange-300/30 bg-orange-950/20 px-2.5 text-xs font-semibold text-orange-100 transition hover:bg-orange-950/40"
-          >
-            <BookOpen size={14} />
-            <span>{tab === "guide" ? "Back" : "Guide"}</span>
-          </button>
           <Badge tone={native ? "green" : "amber"}>
             <Cpu size={11} />
             {native ? "Native" : "Web preview"}
@@ -471,7 +461,7 @@ export function WorkbenchShell() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {tab !== "guide" && <ProjectSidebar
+        <ProjectSidebar
           repositories={repositories}
           activeRepositoryId={activeRepositoryId}
           snapshot={snapshot}
@@ -503,10 +493,10 @@ export function WorkbenchShell() {
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
           onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
-        />}
+        />
 
         <section className="vl-stage flex min-w-0 flex-1 flex-col">
-          {tab !== "guide" && <WorkspaceHeader
+          <WorkspaceHeader
             snapshot={snapshot}
             isPreview={isPreview}
             loading={loading}
@@ -522,7 +512,7 @@ export function WorkbenchShell() {
               const path = activePathRef.current;
               if (path) void loadSnapshot(path).catch(() => undefined);
             }}
-          />}
+          />
 
           <WorkspaceContent
             snapshot={snapshot}
@@ -551,6 +541,15 @@ export function WorkbenchShell() {
           </footer>
         </section>
       </div>
+
+      {guideOpen && (
+        <GuideDialog
+          onClose={() => {
+            setGuideOpen(false);
+            helpMenuTriggerRef.current?.focus();
+          }}
+        />
+      )}
 
       {workspaceDialog && activeRepository && (
         <NewWorkspaceDialog

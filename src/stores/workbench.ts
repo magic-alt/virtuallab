@@ -7,6 +7,7 @@ import type {
   ReviewLoopPhase,
   WorkspacePersistedState,
   WorkspaceReviewState,
+  WorkspaceTab,
 } from "@/types/workbench";
 
 interface WorkbenchState {
@@ -99,15 +100,30 @@ function isWorkspaceReviewState(value: unknown): value is WorkspaceReviewState {
   );
 }
 
+const validWorkspaceTabs: readonly WorkspaceTab[] = [
+  "overview", "changes", "github", "agents", "terminal", "run", "checks", "history",
+];
+
+function normalizeWorkspaceTab(value: string): WorkspaceTab {
+  return validWorkspaceTabs.some((tab) => tab === value)
+    ? value as WorkspaceTab
+    : "overview";
+}
+
 function sanitizeWorkspaceStates(value: unknown) {
   if (!value || typeof value !== "object") {
     return {} as Record<string, WorkspacePersistedState>;
   }
 
   return Object.fromEntries(
-    Object.entries(value).filter(
-      ([id, item]) => isWorkspaceState(item) && item.repositoryId === id,
-    ),
+    Object.entries(value)
+      .filter(([id, item]) => isWorkspaceState(item) && item.repositoryId === id)
+      .map(([id, item]) => {
+        const state = item as WorkspacePersistedState;
+        // The old app stored "guide" as a workspace tab. Keep the selected
+        // worktree, but migrate that app-level page to the default workspace tab.
+        return [id, { ...state, activeTab: normalizeWorkspaceTab(state.activeTab) }];
+      }),
   ) as Record<string, WorkspacePersistedState>;
 }
 

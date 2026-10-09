@@ -1,6 +1,5 @@
 import {
   Activity,
-  BookOpen,
   Bot,
   CheckCircle2,
   CircleDot,
@@ -18,7 +17,6 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { AgentWorkspace } from "@/features/agents/AgentWorkspace";
-import { HelpCenter } from "@/features/help/HelpCenter";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
@@ -62,7 +60,6 @@ const tabs: Array<{
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
   { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
   { id: "history", label: "History", icon: <History size={14} /> },
-  { id: "guide", label: "Guide", icon: <BookOpen size={14} /> },
 ];
 
 export function WorkspaceContent({
@@ -106,12 +103,7 @@ export function WorkspaceContent({
         })}
       </nav>
 
-      <main className={cn(
-          "vl-main scrollbar-thin min-h-0 min-w-0 flex-1",
-          tab === "guide"
-            ? "overflow-hidden p-0"
-            : "surface-grid overflow-x-auto overflow-y-auto p-3 sm:p-5",
-        )}>
+      <main className="vl-main scrollbar-thin min-h-0 min-w-0 flex-1 surface-grid overflow-x-auto overflow-y-auto p-3 sm:p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && (
           <ChangesReview
@@ -148,7 +140,6 @@ export function WorkspaceContent({
         )}
         {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
         {tab === "history" && <HistoryView snapshot={snapshot} />}
-        {tab === "guide" && <HelpCenter />}
       </main>
     </div>
   );

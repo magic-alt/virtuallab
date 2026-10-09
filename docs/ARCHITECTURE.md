@@ -11,6 +11,14 @@ VirtualLab is a **local-first Engineering Workbench / Engineering Control Plane*
 5. **Hardware-changing actions require explicit human approval.** Flashing, drive enable, power-stage enable, destructive Git operations and merge actions will be gated.
 6. **Local-first and offline-capable.** Git inspection and workspace inventory must work without cloud services.
 
+## Application-level documentation
+
+Bundled Help/Guide content is an application service, not a workspace tab or
+execution context. The GUI menu bar offers **Help → 使用文档** even without an
+active repository; it opens an overlay reader without changing the selected
+repository, worktree, tab, or persisted workspace state. A legacy persisted
+`guide` tab is normalized to `overview` while preserving its worktree path.
+
 ## Layers
 
 ```text

@@ -73,12 +73,12 @@ export const guidePages: GuidePage[] = [
     duration: "约 4 分钟",
     sections: [
       { id: "panels", title: "五个区域", blocks: [
-        { type: "diagram", src: "/help/workbench-map.svg", alt: "标注 VirtualLab 顶部栏、左侧仓库栏、工作区状态头部、标签栏和主视图区的界面示意图", caption: "图 2 · 概念化的界面分区。Guide/帮助中心不依赖已经导入仓库。" },
+        { type: "diagram", src: "/help/workbench-map.svg", alt: "标注 VirtualLab 顶部栏、左侧仓库栏、工作区状态头部、标签栏和主视图区的界面示意图", caption: "图 2 · 概念化的界面分区。Help → 使用文档不依赖已经导入仓库。" },
         { type: "table", columns: ["区域", "看到什么", "常见操作"], rows: [
-          ["顶部栏", "VirtualLab、搜索框、Native/Web preview、Guide", "快速进入本手册"],
+          ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
           ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
           ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Fetch + prune、Pull、Refresh"],
-          ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History / Guide", "在同一工作区切换任务"],
+          ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界与应用版本", "确认安装版本"],
         ] },
       ] },
@@ -89,7 +89,7 @@ export const guidePages: GuidePage[] = [
           { title: "Terminal + Run", description: "交互式 Shell 与结构化可重复构建分别管理，避免混用。" },
           { title: "Checks + Agents", description: "本地 readiness 检查；按需附加 Coding Agent。" },
         ] },
-        { type: "callout", tone: "note", title: "所有工作区共用这本手册", text: "Guide 是 VirtualLab 内置的离线内容，打开它不会切换 Git 分支、运行命令、上传代码或更改当前项目。" },
+        { type: "callout", tone: "note", title: "所有工作区共用这本手册", text: "从顶部 Help → 使用文档打开独立阅读界面，不属于工作区标签；关闭后回到原工作区和标签。打开文档不会切换 Git 分支、运行命令、上传代码或更改当前项目。" },
       ] },
     ],
   },

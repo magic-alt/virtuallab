@@ -61,6 +61,35 @@ describe("workbench persisted store", () => {
     expect(raw).toContain("changes");
   });
 
+  it("migrates the former Guide workspace tab without losing its worktree", async () => {
+    window.localStorage.setItem("virtuallab-workbench-v2", JSON.stringify({
+      state: {
+        repositories: [{ id: "repo-1", name: "example", path: "D:/Work/example", lastOpenedAt: 1 }],
+        activeRepositoryId: "repo-1",
+        profiles: [],
+        workspaceStates: {
+          "repo-1": {
+            repositoryId: "repo-1",
+            activeWorktreePath: "D:/Work/example/.worktrees/feature",
+            activeTab: "guide",
+            updatedAt: 123,
+          },
+        },
+        reviewStates: {},
+      },
+      version: 6,
+    }));
+
+    await useWorkbenchStore.persist.rehydrate();
+
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toEqual({
+      repositoryId: "repo-1",
+      activeWorktreePath: "D:/Work/example/.worktrees/feature",
+      activeTab: "overview",
+      updatedAt: 123,
+    });
+  });
+
   it("persists review drafts per workspace and marks old HEAD drafts stale", () => {
     const workspaceRoot = "D:/Work/.virtuallab-workspaces/sample-alpha/review";
     useWorkbenchStore.getState().addReviewDraft({
