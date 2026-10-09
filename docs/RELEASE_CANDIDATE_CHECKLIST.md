@@ -4,8 +4,8 @@
 
 ## Source and scope
 
-- RC baseline: \`main@cea4655bb1196d556a2ed88cc047c9bb41dbc27b\` (PR #41 and PR #42 included).
-- Candidate implementation: PR #43, branch \`release/v0.5.0-rc-qualification\`.
+- RC baseline: `main@cea4655bb1196d556a2ed88cc047c9bb41dbc27b` (PR #41 and PR #42 included).
+- Candidate implementation: PR #43, branch `release/v0.5.0-rc-qualification`.
 - Tracking: #40, native lifecycle #19, real build acceptance #34 and stable desktop qualification #25.
 - No relationship to any named external repository, lab, hardware board, motion controller or safety executor.
 - All hardware motion/power/flashing approvals remain fail-closed in the software control plane.
@@ -14,22 +14,22 @@
 
 For this PR, review **both** workflows:
 
-1. \`CI\`: Node 22/26, Windows/macOS/Linux native Rust unit/acceptance checks and app/icon test.
-2. \`Release Candidate (unsigned QA bundles)\`: Windows NSIS installer, macOS .app zipped using Apple's \`ditto\`, Linux .deb, each at the runner's checked-out \`GITHUB_SHA\`.
+1. `CI`: Node 22/26, Windows/macOS/Linux native Rust unit/acceptance checks and app/icon test.
+2. `Release Candidate (unsigned QA bundles)`: Windows NSIS installer, macOS .app zipped using Apple's `ditto`, Linux .deb, each at the runner's checked-out `GITHUB_SHA`.
 
-Each artifact contains \`release-candidate-manifest.json\`, \`SHA256SUMS.txt\` and exactly one unsigned installer/archive. The manifest requires the source Git SHA and explicitly sets \`signed=false\`, \`notarized=false\` and \`manualDesktopAccepted=false\`. Revalidate the file digest before installing and compare the recorded SHA against the accepted PR merge/source commit.
+Each artifact contains `release-candidate-manifest.json`, `SHA256SUMS.txt` and exactly one unsigned installer/archive. The manifest requires the source Git SHA and explicitly sets `signed=false`, `notarized=false` and `manualDesktopAccepted=false`. Revalidate the file digest before installing and compare the recorded SHA against the accepted PR merge/source commit.
 
-\`\`\`sh
+```sh
 npm ci
 npm run version:check
-node --test scripts/rc-assets.test.mjs
+node --test scripts/rc-assets.node-check.mjs
 npm run acceptance:local
 # For an already bundled platform artifact at this exact checkout:
 node scripts/rc-assets.mjs package macos   # or windows-x64 / linux-x64
 node scripts/rc-assets.mjs verify macos
-\`\`\`
+```
 
-The two \`rc-assets\` commands require \`GITHUB_SHA\` to contain the full checkout SHA. Building \`macos\` requires an Apple host with \`ditto\`. Packaging must fail when multiple/stale bundles exist.
+The two `rc-assets` commands require `GITHUB_SHA` to contain the full checkout SHA. Building `macos` requires an Apple host with `ditto`. Packaging must fail when multiple/stale bundles exist.
 
 ## Human real-desktop acceptance (all checkboxes currently OPEN)
 
@@ -41,7 +41,7 @@ The two \`rc-assets\` commands require \`GITHUB_SHA\` to contain the full checko
 | Git branch/prune/untracked collision | [ ] | [ ] | [ ] | Remote disposable origin and worktree paths with Unicode/spaces |
 | Monaco diff, wrapping, CSP/worker console | [ ] | [ ] | [ ] | Unified/side-by-side, large/binary, WebView logs, resized window |
 | Terminal session, Ctrl+C, resize, shell exit | [ ] | [ ] | [ ] | Multiple sessions; background/foreground jobs; no orphan descendants |
-| Authenticated \`gh\` and PR CI controls | [ ] | [ ] | [ ] | Deliberately failed/pending/green PR, test merge with SHA guard in disposable repo |
+| Authenticated `gh` and PR CI controls | [ ] | [ ] | [ ] | Deliberately failed/pending/green PR, test merge with SHA guard in disposable repo |
 | Agent CLI real provider auth/failure | [ ] | [ ] | [ ] | Installed versions, blocked policy, resume/stop/interrupt, offline/restart |
 | Build workflows | [ ] npm/Tauri, Qt/CMake, Keil | [ ] Tauri and Qt/CMake | [ ] CMake/Qt + .deb | Real compiler exit codes, output, cancellation and artifact inspection |
 | Privacy and resource stress | [ ] | [ ] | [ ] | Sensitive-output redaction, 2–4 worktrees, peak RSS/CPU, native process count |

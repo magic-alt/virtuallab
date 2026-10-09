@@ -47,7 +47,7 @@ jobs:
         run: |
           npm run version:check
           npm run icons:check
-          node --test scripts/rc-assets.test.mjs
+          node --test scripts/rc-assets.node-check.mjs
       - name: Full frontend/Rust automated acceptance (does not test GUI)
         run: npm run acceptance:local
         env:
