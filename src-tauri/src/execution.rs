@@ -496,7 +496,7 @@ fn now_ms() -> u128 {
 }
 
 #[cfg(target_os = "windows")]
-fn process_command(program: &str) -> Command {
+pub(crate) pub(crate) fn process_command(program: &str) -> Command {
     let resolved = resolve_windows_program(program).unwrap_or_else(|| program.to_string());
     let lower = resolved.to_ascii_lowercase();
 
