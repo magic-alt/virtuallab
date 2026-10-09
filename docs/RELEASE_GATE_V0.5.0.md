@@ -30,8 +30,8 @@
 | Windows acceptance:local | 通过；包含 typecheck、150 项前端测试、68 项 Rust 测试和生产构建 |
 | Windows NSIS 候选安装包 | 首次因原输出 EXE 被占用失败；独立 target/rc 成功生成未签名候选包，最终 SHA-256 见同目录 .sha256 文件 |
 | Linux cargo check --locked | WSL Ubuntu 24.04 通过 |
-| Linux Unix PTY 回归 | 6 项真实 PTY/进程测试通过；旧实现已复现跨组残留与 shell 先退出残留 |
-| Linux acceptance:local | WSL Ubuntu 24.04 通过：150 项前端测试、72 项 Rust 测试、typecheck、production build；locked npm 安装通过 |
+| Linux Unix PTY 回归 | 7 项真实 PTY/进程测试通过；旧实现已复现跨组残留与 shell 先退出残留 |
+| Linux acceptance:local | WSL Ubuntu 24.04 通过：150 项前端测试、72 项 Rust 测试、typecheck、production build；locked npm 安装通过。随后最终取消重试修订的 Rust 全量为 73 项，通过 |
 | macOS acceptance:local | 本机未执行；需候选 SHA 的 macOS runner |
 
 ## 必须由真实桌面验收关闭的发布门禁

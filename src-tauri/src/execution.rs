@@ -215,13 +215,16 @@ fn terminal_spawn_blocking(
         let weak_session = Arc::downgrade(&session);
         let monitor_app = app.clone();
         let monitor_id = id.clone();
+        let monitor_reservations = state.reservations.clone();
         thread::spawn(move || {
             let mut reported = false;
             loop {
                 let Some(session) = weak_session.upgrade() else { break; };
+                let stop_requested = cancelled || monitor_reservations.lock()
+                    .map(|pending| pending.get(&monitor_id).copied().unwrap_or(true)).unwrap_or(true);
                 let result = session.lock().map_err(|_| "Terminal session lock poisoned".to_string())
                     .and_then(|mut session| {
-                        if session.process.leader_exited()? { session.terminate().map(|_| true) }
+                        if session.process.cleanup_due(stop_requested)? { session.terminate().map(|_| true) }
                         else { Ok(false) }
                     });
                 match result {

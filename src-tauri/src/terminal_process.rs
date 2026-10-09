@@ -41,6 +41,13 @@ impl TerminalProcess {
         }
         Ok(unsafe { info.si_pid() } == self.session)
     }
+    pub(crate) fn cleanup_due(&self, cancelled: bool) -> Result<bool, String> {
+        if cancelled {
+            Ok(true)
+        } else {
+            self.leader_exited()
+        }
+    }
     pub(crate) fn terminate(&mut self) -> Result<(), String> {
         if self.cleaned {
             return Ok(());
@@ -364,6 +371,18 @@ mod tests {
             "signal reached an unrelated session"
         );
     }
+    #[test]
+    fn cancelled_live_session_retries_cleanup_without_waiting_for_exit_or_eof() {
+        let mut fixture = Fixture::start(false);
+        assert!(!fixture.owner.cleanup_due(false).unwrap());
+        assert!(
+            fixture.owner.cleanup_due(true).unwrap(),
+            "cancelled live shell must request cleanup retry"
+        );
+        fixture.owner.terminate().unwrap();
+        assert!(fixture.jobs.iter().all(|pid| !live(*pid)));
+    }
+
     #[test]
     fn refuses_unowned_session() {
         assert!(TerminalProcess::capture(std::process::id()).is_err());
