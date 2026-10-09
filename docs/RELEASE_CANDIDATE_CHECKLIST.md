@@ -50,7 +50,7 @@ Do not use real customer repositories or production PRs for destructive test cas
 
 ## Signing, distribution and governance (OPEN)
 
-- [ ] Required main checks and branch protection/ruleset configured in GitHub by repository admin; no direct push bypass.
+- [ ] Configure GitHub Rulesets/branch protection on `main` to require **Required quality gate** (from CI), PR review and no force pushes. The workflow now provides this stable fail-closed aggregate check; enabling/enforcing the rule requires repository administration outside the available GitHub connector mutation actions.
 - [ ] Release artifact identities pinned to the accepted commit and signed with a trusted certificate; macOS hardened-runtime signing and notarization verified on the packaged app.
 - [ ] On Windows, install/uninstall and SmartScreen/authenticode status inspected; on Linux, validate deb dependencies on clean supported distributions.
 - [ ] Independent SHA-256 verification of **the signed final assets**; unsigned QA hashes cannot be reused when signing alters package bytes.

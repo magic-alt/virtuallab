@@ -90,6 +90,18 @@ describe("workbench persisted store", () => {
     });
   });
 
+  it("does not merge case-distinct Unix review draft workspaces", () => {
+    const store = useWorkbenchStore.getState();
+    for (const root of ["/tmp/Servo", "/tmp/servo"]) {
+      store.addReviewDraft({
+        id: root, workspaceRoot: root, headSha: "abc123", path: "source.cpp",
+        line: 1, side: "RIGHT", body: root, status: "active",
+        createdAt: 1, updatedAt: 1,
+      });
+    }
+    expect(Object.keys(useWorkbenchStore.getState().reviewStates)).toHaveLength(2);
+  });
+
   it("persists review drafts per workspace and marks old HEAD drafts stale", () => {
     const workspaceRoot = "D:/Work/.virtuallab-workspaces/sample-alpha/review";
     useWorkbenchStore.getState().addReviewDraft({

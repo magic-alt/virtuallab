@@ -123,3 +123,28 @@ jobs:
           sips -s format png "$APP/Contents/Resources/$ICON_NAME" --out "$RUNNER_TEMP/VirtualLab-rendered.png"
           test -s "$RUNNER_TEMP/VirtualLab-rendered.png"
           swift scripts/validate-macos-icon.swift "$APP/Contents/Resources/$ICON_NAME"
+
+
+  release-gate:
+    name: Required quality gate
+    needs: [frontend, linux-native, windows-native, macos-native]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all Node and native matrix jobs to pass
+        shell: bash
+        env:
+          FRONTEND: ${{ needs.frontend.result }}
+          LINUX: ${{ needs.linux-native.result }}
+          WINDOWS: ${{ needs.windows-native.result }}
+          MACOS: ${{ needs.macos-native.result }}
+        run: |
+          echo "Frontend: $FRONTEND"
+          echo "Linux: $LINUX"
+          echo "Windows: $WINDOWS"
+          echo "macOS: $MACOS"
+          test "$FRONTEND" = success
+          test "$LINUX" = success
+          test "$WINDOWS" = success
+          test "$MACOS" = success
+

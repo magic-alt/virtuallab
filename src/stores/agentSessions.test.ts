@@ -13,6 +13,37 @@ describe("agent workspace bindings", () => {
     );
   });
 
+  it("keeps case-distinct POSIX workspace bindings separate", () => {
+    const store = useAgentSessionStore.getState();
+    for (const [root, thread] of [["/Users/dev/Project", "thread-upper"], ["/Users/dev/project", "thread-lower"]] as const) {
+      store.setBinding({
+        workspaceRoot: root, harness: "codex", threadId: thread,
+        createdAtMs: 1, updatedAtMs: 1,
+      });
+    }
+    expect(Object.keys(useAgentSessionStore.getState().bindings)).toHaveLength(2);
+    expect(useAgentSessionStore.getState().bindings["/Users/dev/Project"]?.threadId).toBe("thread-upper");
+    expect(useAgentSessionStore.getState().bindings["/Users/dev/project"]?.threadId).toBe("thread-lower");
+  });
+
+  it("migrates previously lowercased POSIX keys using the persisted original workspace path", async () => {
+    window.localStorage.setItem("virtuallab-agent-sessions-v1", JSON.stringify({
+      version: 1,
+      state: {
+        bindings: {
+          "/users/dev/project": {
+            workspaceRoot: "/Users/dev/Project", harness: "codex", threadId: "saved-thread",
+            createdAtMs: 1, updatedAtMs: 2,
+          },
+        },
+      },
+    }));
+    await useAgentSessionStore.persist.rehydrate();
+    const bindings = useAgentSessionStore.getState().bindings;
+    expect(bindings["/Users/dev/Project"]?.threadId).toBe("saved-thread");
+    expect(bindings["/users/dev/project"]).toBeUndefined();
+  });
+
   it("persists exactly one Codex thread binding per workspace", () => {
     const workspaceRoot = "D:/Project/VirtualLab/worktree";
     useAgentSessionStore.getState().setBinding({
