@@ -132,6 +132,7 @@ export function WorkspaceContent({
         )}
         {tab === "run" && (
           <ProcessRunner
+            key={snapshot.root}
             cwd={snapshot.root}
             repositoryRoot={profileRepositoryRoot}
             enabled={!isPreview && isDesktopRuntime()}
