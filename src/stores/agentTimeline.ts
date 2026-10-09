@@ -20,9 +20,13 @@ export const useAgentTimeline = create<AgentTimelineState>()((set) => ({
         useAgentSessionStore.getState().setBinding(binding);
       }
     }
+    const payloadText = JSON.stringify(event.payload ?? null);
+    const boundedEvent = new TextEncoder().encode(payloadText).byteLength > 16_384
+      ? { ...event, payload: { detail: payloadText.slice(0, 2000), truncated: true } }
+      : event;
     set((s) => {
       const key = agentWorkspaceKey(event.workspaceRoot);
-      const entries = { ...s.entries, [key]: [...(s.entries[key] ?? []).slice(-299), event] };
+      const entries = { ...s.entries, [key]: [...(s.entries[key] ?? []).slice(-299), boundedEvent] };
       const activeTurns = { ...s.activeTurns };
       if (event.eventType === "agent.turn_started" || event.method === "turn/started") {
         if (event.turnId) activeTurns[key] = event.turnId;

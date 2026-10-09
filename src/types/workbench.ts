@@ -83,6 +83,7 @@ export interface BuildSuggestion {
 }
 
 export interface BuildWorkflowSpec {
+  presentation?: { profileId: string; profileName: string; profileKind: ProcessProfileKind };
   id: string;
   cwd: string;
   steps: BuildStep[];
@@ -113,6 +114,7 @@ export interface ProcessProfile {
 }
 
 export interface ProcessSpec {
+  presentation?: { profileId: string; profileName: string; profileKind: ProcessProfileKind };
   id: string;
   cwd: string;
   program: string;

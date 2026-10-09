@@ -19,6 +19,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("@/lib/backend", () => ({
+  confirmNativeAction: vi.fn().mockResolvedValue(true),
   isDesktopRuntime: () => true,
   inspectRepository: harness.inspect,
   gitSwitchBranch: harness.switchBranch,

@@ -1,3 +1,9 @@
+#[cfg(unix)]
+mod terminal_process;
+mod managed_process;
+mod run_registry;
+use tauri::Manager;
+use run_registry::{RunRegistry, list_runs};
 mod agent;
 mod agent_ownership;
 mod agent_cli;
@@ -32,6 +38,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
+        .manage(RunRegistry::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentManager::default())
@@ -58,6 +65,7 @@ pub fn run() {
             terminal_write,
             terminal_resize,
             terminal_stop,
+            list_runs,
             process_spawn,
             process_stop,
             build_workflow_discover,
@@ -80,6 +88,17 @@ pub fn run() {
             verification_cancel,
             verification_import_artifact,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running VirtualLab");
+        .build(tauri::generate_context!())
+        .expect("error while building VirtualLab")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                app.state::<RunRegistry>().close();
+                app.state::<WatchManager>().shutdown();
+                app.state::<BuildWorkflowManager>().shutdown();
+                app.state::<ProcessManager>().shutdown();
+                app.state::<TerminalManager>().shutdown();
+                app.state::<AgentManager>().shutdown();
+                app.state::<CliAgentManager>().shutdown();
+            }
+        });
 }

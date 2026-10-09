@@ -1,11 +1,11 @@
-use crate::process::background_command;
+use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{ ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -192,12 +192,9 @@ impl CodexProcess {
     }
 
     fn stop(&self) -> Result<(), String> {
-        self.child
-            .lock()
-            .map_err(lock_error)?
-            .kill()
-            .map_err(|error| format!("Failed to stop Codex app-server: {error}"))
+        crate::process::terminate_tree(&mut *self.child.lock().map_err(lock_error)?)
     }
+
 }
 
 struct AgentRuntime {
@@ -208,6 +205,7 @@ struct AgentRuntime {
 #[derive(Clone, Default)]
 pub struct AgentManager {
     runtimes: Arc<Mutex<HashMap<String, Arc<AgentRuntime>>>>,
+    lifecycle: Arc<Mutex<()>>,
 }
 
 #[tauri::command]
@@ -264,11 +262,19 @@ pub async fn agent_session_start(
     let manager = state.inner().clone();
     let owner = app.state::<AgentOwnership>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let lifecycle = manager.lifecycle.clone();
+        let _lifecycle = lifecycle.lock().map_err(lock_error)?;
+        if app.state::<crate::run_registry::RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
         owner.claim(&request.workspace_root, &request.harness)?;
         let root = request.workspace_root.clone();
         let kind = request.harness.clone();
-        let result = start_session(app, manager, request);
-        if result.is_err() { owner.release(&root, &kind); }
+        let result = start_session(app, manager.clone(), request);
+        if result.is_err() {
+            let attached = manager.runtimes.lock().map_err(lock_error)?.get(&workspace_key(&root)).cloned();
+            if !attached.is_some_and(|runtime| runtime.binding.harness == kind && runtime.process.is_running().unwrap_or(true)) {
+                owner.release(&root, &kind);
+            }
+        }
         result
     })
         .await
@@ -348,8 +354,10 @@ fn start_session(
             return Err(error);
         }
     };
-    let thread_id = nested_id(&result, "thread")
-        .ok_or_else(|| "Codex response missing thread.id".to_string())?;
+    let thread_id = match nested_id(&result, "thread") {
+        Some(id) => id,
+        None => { let _ = process.stop(); return Err("Codex response missing thread.id".into()); }
+    };
     let timestamp = now_ms();
     let binding = AgentSessionBinding {
         workspace_root: root.into(),
@@ -450,26 +458,18 @@ pub fn agent_session_stop(
     state: State<'_, AgentManager>,
     workspace_root: String,
 ) -> Result<(), String> {
-    if let Some(runtime) = state
-        .runtimes
-        .lock()
-        .map_err(lock_error)?
-        .remove(&workspace_key(&workspace_root))
-    {
+    let _lifecycle = state.lifecycle.lock().map_err(lock_error)?;
+    let runtime = state.runtimes.lock().map_err(lock_error)?.get(&workspace_key(&workspace_root)).cloned();
+    if let Some(runtime) = runtime {
         runtime.process.stop()?;
-        let _ = app.emit(
-            "agent://event",
-            AgentEvent::lifecycle(
-                "agent.session_stopped",
-                &workspace_root,
-                Some(runtime.binding.thread_id.clone()),
-            ),
-        );
+        state.runtimes.lock().map_err(lock_error)?.remove(&workspace_key(&workspace_root));
+        let _ = app.emit("agent://event", AgentEvent::lifecycle("agent.session_stopped", &workspace_root, Some(runtime.binding.thread_id.clone())));
     }
     app.state::<AgentOwnership>().release(&workspace_root, "codex");
     app.state::<AgentOwnership>().release(&workspace_root, "deepseek");
     Ok(())
 }
+
 
 fn runtime(
     manager: &AgentManager,
@@ -523,12 +523,13 @@ fn spawn_codex(app: &AppHandle, root: &str, harness: &str) -> Result<Arc<CodexPr
             "model_providers.deepseek.supports_websockets=false",
         ] { command.arg("-c").arg(entry); }
     }
-    let mut child = command
+    crate::process::configure_process_tree(&mut command);
+    command
         .current_dir(root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = crate::managed_process::spawn(&mut command)
         .map_err(|error| format!("Failed to start Codex app-server: {error}"))?;
     let stdin = Arc::new(Mutex::new(
         child
@@ -734,34 +735,16 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
-#[cfg(target_os = "windows")]
 fn codex_command() -> Command {
-    let resolved = background_command("where")
-        .arg("codex")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .map(|line| line.trim().to_string())
-        })
-        .unwrap_or_else(|| "codex".into());
-    if resolved.to_ascii_lowercase().ends_with(".cmd")
-        || resolved.to_ascii_lowercase().ends_with(".bat")
-    {
-        let mut command = background_command("cmd.exe");
-        command.arg("/d").arg("/s").arg("/c").arg(resolved);
-        command
-    } else {
-        background_command(resolved)
-    }
+    crate::execution::process_command("codex")
 }
-
-#[cfg(not(target_os = "windows"))]
-fn codex_command() -> Command {
-    background_command("codex")
+impl AgentManager {
+    pub fn shutdown(&self) {
+        let _lifecycle = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(runtimes) = self.runtimes.lock() {
+            for runtime in runtimes.values() { let _ = runtime.process.stop(); }
+        }
+    }
 }
 
 #[cfg(test)]

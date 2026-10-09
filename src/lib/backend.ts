@@ -226,3 +226,28 @@ export async function watchStop(id: string): Promise<void> {
   if (!isDesktopRuntime()) return;
   return invoke("watch_stop", { id });
 }
+
+/** Fail closed if the native dialog is unavailable or denied. */
+export async function confirmNativeAction(message: string): Promise<boolean> {
+  if (!isDesktopRuntime()) return false;
+  try {
+    return await confirm(message, { title: "Confirm action", kind: "warning", okLabel: "Confirm", cancelLabel: "Cancel" });
+  } catch { return false; }
+}
+
+export interface NativeRun {
+  presentation?: { profileId: string; profileName: string; profileKind: import("@/types/workbench").ProcessProfileKind } | null;
+  id: string;
+  cwd: string;
+  label: string;
+  isWorkflow: boolean;
+  status: "running" | "stopping" | "passed" | "failed" | "stopped";
+  output: string;
+  exitCode: number | null;
+  stepName: string | null;
+  revision: number;
+}
+export async function listRuns(cwd: string): Promise<NativeRun[]> {
+  requireDesktop();
+  return invoke<NativeRun[]>("list_runs", { cwd });
+}

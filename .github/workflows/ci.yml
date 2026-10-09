@@ -95,6 +95,7 @@ jobs:
       - run: npm ci
       - run: npm run icons:check
       - name: Run desktop acceptance
+        timeout-minutes: 10
         run: npm run acceptance:local
         env:
           # Monaco's production bundle can exceed Node's ~2 GiB default heap

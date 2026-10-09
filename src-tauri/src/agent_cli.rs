@@ -1,19 +1,19 @@
 //! Local CLI harness bridge. Structured NDJSON, no shell/PTY scraping.
 //! CLI sessions are ephemeral; provider session IDs are fed back as binding events.
 //! This is NOT a hardware authorization or sandbox boundary.
-use crate::process::background_command;
+use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
-    process::{Child, Command, Stdio},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    process::{ Command, Stdio},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +84,7 @@ struct CliSession {
     binding: Mutex<CliBinding>,
     active: Mutex<Option<(String, Arc<Mutex<Child>>)>>,
     turn_counter: AtomicU64,
+    stopped: AtomicBool,
 }
 #[derive(Clone, Default)]
 pub struct CliAgentManager {
@@ -106,9 +107,8 @@ fn binary(harness: &str) -> Result<&'static str, String> {
     }
 }
 fn cli_command(harness: &str) -> Result<Command, String> {
-    // Do not invoke cmd.exe/sh with user-supplied prompts (shell injection).
-    // Windows requires a native .exe on PATH; .cmd-only shims are not executed.
-    Ok(background_command(binary(harness)?))
+    // Keep prompts as regular arguments; Rust handles Windows batch escaping.
+    Ok(crate::execution::process_command(binary(harness)?))
 }
 fn emit(app: &AppHandle, kind: &str, binding: &CliBinding, turn: Option<&str>, payload: Option<Value>) {
     let _ = app.emit("agent://event", CliEvent {
@@ -147,6 +147,7 @@ pub fn agent_cli_capabilities(harness: String) -> Result<CliCapabilities, String
 }
 #[tauri::command]
 pub fn agent_cli_session_start(
+    app: AppHandle,
     state: State<'_, CliAgentManager>,
     owner: State<'_, AgentOwnership>,
     request: CliStart,
@@ -158,6 +159,7 @@ pub fn agent_cli_session_start(
     }
     let workspace_key = key(root);
     let mut map = state.sessions.lock().map_err(err_lock)?;
+    if app.state::<crate::run_registry::RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
     if let Some(existing) = map.get(&workspace_key) {
         let binding = existing.binding.lock().map_err(err_lock)?.clone();
         if binding.harness != request.harness {
@@ -180,6 +182,7 @@ pub fn agent_cli_session_start(
         binding: Mutex::new(binding.clone()),
         active: Mutex::new(None),
         turn_counter: AtomicU64::new(1),
+        stopped: AtomicBool::new(false),
     }));
     Ok(binding)
 }
@@ -257,6 +260,8 @@ pub async fn agent_cli_turn_start(
         let entry = session(&manager, &request.workspace_root, &request.thread_id)?;
         let binding = entry.binding.lock().map_err(err_lock)?.clone();
         let mut active = entry.active.lock().map_err(err_lock)?;
+        if app.state::<crate::run_registry::RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
+        if entry.stopped.load(Ordering::SeqCst) { return Err("CLI session has been stopped".into()); }
         if active.is_some() { return Err("This workspace already has an active CLI turn.".into()); }
         let mut command = cli_command(&binding.harness)?;
         if binding.harness == "claude" {
@@ -273,9 +278,10 @@ pub async fn agent_cli_turn_start(
             }
             command.arg(text);
         }
-        let mut child = command.current_dir(&binding.workspace_root)
-            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-            .spawn().map_err(|error| format!("Failed to start {}: {error}", binding.harness))?;
+        crate::process::configure_process_tree(&mut command);
+        command.current_dir(&binding.workspace_root)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = crate::managed_process::spawn(&mut command).map_err(|error| format!("Failed to start {}: {error}", binding.harness))?;
         let stdout = child.stdout.take().ok_or("CLI stdout pipe unavailable")?;
         let stderr = child.stderr.take().ok_or("CLI stderr pipe unavailable")?;
         let turn_id = format!("cli-{}-{}", now(), entry.turn_counter.fetch_add(1, Ordering::Relaxed));
@@ -290,6 +296,23 @@ pub async fn agent_cli_turn_start(
             loop {
                 let status = process.lock().ok().and_then(|mut child| child.try_wait().ok()).flatten();
                 if let Some(status) = status {
+                    let mut reported = false;
+                    loop {
+                        let cleanup = process.lock().map_err(err_lock)
+                            .and_then(|mut child| child.terminate_remaining().map_err(|e| e.to_string()));
+                        match cleanup {
+                            Ok(()) => break,
+                            Err(error) => {
+                                if !reported {
+                                    if let Ok(binding) = entry.binding.lock() {
+                                        emit(&app, "agent.protocol_error", &binding, Some(&watcher_turn), Some(json!({"detail": format!("Cleanup not confirmed: {error}")})));
+                                    }
+                                    reported = true;
+                                }
+                                thread::sleep(Duration::from_millis(120));
+                            }
+                        }
+                    }
                     let _ = stdout_thread.join();
                     let _ = stderr_thread.join();
                     if let Ok(mut current) = entry.active.lock() {
@@ -314,15 +337,20 @@ pub fn agent_cli_turn_interrupt(state: State<'_, CliAgentManager>, request: CliI
     let active = entry.active.lock().map_err(err_lock)?;
     let (_, child) = active.as_ref().filter(|(id, _)| id == &request.turn_id)
         .ok_or("No matching running turn.")?;
-    let result = child.lock().map_err(err_lock)?.kill().map_err(|e| e.to_string());
+    let result = crate::process::terminate_tree(&mut *child.lock().map_err(err_lock)?);
     result
 }
 #[tauri::command]
 pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, owner: State<'_, AgentOwnership>, workspace_root: String) -> Result<(), String> {
-    if let Some(entry) = state.sessions.lock().map_err(err_lock)?.remove(&key(&workspace_root)) {
-        if let Some((_, child)) = entry.active.lock().map_err(err_lock)?.take() {
-            let _ = child.lock().map_err(err_lock)?.kill();
+    let mut sessions = state.sessions.lock().map_err(err_lock)?;
+    if let Some(entry) = sessions.get(&key(&workspace_root)).cloned() {
+        let mut active = entry.active.lock().map_err(err_lock)?;
+        entry.stopped.store(true, Ordering::SeqCst);
+        if let Some((_, child)) = active.as_ref() {
+            crate::process::terminate_tree(&mut *child.lock().map_err(err_lock)?)?;
         }
+        *active = None;
+        sessions.remove(&key(&workspace_root));
         if let Ok(binding) = entry.binding.lock() { owner.release(&workspace_root, &binding.harness); }
     }
     Ok(())
@@ -342,5 +370,20 @@ mod tests {
         assert_eq!(provider_session_id(&json!({"session_id":"abc"})), Some("abc"));
         assert_eq!(provider_session_id(&json!({"part":{"sessionID":"def"}})), Some("def"));
         assert_eq!(provider_session_id(&json!({"nonsense":"xyz"})), None);
+    }
+}
+
+impl CliAgentManager {
+    pub fn shutdown(&self) {
+        if let Ok(sessions) = self.sessions.lock() {
+            for session in sessions.values() {
+                session.stopped.store(true, Ordering::SeqCst);
+                if let Ok(active) = session.active.lock() {
+                    if let Some((_, child)) = active.as_ref() {
+                        if let Ok(mut child) = child.lock() { let _ = crate::process::terminate_tree(&mut child); }
+                    }
+                }
+            }
+        }
     }
 }
