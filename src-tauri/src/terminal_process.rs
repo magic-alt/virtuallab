@@ -56,8 +56,23 @@ impl TerminalProcess {
         loop {
             // The caller must not poll/wait/reap the leader until this succeeds.
             // An unreaped leader (including a zombie) pins the session identity.
-            if unsafe { libc::getsid(self.session) } != self.session {
-                return Err("Terminal session ownership lost before cleanup".into());
+            let sid = unsafe { libc::getsid(self.session) };
+            if sid != self.session {
+                // Darwin getsid cannot see a dead child, even before reaping.
+                // WNOWAIT still validates that this exact PID is our child.
+                let error = std::io::Error::last_os_error();
+                if sid != -1 || error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err("Terminal session ownership lost before cleanup".into());
+                }
+                if !self.leader_exited()? {
+                    // XNU can hide an exiting proc before publishing its exit
+                    // event. Keep the PID unreaped and retry within the deadline.
+                    if start.elapsed() >= std::time::Duration::from_secs(3) {
+                        return Err("Terminal leader exit observation timed out".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    continue;
+                }
             }
             let members = self.members(start + std::time::Duration::from_secs(3))?;
             if members.is_empty() {
@@ -153,7 +168,7 @@ fn missing_process_or_error() -> Result<(), String> {
         Err(error.to_string())
     }
 }
-fn inspect_processes(
+pub(crate) fn inspect_processes(
     command: &mut std::process::Command,
     deadline: std::time::Instant,
 ) -> Result<String, String> {
@@ -387,10 +402,11 @@ mod tests {
             assert!(Instant::now() < deadline, "shell exit was not observed");
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert_eq!(
-            unsafe { libc::getsid(fixture.owner.session) },
-            fixture.owner.session,
-            "exit detection must leave the leader unreaped"
+        // A second non-reaping observation must still find the owned child.
+        // getsid(zombie) is ESRCH on Darwin and is not an ownership test.
+        assert!(
+            fixture.owner.leader_exited().unwrap(),
+            "exit detection reaped the leader"
         );
         fixture.owner.terminate().unwrap();
         assert!(fixture.jobs.iter().all(|pid| !live(*pid)));

@@ -110,7 +110,14 @@ pub(crate) fn signal_group(pid: u32, signal: i32) -> Result<(), String> {
     // SAFETY: only the isolated group of an owned process is used; no pointers.
     if unsafe { libc::kill(-pid, signal) } == 0 { return Ok(()); }
     let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) { Ok(()) } else { Err(format!("Process group signal failed: {error}")) }
+    if error.raw_os_error() == Some(libc::ESRCH) { return Ok(()); }
+    #[cfg(target_os = "macos")]
+    if error.raw_os_error() == Some(libc::EPERM) && !mac_group_has_live_members(pid as u32)? {
+        // XNU killpg returns EPERM for an existing zombie-only group. Do not
+        // mask permission errors when any live group member still exists.
+        return Ok(());
+    }
+    Err(format!("Process group signal failed: {error}"))
 }
 #[cfg(unix)]
 pub(crate) fn group_exited(pid: u32) -> Result<bool, String> {
@@ -119,7 +126,10 @@ pub(crate) fn group_exited(pid: u32) -> Result<bool, String> {
     // SAFETY: signal zero only checks group existence/permission.
     if unsafe { libc::kill(-group, 0) } == -1 {
         let error = std::io::Error::last_os_error();
-        return if error.raw_os_error() == Some(libc::ESRCH) { Ok(true) } else { Err(error.to_string()) };
+        if error.raw_os_error() == Some(libc::ESRCH) { return Ok(true); }
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(libc::EPERM) { return mac_group_has_live_members(pid).map(|live| !live); }
+        return Err(error.to_string());
     }
     #[cfg(target_os = "linux")] {
         // Linux kill(0) also sees unreaped zombies, which cannot execute or hold pipes.
@@ -139,5 +149,34 @@ pub(crate) fn group_exited(pid: u32) -> Result<bool, String> {
         }
         return Ok(true);
     }
-    #[cfg(not(target_os = "linux"))] Ok(false)
+    #[cfg(target_os = "macos")] { return mac_group_has_live_members(pid).map(|live| !live); }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))] Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_group_has_live_members(group: u32) -> Result<bool, String> {
+    let mut command = background_command("/bin/ps");
+    command.args(["-A", "-o", "pgid=", "-o", "stat="]);
+    let snapshot = crate::terminal_process::inspect_processes(&mut command,
+        std::time::Instant::now() + std::time::Duration::from_millis(250))?;
+    live_group_in_snapshot(&snapshot, group)
+}
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn live_group_in_snapshot(snapshot: &str, group: u32) -> Result<bool, String> {
+    let mut live = false;
+    for line in snapshot.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.split_whitespace();
+        let pgid = fields.next().and_then(|s| s.parse::<u32>().ok()).ok_or("Invalid process group ID")?;
+        let state = fields.next().ok_or("Missing process group state")?;
+        if pgid == group && !state.starts_with(['Z', 'X']) { live = true; }
+    }
+    Ok(live)
+}
+#[cfg(all(test, unix))]
+#[test]
+fn group_snapshot_counts_live_members_but_not_zombies() {
+    assert!(!live_group_in_snapshot("42 Z+\n42 Z\n99 S", 42).unwrap());
+    assert!(live_group_in_snapshot("42 Z\n42 S+", 42).unwrap());
+    assert!(!live_group_in_snapshot("99 R", 42).unwrap());
+    assert!(live_group_in_snapshot("invalid S", 42).is_err());
 }

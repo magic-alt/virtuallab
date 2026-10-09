@@ -61,7 +61,7 @@ try {
   runStep(
     "Rust native tests",
     "cargo",
-    ["test", "--locked", "--manifest-path", "src-tauri/Cargo.toml"],
+    ["test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--", "--nocapture"],
     doctor.env,
   );
 } catch (error) {

@@ -94,10 +94,8 @@ jobs:
           git diff --exit-code -- src-tauri/Cargo.lock
       - run: npm ci
       - run: npm run icons:check
-      - name: Unix process lifecycle regressions
-        timeout-minutes: 5
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --nocapture
       - name: Run desktop acceptance
+        timeout-minutes: 10
         run: npm run acceptance:local
         env:
           # Monaco's production bundle can exceed Node's ~2 GiB default heap
