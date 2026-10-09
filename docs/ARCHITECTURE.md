@@ -151,6 +151,14 @@ V0.3 starts read-oriented: Git diff retrieval and GitHub PR/check metadata are r
 The local change count includes tracked and untracked status entries. Changes/Worktree lists unstaged tracked changes and untracked files or grouped directories; Staged lists index changes, while Base lists committed changes against the chosen base. Untracked entries show their status and path without calling the tracked Git diff adapter or enabling line drafts / mark-reviewed. Directory grouping follows the native Git status snapshot, so one untracked directory is one counted entry. Selecting any entry invalidates a pending diff request to prevent an older response from replacing the selected state.
 
 
+## GitHub PR discovery and merge boundary
+
+The GitHub workspace tab can enumerate open PRs from the current origin without checking out any branch. Native `github_list_pull_requests` loads a bounded list through `gh pr list --repo`; `github_context` uses a resolved PR number or local branch selector instead of an ambiguous bare `gh pr view`. The UI displays the full `statusCheckRollup` (success/pending/failure/neutral) and the GitHub mergeability and review decision fields.
+
+`github_merge_pull_request` is an explicit, typed, human-confirmed network mutation. It re-derives the repository from the selected local workspace origin; validates repository identity, merge method, and a full expected HEAD SHA; reloads current PR metadata and CI checks; and rejects drafts, missing/failed/pending checks, unknown mergeability, non-CLEAN GitHub merge state or blocked reviews. The merge uses GitHub's PR merge REST endpoint with a SHA precondition. GitHub remains authoritative for branch protection and merge permission. No local pull, checkout, force-push, auto-merge or branch deletion follows a merge.
+
+The frontend mirror in `src/lib/github.ts` only controls presentation: native checks must never be omitted because a button is disabled. Github CLI authentication stays outside VirtualLab; secrets are neither read into UI state nor persisted.
+
 ## V0.4 → V0.5 agent and verification bridge
 
 The first V0.4/V0.5 bridge keeps the workspace as the durable owner while adding a thin agent-harness runtime and versioned verification contracts.
