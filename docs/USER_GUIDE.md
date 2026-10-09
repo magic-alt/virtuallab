@@ -90,6 +90,17 @@ git status --short
 | Fetch + prune | 同步远端跟踪引用、清理失效 tracking refs | 不合并、不重置工作区文件 |
 | Pull | 快进更新当前分支 | 不执行 merge/reset |
 
+**macOS 上点击 Delete origin 出现“git-credential-osxkeychain”密码弹窗？** 该弹窗要求的是 Mac 登录钥匙串密码，不是 GitHub 密码。原来的后台 Git push/ls-remote/fetch 可能继承钥匙串凭据助手；更新后的 macOS 桌面版在 GitHub HTTPS origin 上改用 `gh auth git-credential`，并禁用后台交互式认证弹窗。首先在 macOS **终端**完成一次 GitHub CLI 授权：
+
+~~~bash
+brew install gh
+gh auth login --hostname github.com --git-protocol https
+gh auth status -h github.com
+git remote -v
+~~~
+
+如果 `gh` 没有安装或授权，VirtualLab 会拒绝删除并提示修复步骤，不会在后台反复弹出密码窗口。确认 GitHub 账号对 origin 仓库有删除分支权限；默认分支和受保护分支依然不能删除。**Delete origin 是服务端删除，区别于仅删除本地远端跟踪引用的 Fetch + prune。** 该配置只影响 VirtualLab 发起的 GitHub HTTPS 后台操作，不修改全局 Git 配置，不会把令牌写入仓库或命令行参数。SSH 等其他 origin 继续使用 Git 原有认证方式。
+
 ## 04 · Changes、Review、History
 
 Monaco 提供 **Unified（上下）** 和 **Side by side（左右）** 两种只读差异布局。
