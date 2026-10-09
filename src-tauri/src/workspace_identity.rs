@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Preserve case on Unix (including case-sensitive APFS). Resolve existing
 /// symlinks so two spellings of the same worktree cannot start two harnesses.
 pub(crate) fn key(path: &str) -> String {
-    let stripped = path.trim_end_matches(['/', '\\']);
+    let stripped = path.trim_end_matches(|ch| ch == '/' || ch == '\\');
     let effective = if stripped.is_empty() { path } else { stripped };
     let canonical = std::fs::canonicalize(effective)
         .unwrap_or_else(|_| PathBuf::from(effective));

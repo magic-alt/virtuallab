@@ -55,3 +55,9 @@ Run 记录只在本次应用进程内保留。Windows PTY 使用 taskkill 树清
 - 文件：`target/rc/release/bundle/nsis/VirtualLab_0.5.0_x64-setup.exe`（未签名，未安装验收）。
 - 此包生成于 Unix PTY 补丁之前，不代表最终 PR 候选 SHA；当时 SHA-256：`fba94eb7362986d416b02bc115ca983386d1c4383489b2dcc59b8a824f081c12`。
 - 同目录 `.exe.sha256` 文件可用于校验。
+
+## 2026-10-09 最新 main 与后续 Release Candidate
+
+PR #41 和 #42 已并入 main `cea4655bb1196d556a2ed88cc047c9bb41dbc27b`；本文件开头记载的 `cdcb093f6a94` 是原始审查基线，不应理解为当前 main HEAD。PR #43 从该最新基线建立 `release/v0.5.0-rc-qualification`，补充跨平台 Agent 工作区身份修复、真实 OS Runner 的未签名候选安装包构建、版本/SHA-256 清单和 Release Gate。详见 [RELEASE_CANDIDATE_CHECKLIST.md](RELEASE_CANDIDATE_CHECKLIST.md)。
+
+所有安装、认证、真实 GUI、签名/公证及 main 分支规则仍由维护者按核验记录关闭；不能根据 PR CI 的绿色状态自动发布。

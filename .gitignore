@@ -25,3 +25,6 @@ Thumbs.db
 # Local workbench state
 .virtuallab/
 .local-backups/
+
+# Unsigned candidate installers and metadata
+/dist-release/

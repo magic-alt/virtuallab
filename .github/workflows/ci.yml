@@ -27,6 +27,7 @@ jobs:
       - run: npm run icons:check
       - run: npm run typecheck
       - run: npm test
+      - run: node --test scripts/rc-assets.test.mjs
       - run: npm run build
 
   linux-native:
