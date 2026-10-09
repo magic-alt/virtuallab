@@ -281,3 +281,8 @@ has been observed and resolved on a physical Windows session.
 8. On Windows, packaged GUI must not flash console windows during provider capability checks or subprocess turns. This is a real desktop acceptance check, not asserted from CI.
 
 A green CI means tests/builds passed on that commit, not that provider credentials, remote API compatibility, desktop interaction or physical interlocks were validated.
+
+
+## Cross-project one-click workflow acceptance
+
+See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix. Manually verify detected npm and Tauri scripts, Qt CMake configure/build, Windows Keil UV4 batch build, a customized two-step profile across two worktrees, cancellation and stop-on-failure. Confirm that a cancelled Deploy prompt creates no process and that no implicit firmware flashing or remote publish occurs. Build workflow output is transient and must not be claimed as durable verification evidence.
