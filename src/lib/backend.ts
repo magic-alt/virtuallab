@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
+  BuildSuggestion,
+  BuildWorkflowSpec,
   DiffRequest,
   DiffResponse,
   ProcessSpec,
@@ -173,6 +175,41 @@ export async function terminalStop(id: string): Promise<void> {
 export async function processSpawn(spec: ProcessSpec): Promise<void> {
   requireDesktop();
   return invoke("process_spawn", { spec });
+}
+
+export async function buildWorkflowDiscover(workspaceRoot: string): Promise<BuildSuggestion[]> {
+  requireDesktop();
+  return invoke<BuildSuggestion[]>("build_workflow_discover", { workspaceRoot });
+}
+
+export async function buildWorkflowStart(spec: BuildWorkflowSpec): Promise<void> {
+  requireDesktop();
+  return invoke("build_workflow_start", { spec });
+}
+
+export async function buildWorkflowCancel(id: string): Promise<void> {
+  requireDesktop();
+  return invoke("build_workflow_cancel", { id });
+}
+
+/**
+ * Publishing or flashing is never automatic. A deployment workflow is a
+ * user-created recipe and must pass a native desktop confirmation on every run.
+ * This is a UI safety gate, not an OS sandbox or device-level interlock.
+ */
+export async function confirmDeploymentWorkflow(name: string, steps: BuildWorkflowSpec["steps"]): Promise<boolean> {
+  requireDesktop();
+  return confirm(
+    `Run deployment workflow "${name}"?\n\n` +
+      steps.map((step) => `${step.program} ${step.args.join(" ")}`).join("\n") +
+      "\n\nDeployment may write to external targets or publish artifacts. Verify the commands and destination first. VirtualLab does not enforce hardware safety.",
+    {
+      title: "Confirm deployment",
+      kind: "warning",
+      okLabel: "Run deployment",
+      cancelLabel: "Cancel",
+    },
+  );
 }
 
 export async function processStop(id: string): Promise<void> {
