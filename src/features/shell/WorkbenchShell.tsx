@@ -383,12 +383,12 @@ export function WorkbenchShell() {
   const native = isDesktopRuntime();
 
   return (
-    <div className="pixel-ui vl-workbench flex h-screen min-h-0 flex-col text-slate-100">
+    <div className="pixel-ui vl-workbench flex h-screen min-h-0 min-w-0 flex-col overflow-hidden text-slate-100">
       <div
-        className="vl-topbar flex h-12 shrink-0 items-center border-b px-4"
+        className="vl-topbar flex h-12 min-w-0 shrink-0 items-center gap-3 border-b px-3 sm:px-4"
         data-tauri-drag-region
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 shrink-0 items-center gap-2.5">
           <div className="flex size-7 items-center justify-center rounded-lg border border-orange-400/20 bg-orange-400/10 text-orange-300">
             <Layers3 size={15} />
           </div>
@@ -402,19 +402,21 @@ export function WorkbenchShell() {
           </div>
         </div>
 
-        <div className="mx-auto w-[420px]">
+        <div className="mx-auto min-w-0 w-full max-w-[420px] flex-1">
           <WorkspaceSearch value={searchQuery} onChange={setSearchQuery} />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge tone={native ? "green" : "amber"}>
             <Cpu size={11} />
             {native ? "Native" : "Web preview"}
           </Badge>
-          <Badge tone="orange">
-            <ShieldCheck size={11} />
-            Workspace execution
-          </Badge>
+          <span title="Workspace execution">
+            <Badge tone="orange">
+              <ShieldCheck size={11} />
+              <span className="hidden min-[1150px]:inline">Workspace execution</span>
+            </Badge>
+          </span>
         </div>
       </div>
 
@@ -506,15 +508,15 @@ export function WorkbenchShell() {
             }}
           />
 
-          <footer className="vl-footer flex h-7 shrink-0 items-center justify-between border-t px-3 text-[10px] text-stone-600">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5">
+          <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">
+            <div className="flex min-w-0 items-center gap-4">
+              <span className="flex shrink-0 items-center gap-1.5">
                 <Command size={11} />
                 local-first
               </span>
-              <span>workspace owns execution context</span>
+              <span className="min-w-0 truncate" title="workspace owns execution context">workspace owns execution context</span>
             </div>
-            <span className="mono text-orange-300/70">VirtualLab v{appManifest.version}</span>
+            <span className="mono shrink-0 text-orange-300/70">VirtualLab v{appManifest.version}</span>
           </footer>
         </section>
       </div>

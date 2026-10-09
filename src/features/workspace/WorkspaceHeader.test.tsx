@@ -14,6 +14,7 @@ describe("WorkspaceHeader", () => {
       <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0 }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
     );
 
+    expect(document.querySelector("header > div")).toHaveClass("flex-wrap");
     await user.click(screen.getByRole("button", { name: /refresh/i }));
     expect(onRefresh).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: /^fetch \+ prune$/i }));

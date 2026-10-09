@@ -32,9 +32,9 @@ export function WorkspaceHeader({
   const clean = snapshot.dirtyCount === 0;
 
   return (
-    <header className="vl-header border-b px-6 py-4">
-      <div className="flex items-start justify-between gap-5">
-        <div className="min-w-0">
+    <header className="vl-header min-w-0 shrink-0 border-b px-4 py-3 sm:px-6 sm:py-4">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-5 gap-y-3">
+        <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="truncate text-[20px] font-semibold tracking-[-0.02em] text-slate-100">
               {snapshot.name}
@@ -67,7 +67,7 @@ export function WorkspaceHeader({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Button
             disabled={isPreview || loading || gitBusy || !snapshot.remoteUrl}
             onClick={onFetch}

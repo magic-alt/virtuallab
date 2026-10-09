@@ -13,12 +13,14 @@
     "windows": [
       {
         "title": "VirtualLab Engineering Workbench",
-        "width": 1440,
-        "height": 900,
-        "minWidth": 1100,
-        "minHeight": 720,
+        "width": 1320,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 360,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true,
+        "maximized": true
       }
     ],
     "security": {

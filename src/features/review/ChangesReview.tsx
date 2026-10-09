@@ -318,7 +318,7 @@ export function ChangesReview({
         )}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(260px,340px)_minmax(0,1fr)] gap-4" data-testid="changes-review-grid">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(240px,340px)_minmax(0,1fr)]" data-testid="changes-review-grid">
         <section className="flex min-h-0 flex-col overflow-hidden border border-white/[0.07] bg-[#15100c]/92">
           <div className="shrink-0 border-b border-white/[0.06] px-4 py-3">
             <div className="text-sm font-medium text-slate-200">
