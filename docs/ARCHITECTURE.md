@@ -118,6 +118,16 @@ Interactive terminals and build/test processes are separate execution paths:
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
 
 
+## Project build workflow boundary
+
+The **Run** panel augments V0.2 profiles with worktree-local, read-only detection of package.json scripts, CMakeLists.txt (including Qt) and bounded Keil MDK *.uvprojx files. Detected recipes can be run directly or saved as editable repository-scoped profiles. A profile can contain multiple ordered `BuildStep { name, program, args[] }` entries. Persisted V0.2 single-command Build/Test profiles remain valid.
+
+One-step recipes retain the existing `process_spawn` route. Multi-step recipes invoke `build_workflow_start` in `src-tauri/src/build_workflows.rs`: one canonical working directory, independently spawned executable/argv vectors, output events on `build://event`, stop-on-first-failure, and a cancellable process tree/group. The frontend receives a final pass/fail/stopped status; exit code 0 alone is not a signed verification gate. Windows invocations reuse the background process adapter to avoid transient console windows.
+
+**Packaging is not deployment:** inferred Tauri package recipes build files but do not install/publish. Deployment is a *manually authored* profile and requires a Tauri-native confirmation every time. Because user scripts and executables can perform arbitrary writes, confirmation is only an explicit interaction gate, not a sandbox or hardware authority. Build suggestions do not trigger SDK installation, firmware flashing, motion, power or publication. No other repository is referenced by this feature.
+
+The workflow UI output ring and process lifetime are ephemeral; worktree/profile settings are persisted locally, not in Git. Restart reconciliation, durable run/evidence history and full process-tree cleanup remain separate V0.6–V0.8 acceptance items. See [project build workflows](PROJECT_BUILD_WORKFLOWS.md).
+
 ## V0.2 persisted workspace context
 
 The local Zustand store persists one workspace context per repository: active worktree path, active tab and update timestamp. Repository switching restores that context. If a remembered worktree no longer exists, VirtualLab falls back to the primary repository and Overview. Runtime PTY/process objects are deliberately not persisted.
