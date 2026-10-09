@@ -8,7 +8,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; identify untracked files and directories; save local line comments and track review state.
-- **Terminals and processes** — use workspace terminals and repository-scoped build/test profiles, with streamed output and run/stop controls.
+- **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
 - **GitHub context** — load repository-related pull requests, issues, and checks through the optional GitHub CLI; associate a workspace with an issue or pull request and explicitly confirm comment posting.
 - **Agent workspace** — connect optional Codex, DeepSeek-through-Codex, Claude Code, or OpenCode adapters, with workspace-specific session bindings, custom roles, opt-in skills, and a live event timeline.
 - **Verification infrastructure** — run supported process gates and record workspace-local evidence with Git revision metadata and SHA-256 artifact hashes.
@@ -60,7 +60,7 @@ The preview uses representative data. Native folder selection, Git operations, t
 1. Select **Add Repository** and choose a local Git repository.
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
 3. Use **Changes**, **History**, and **Overview** to inspect the selected workspace. Worktree lists unstaged and untracked entries; Staged shows index changes; Base compares committed changes against a selected ref. Untracked entries have status information but no tracked diff preview.
-4. Use **Terminal** for interactive work, or configure a repository-scoped profile in **Run**. Profiles execute in the selected workspace directory and can be reused across that repository's worktrees.
+4. Use **Terminal** for interactive work. In **Run**, choose an automatically detected one-click build/package recipe or save an editable multi-step Build/Test/Package/Deploy profile. Steps run sequentially in the selected worktree; Deploy requires explicit confirmation every time. See [Project Build Workflows](docs/PROJECT_BUILD_WORKFLOWS.md).
 5. Use **GitHub** or **Agents** when the corresponding optional integration is configured.
 
 For code review, select a changed tracked file and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
@@ -131,6 +131,7 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 | Guide | Contents |
 | --- | --- |
 | [Local build](docs/LOCAL_BUILD.md) | Platform setup, development modes, packaging, and troubleshooting |
+| [Project build workflows](docs/PROJECT_BUILD_WORKFLOWS.md) | npm, Keil and Qt/CMake presets, multi-step builds, deployment scope and acceptance |
 | [Architecture](docs/ARCHITECTURE.md) | Workspace model, native boundaries, events, and execution contracts |
 | [Review and GitHub](docs/V0.3_REVIEW_GITHUB.md) | Diff modes, local drafts, and GitHub integration |
 | [Agent harnesses](docs/V0.5_AGENT_HARNESSES.md) | Provider setup, session behavior, and integration limits |

@@ -2,6 +2,7 @@ mod agent;
 mod agent_ownership;
 mod agent_cli;
 mod execution;
+mod build_workflows;
 mod hardware;
 mod verification;
 mod git;
@@ -15,6 +16,7 @@ use agent::{
 };
 use agent_ownership::AgentOwnership;
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
+use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_start, BuildWorkflowManager};
 use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
@@ -29,6 +31,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
+        .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentManager::default())
         .manage(AgentOwnership::default())
@@ -54,6 +57,9 @@ pub fn run() {
             terminal_stop,
             process_spawn,
             process_stop,
+            build_workflow_discover,
+            build_workflow_start,
+            build_workflow_cancel,
             watch_start,
             watch_stop,
             agent_harness_capabilities,

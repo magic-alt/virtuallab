@@ -64,7 +64,42 @@ export interface WorkspaceMutationResult {
   branch: string;
 }
 
-export type ProcessProfileKind = "build" | "test";
+export type ProcessProfileKind = "build" | "test" | "package" | "deploy";
+
+export interface BuildStep {
+  name: string;
+  program: string;
+  args: string[];
+}
+
+export interface BuildSuggestion {
+  id: string;
+  name: string;
+  kind: ProcessProfileKind;
+  tool: string;
+  description: string;
+  supported: boolean;
+  steps: BuildStep[];
+}
+
+export interface BuildWorkflowSpec {
+  id: string;
+  cwd: string;
+  steps: BuildStep[];
+}
+
+export interface BuildWorkflowEvent {
+  eventType: "build.started" | "build.step_started" | "build.output" |
+    "build.step_exited" | "build.finished";
+  id: string;
+  stepIndex?: number | null;
+  stepName?: string | null;
+  stream?: "stdout" | "stderr" | "system" | null;
+  data?: string | null;
+  exitCode?: number | null;
+  result?: "passed" | "failed" | "stopped" | null;
+  timestampMs: number;
+}
 
 export interface ProcessProfile {
   id: string;
@@ -73,6 +108,8 @@ export interface ProcessProfile {
   repositoryRoot: string;
   program: string;
   args: string[];
+  /** Multi-step profiles use steps. Legacy profiles use program + args. */
+  steps?: BuildStep[];
 }
 
 export interface ProcessSpec {
