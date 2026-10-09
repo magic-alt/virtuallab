@@ -297,8 +297,15 @@ mod tests {
                     }
                 }
             }
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            // Test failure cleanup must itself be bounded so CI can print the
+            // original failure instead of waiting forever in a destructor.
+            if unsafe { libc::getsid(self.owner.session) } == self.owner.session {
+                unsafe { libc::kill(self.owner.session, libc::SIGKILL); }
+            }
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while matches!(self.child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
             let _ = std::fs::remove_dir_all(&self.directory);
         }
     }
