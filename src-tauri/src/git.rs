@@ -15,6 +15,7 @@ pub struct RepositorySnapshot {
     current_branch: String,
     head_sha: String,
     remote_url: Option<String>,
+    origin_default_branch: Option<String>,
     dirty_count: usize,
     staged_count: usize,
     unstaged_count: usize,
@@ -98,6 +99,13 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
     let remote_url = git_read_optional(&root, &["remote", "get-url", "origin"])
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    // A local hint for disabling the default-branch delete controls.
+    // Remote deletion independently verifies the *server's* current HEAD.
+    let origin_default_branch = git_read_optional(
+        &root,
+        &["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .and_then(|name| name.trim().strip_prefix("origin/").map(str::to_string));
 
     // Porcelain -z keeps spaces/Unicode lossless and reports rename/copy paths
     // as separate NUL-delimited fields. "normal" avoids recursively expanding
@@ -153,6 +161,7 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         current_branch,
         head_sha,
         remote_url,
+        origin_default_branch,
         dirty_count: changes.len(),
         staged_count,
         unstaged_count,
@@ -1011,6 +1020,78 @@ fn git_delete_local_branch_blocking(repository_root: String, branch: String) -> 
 }
 
 #[tauri::command]
+pub async fn git_delete_origin_branch(repository_root: String, branch: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        git_delete_origin_branch_blocking(repository_root, branch)
+    })
+    .await
+    .map_err(|error| format!("Git origin branch deletion task failed: {error}"))?
+}
+
+fn git_delete_origin_branch_blocking(repository_root: String, branch: String) -> Result<(), String> {
+    let root = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?
+        .trim()
+        .to_string();
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Select an origin branch to delete".to_string());
+    }
+    // Reject option-like / invalid ref names before interacting with the remote.
+    git_read(&root, &["check-ref-format", "--branch", branch])?;
+    if matches!(branch, "main" | "master") {
+        return Err(format!("Refusing to delete the default branch 'origin/{branch}'"));
+    }
+
+    let remote_ref = format!("refs/heads/{branch}");
+    // Consult origin, not a potentially stale refs/remotes/origin/HEAD.
+    // Resolve the branch SHA at the same time to use an explicit push lease.
+    let advertised = git_read(
+        &root,
+        &["ls-remote", "--symref", "origin", "HEAD", remote_ref.as_str()],
+    )?;
+    let remote_default = advertised
+        .lines()
+        .filter_map(|line| line.strip_prefix("ref: ")?.split_once('\t'))
+        .find_map(|(reference, target)| {
+            (target == "HEAD")
+                .then(|| reference.strip_prefix("refs/heads/"))
+                .flatten()
+        })
+        .ok_or_else(|| {
+            "Cannot verify origin's default branch; refusing to delete a remote branch".to_string()
+        })?;
+    if remote_default == branch {
+        return Err(format!("Refusing to delete the default branch 'origin/{branch}'"));
+    }
+
+    let expected_sha = advertised
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .find_map(|(sha, reference)| {
+            (reference == remote_ref
+                && (sha.len() == 40 || sha.len() == 64)
+                && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then_some(sha)
+        })
+        .ok_or_else(|| {
+            format!("Remote branch 'origin/{branch}' no longer exists. Use Fetch + prune to refresh.")
+        })?;
+
+    // An explicit destination refspec deletes only this branch (never tags).
+    // The lease rejects deletion if somebody pushed new commits since ls-remote.
+    let lease = format!("--force-with-lease={remote_ref}:{expected_sha}");
+    let deletion = format!(":{remote_ref}");
+    git(&root, &["push", "--porcelain", lease.as_str(), "origin", deletion.as_str()])
+        .map_err(|error| format!("Unable to delete 'origin/{branch}': {error}"))?;
+
+    // Reflect the successful server deletion immediately without touching any
+    // refs/heads/*, including a checked-out branch or another worktree.
+    let tracking_ref = format!("refs/remotes/origin/{branch}");
+    git(&root, &["update-ref", "-d", tracking_ref.as_str()])?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn git_pull_current(repository_root: String, workspace_root: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         git_pull_current_blocking(repository_root, workspace_root)
@@ -1409,6 +1490,99 @@ mod tests {
         assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".to_string()).is_err());
         assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_ok());
         assert!(git_delete_local_branch_blocking(path.clone(), "feat/no-such-branch".to_string()).is_err());
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn delete_origin_branch_keeps_local_refs_and_untracked_files() {
+        let (sandbox, repo) = init_fixture_repo("delete-origin");
+        let origin = sandbox.join("origin.git");
+        let origin_path = origin.to_string_lossy().to_string();
+        let path = repo.to_string_lossy().to_string();
+
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", &origin_path]);
+        git_ok(&repo, &["remote", "add", "origin", &origin_path]);
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+        // Even when a local branch is checked out and has unmerged work,
+        // deleting origin/foo is independent of deleting refs/heads/foo.
+        git_ok(&repo, &["switch", "-c", "feat/active"]);
+        fs::write(repo.join("new-feature.txt"), "unmerged work").unwrap();
+        git_ok(&repo, &["add", "new-feature.txt"]);
+        git_ok(&repo, &["commit", "-m", "feature-only commit"]);
+        git_ok(&repo, &["push", "-u", "origin", "feat/active"]);
+        fs::write(repo.join("untracked.txt"), "must be retained").unwrap();
+
+        git_delete_origin_branch_blocking(path.clone(), "feat/active".to_string())
+            .expect("delete origin while local is checked out");
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/active"]).is_ok());
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/remotes/origin/feat/active"]).is_err());
+        assert!(git_read(&path, &["ls-remote", "--heads", "origin", "refs/heads/feat/active"]).unwrap().is_empty());
+        assert_eq!(git_read(&path, &["branch", "--show-current"]).unwrap().trim(), "feat/active");
+        assert_eq!(fs::read_to_string(repo.join("untracked.txt")).unwrap(), "must be retained");
+        let kept = inspect_repository_blocking(path.clone()).unwrap();
+        let kept_branch = kept.branches.iter().find(|b| b.name == "feat/active").unwrap();
+        assert!(kept_branch.local && !kept_branch.remote);
+
+        // Remote-only refs are deletable too; there is no local branch.
+        git_ok(&repo, &["switch", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/remote-only"]);
+        git_ok(&repo, &["push", "-u", "origin", "feat/remote-only"]);
+        git_ok(&repo, &["switch", "main"]);
+        git_ok(&repo, &["branch", "-D", "feat/remote-only"]);
+        let before = inspect_repository_blocking(path.clone()).unwrap();
+        let remote_only = before.branches.iter().find(|b| b.name == "feat/remote-only").unwrap();
+        assert!(!remote_only.local && remote_only.remote);
+        git_delete_origin_branch_blocking(path.clone(), "feat/remote-only".to_string())
+            .expect("delete remote-only ref");
+        assert!(inspect_repository_blocking(path).unwrap().branches.iter().all(|b| b.name != "feat/remote-only"));
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn delete_origin_branch_rejects_default_stale_invalid_and_denied() {
+        let (sandbox, repo) = init_fixture_repo("delete-origin-guards");
+        let origin = sandbox.join("origin.git");
+        let origin_path = origin.to_string_lossy().to_string();
+        let path = repo.to_string_lossy().to_string();
+
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", &origin_path]);
+        git_ok(&repo, &["remote", "add", "origin", &origin_path]);
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        let error = git_delete_origin_branch_blocking(path.clone(), "main".to_string()).unwrap_err();
+        assert!(error.contains("default branch"), "{error}");
+        assert!(git_delete_origin_branch_blocking(path.clone(), "master".to_string()).is_err());
+        assert!(git_delete_origin_branch_blocking(path.clone(), "-D".to_string()).is_err());
+        assert!(git_delete_origin_branch_blocking(path.clone(), " ".to_string()).is_err());
+
+        git_ok(&repo, &["switch", "-c", "release/stable"]);
+        git_ok(&repo, &["push", "-u", "origin", "release/stable"]);
+        // The server's actual default branch is authoritative, even if the
+        // local refs/remotes/origin/HEAD hint still points at main.
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/release/stable"]);
+        let protected = git_delete_origin_branch_blocking(path.clone(), "release/stable".to_string())
+            .unwrap_err();
+        assert!(protected.contains("default branch"), "{protected}");
+        assert!(git_read(&path, &["ls-remote", "--heads", "origin", "refs/heads/release/stable"]).unwrap().contains("refs/heads/release/stable"));
+
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_ok(&origin, &["config", "receive.denyDeletes", "true"]);
+        let denied = git_delete_origin_branch_blocking(path.clone(), "release/stable".to_string())
+            .unwrap_err();
+        assert!(denied.contains("Unable to delete"), "{denied}");
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/remotes/origin/release/stable"]).is_ok());
+        git_ok(&origin, &["config", "--unset", "receive.denyDeletes"]);
+
+        git_delete_origin_branch_blocking(path.clone(), "release/stable".to_string())
+            .expect("delete after server allows it");
+        let missing = git_delete_origin_branch_blocking(path.clone(), "release/stable".to_string())
+            .unwrap_err();
+        assert!(missing.contains("no longer exists"), "{missing}");
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/release/stable"]).is_ok());
         let _ = fs::remove_dir_all(sandbox);
     }
 

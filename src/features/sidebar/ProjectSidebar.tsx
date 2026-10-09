@@ -24,6 +24,7 @@ interface Props {
   onRemoveWorkspace: (path: string) => void;
   onSwitchBranch: (branch: string) => void;
   onDeleteBranch: (branch: string) => void;
+  onDeleteOriginBranch: (branch: string) => void;
   branchActionsEnabled: boolean;
   workspaceActionsEnabled: boolean;
   repositoryActionsEnabled: boolean;
@@ -43,6 +44,7 @@ export function ProjectSidebar({
   onRemoveWorkspace,
   onSwitchBranch,
   onDeleteBranch,
+  onDeleteOriginBranch,
   branchActionsEnabled,
   workspaceActionsEnabled,
   repositoryActionsEnabled,
@@ -185,7 +187,7 @@ export function ProjectSidebar({
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
           <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
-            Current branch and main are pinned first. Untracked files are kept when switching safely; Fetch + prune removes stale origin refs.
+            Current branch and main are pinned first. Delete local and origin branches separately; Fetch + prune removes stale origin refs.
           </p>
           <div className="mt-2 space-y-1">
             {visibleBranches.map((branch) => {
@@ -194,7 +196,10 @@ export function ProjectSidebar({
                 branch.worktreePath &&
                 branch.worktreePath.replaceAll("\\", "/").toLowerCase() !== snapshot.root.replaceAll("\\", "/").toLowerCase(),
               );
-              const protectedBranch = branch.name === "main" || branch.name === "master";
+              const protectedBranch =
+                branch.name === "main" ||
+                branch.name === "master" ||
+                branch.name === snapshot.originDefaultBranch;
               return (
                 <div
                   key={branch.name}
@@ -232,6 +237,19 @@ export function ProjectSidebar({
                       className="shrink-0 rounded-md p-1.5 text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-25"
                     >
                       <Trash2 size={12} />
+                    </button>
+                  )}
+                  {branch.remote && !protectedBranch && (
+                    <button
+                      type="button"
+                      aria-label={`Delete origin branch origin/${branch.name}`}
+                      title={`Delete remote origin/${branch.name} (keeps the local branch and worktrees)`}
+                      disabled={!branchActionsEnabled}
+                      onClick={() => onDeleteOriginBranch(branch.name)}
+                      className="flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-1.5 text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-25"
+                    >
+                      <Trash2 size={12} />
+                      <span className="text-[9px]">origin</span>
                     </button>
                   )}
                 </div>

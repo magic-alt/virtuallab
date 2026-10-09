@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: native.invoke,
 }));
 
-import { deleteLocalBranchAfterConfirmation } from "./backend";
+import { deleteLocalBranchAfterConfirmation, deleteOriginBranchAfterConfirmation } from "./backend";
 
 describe("native local branch deletion confirmation", () => {
   beforeEach(() => {
@@ -85,5 +85,76 @@ describe("native local branch deletion confirmation", () => {
     await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/unmerged"))
       .rejects.toThrow("branch is not fully merged");
     expect(native.invoke).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("native origin branch deletion confirmation", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {},
+    });
+    native.confirm.mockReset();
+    native.invoke.mockReset();
+    native.invoke.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  });
+
+  it("does not contact origin until the user confirms its exact name", async () => {
+    let respond!: (confirmed: boolean) => void;
+    native.confirm.mockReturnValue(new Promise<boolean>((resolve) => { respond = resolve; }));
+    const deletion = deleteOriginBranchAfterConfirmation("/repo", "feat/remote");
+
+    expect(native.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('origin/feat/remote'),
+      expect.objectContaining({
+        title: "Delete origin Git branch",
+        kind: "warning",
+        okLabel: "Delete origin",
+        cancelLabel: "Cancel",
+      }),
+    );
+    expect(native.invoke).not.toHaveBeenCalled();
+    respond(true);
+    await expect(deletion).resolves.toBe(true);
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(native.invoke).toHaveBeenCalledWith("git_delete_origin_branch", {
+      repositoryRoot: "/repo",
+      branch: "feat/remote",
+    });
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the user cancels", async () => {
+    native.confirm.mockResolvedValue(false);
+    await expect(deleteOriginBranchAfterConfirmation("/repo", "feat/cancelled")).resolves.toBe(false);
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the dialog is unavailable", async () => {
+    native.confirm.mockRejectedValue(new Error("native dialog unavailable"));
+    await expect(deleteOriginBranchAfterConfirmation("/repo", "feat/denied"))
+      .rejects.toThrow("native dialog unavailable");
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  it("propagates rejected pushes instead of reporting deletion success", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockRejectedValue(new Error("remote rejected: protected branch"));
+    await expect(deleteOriginBranchAfterConfirmation("/repo", "feat/protected"))
+      .rejects.toThrow("protected branch");
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to invoke commands outside the desktop runtime", async () => {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+    await expect(deleteOriginBranchAfterConfirmation("/repo", "feat/web-preview"))
+      .rejects.toThrow("desktop runtime");
+    expect(native.confirm).not.toHaveBeenCalled();
+    expect(native.invoke).not.toHaveBeenCalled();
   });
 });

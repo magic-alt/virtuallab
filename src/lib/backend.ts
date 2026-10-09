@@ -72,6 +72,37 @@ export async function deleteLocalBranchAfterConfirmation(
   return true;
 }
 
+export async function gitDeleteOriginBranch(repositoryRoot: string, branch: string): Promise<void> {
+  requireDesktop();
+  return invoke("git_delete_origin_branch", { repositoryRoot, branch });
+}
+
+/**
+ * Unlike local deletion, this pushes a deletion to origin. A native warning
+ * must be accepted before the Rust command is ever invoked.
+ */
+export async function deleteOriginBranchAfterConfirmation(
+  repositoryRoot: string,
+  branch: string,
+): Promise<boolean> {
+  requireDesktop();
+  const confirmed = await confirm(
+    `Permanently delete the REMOTE branch "origin/${branch}"?\n\n` +
+      "This deletes the branch from the shared origin repository and may affect other collaborators. " +
+      "Your local branch and worktrees will be kept. Default branches are protected.",
+    {
+      title: "Delete origin Git branch",
+      kind: "warning",
+      okLabel: "Delete origin",
+      cancelLabel: "Cancel",
+    },
+  );
+
+  if (!confirmed) return false;
+  await gitDeleteOriginBranch(repositoryRoot, branch);
+  return true;
+}
+
 export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {
   requireDesktop();
   return invoke("git_fetch_origin", { repositoryRoot });
