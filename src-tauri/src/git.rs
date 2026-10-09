@@ -417,19 +417,26 @@ fn configure_github_https_git(command: &mut std::process::Command, gh_cli: Optio
 // globally changing Git credentials or the app's process environment.
 #[cfg(target_os = "macos")]
 fn macos_gh_cli() -> Option<&'static str> {
-    static GH: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
-    *GH.get_or_init(|| {
-        ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
-            .into_iter()
-            .find(|executable| {
-                background_command(executable)
-                    .arg("--version")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .is_ok_and(|status| status.success())
-            })
-    })
+    // Cache successful probes, but not absence: installing gh while VirtualLab
+    // is open must make the next remote operation usable without a restart.
+    static GH: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    if let Some(executable) = GH.get() {
+        return Some(*executable);
+    }
+    let discovered = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/opt/local/bin/gh"]
+        .into_iter()
+        .find(|executable| {
+            background_command(executable)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        });
+    if let Some(executable) = discovered {
+        let _ = GH.set(executable);
+    }
+    discovered
 }
 
 /// Only operations that contact origin pass through this path. On macOS,
