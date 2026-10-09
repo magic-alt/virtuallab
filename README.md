@@ -12,6 +12,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 - **GitHub context** — load repository-related pull requests, issues, and checks through the optional GitHub CLI; associate a workspace with an issue or pull request and explicitly confirm comment posting.
 - **Agent workspace** — connect optional Codex, DeepSeek-through-Codex, Claude Code, or OpenCode adapters, with workspace-specific session bindings, custom roles, opt-in skills, and a live event timeline.
 - **Verification infrastructure** — run supported process gates and record workspace-local evidence with Git revision metadata and SHA-256 artifact hashes.
+- **Offline illustrated Guide** — open **Guide** from the app top bar or workspace tabs, search Chinese how-to articles, see bundled diagrams, follow end-to-end npm/Qt/Keil/GitHub examples, and copy commands without a web connection or repository.
 
 Local repository inspection and review work without GitHub authentication or an agent provider. GitHub and agent features require their respective CLI tools, configuration, and credentials. The agent timeline is session-local; persistent searchable history is not provided. Hardware execution is not available through a bundled provider.
 
@@ -56,6 +57,8 @@ npm run dev
 The preview uses representative data. Native folder selection, Git operations, terminals, and process execution require the desktop application.
 
 ## Using VirtualLab
+
+**New to VirtualLab?** Click **Guide** in the top bar. The in-app help center works before any repository is imported and includes searchable workflow tutorials, local diagrams and executable examples. The companion [Chinese user guide](docs/USER_GUIDE.md) is also available on GitHub.
 
 1. Select **Add Repository** and choose a local Git repository.
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
@@ -130,6 +133,7 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 
 | Guide | Contents |
 | --- | --- |
+| [Illustrated user guide / 图文使用指南](docs/USER_GUIDE.md) | Third-party onboarding, in-app Guide navigation, workflow diagrams, practical npm/Qt/Keil examples, GitHub review and troubleshooting |
 | [Local build](docs/LOCAL_BUILD.md) | Platform setup, development modes, packaging, and troubleshooting |
 | [Project build workflows](docs/PROJECT_BUILD_WORKFLOWS.md) | npm, Keil and Qt/CMake presets, multi-step builds, deployment scope and acceptance |
 | [Architecture](docs/ARCHITECTURE.md) | Workspace model, native boundaries, events, and execution contracts |

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">VirtualLab agent and hardware boundaries</title><desc id="desc">A workspace attaches to optional Agent adapters and typed native services; hardware-changing commands remain blocked without an independent provider</desc>
+<defs><linearGradient id="bg" x2="1"><stop stop-color="#2a211d"/><stop offset="1" stop-color="#4c2c22"/></linearGradient><marker id="a" markerWidth="11" markerHeight="11" refX="9" refY="5" orient="auto"><path d="M0 0L9 5L0 10Z" fill="#f0a773"/></marker></defs>
+<rect width="1200" height="420" rx="18" fill="url(#bg)"/>
+<text x="40" y="44" fill="#ffc18a" font-family="Segoe UI,Arial" font-size="16" font-weight="800" letter-spacing="2">AGENT HARNESS &amp; CONTROL BOUNDARIES</text>
+<text x="1150" y="44" fill="#c6a48f" font-family="Segoe UI,Arial" text-anchor="end" font-size="12">WORKSPACE OWNS CONTEXT</text>
+<rect x="45" y="100" width="288" height="215" rx="12" fill="#614029" stroke="#dc9458" stroke-width="1.6"/>
+<text x="67" y="134" fill="#ffe1c4" font-family="Segoe UI,Arial" font-size="14" font-weight="800">WORKSPACE · local worktree</text>
+<rect x="66" y="154" width="246" height="48" rx="6" fill="#30251e"/><text x="86" y="184" fill="#fff1e4" font-family="Consolas,monospace" font-size="14">HEAD / Changes / Run</text>
+<rect x="66" y="214" width="246" height="48" rx="6" fill="#30251e"/><text x="86" y="244" fill="#fff1e4" font-family="Consolas,monospace" font-size="14">Review / Terminal</text>
+<text x="66" y="292" fill="#edba93" font-family="Segoe UI,Arial" font-size="12">Human-owned project context</text>
+<path d="M338 206H398" stroke="#f0a773" stroke-width="3" marker-end="url(#a)"/>
+<rect x="406" y="100" width="282" height="215" rx="12" fill="#3c3028" stroke="#c39a79"/>
+<text x="427" y="134" fill="#f3cda9" font-family="Segoe UI,Arial" font-size="14" font-weight="800">OPTIONAL AGENT ADAPTERS</text>
+<text x="430" y="177" fill="#fff1e3" font-family="Segoe UI,Arial" font-size="16">Codex App-server</text>
+<text x="430" y="207" fill="#f1d0b3" font-family="Segoe UI,Arial" font-size="15">DeepSeek · via Codex</text>
+<text x="430" y="237" fill="#f1d0b3" font-family="Segoe UI,Arial" font-size="15">Claude Code / OpenCode</text>
+<text x="430" y="285" fill="#d2aa88" font-family="Segoe UI,Arial" font-size="12">Attach / Turn / Interrupt</text>
+<path d="M694 206H758" stroke="#f0a773" stroke-width="3" marker-end="url(#a)"/>
+<rect x="765" y="100" width="389" height="101" rx="12" fill="#304431" stroke="#88ad86"/>
+<text x="786" y="133" fill="#d7f2ce" font-family="Segoe UI,Arial" font-size="14" font-weight="800">TYPED NATIVE SERVICES · Tauri/Rust</text>
+<text x="787" y="165" fill="#ddf5db" font-family="Segoe UI,Arial" font-size="15">Git  ·  PTY  ·  Build  ·  Verification</text>
+<text x="787" y="186" fill="#b9d4b7" font-family="Segoe UI,Arial" font-size="11">Execution is still subject to local trust boundaries</text>
+<path d="M959 205v29" stroke="#e5786a" stroke-width="3" stroke-dasharray="5 5"/>
+<path d="M937 244h45" stroke="#ff9584" stroke-width="5"/>
+<rect x="765" y="254" width="389" height="103" rx="12" fill="#4a2725" stroke="#dd7a70"/>
+<text x="786" y="288" fill="#ffb0a5" font-family="Segoe UI,Arial" font-size="14" font-weight="800">PHYSICAL ACTIONS · DENIED BY DEFAULT</text>
+<text x="786" y="319" fill="#fff1e3" font-family="Segoe UI,Arial" font-size="15">Motion  ·  Power  ·  Flash  ·  Release</text>
+<text x="786" y="340" fill="#f0afaa" font-family="Segoe UI,Arial" font-size="11">No bundled hardware provider or device authorization</text>
+<text x="44" y="383" fill="#ddbaa1" font-family="Segoe UI,Arial" font-size="12">Human acknowledgement in the UI is not a physical safety interlock. Independent hardware enforcement is required.</text>
+</svg>

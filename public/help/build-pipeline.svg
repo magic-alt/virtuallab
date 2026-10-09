@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">Project workflow lifecycle</title><desc id="desc">Detect npm CMake/Qt or Keil project, choose a workflow, run ordered steps and inspect logs and final status</desc>
+<defs><linearGradient id="bg" x2="1"><stop stop-color="#251e1b"/><stop offset="1" stop-color="#473024"/></linearGradient><marker id="tip" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L8 5L0 10Z" fill="#d88e56"/></marker></defs>
+<rect width="1200" height="420" rx="18" fill="url(#bg)"/>
+<text x="46" y="45" fill="#ffbd80" font-family="Segoe UI,Arial" font-size="16" font-weight="800" letter-spacing="2">REPRODUCIBLE BUILD WORKFLOWS</text>
+<text x="1153" y="45" fill="#bfa18c" font-family="Segoe UI,Arial" text-anchor="end" font-size="12">DETECTION DOES NOT EXECUTE</text>
+<rect x="43" y="100" width="231" height="248" rx="12" fill="#433025" stroke="#996743"/>
+<text x="62" y="131" font-family="Segoe UI,Arial" fill="#ffc28d" font-size="13" font-weight="800">01 · DETECT PROJECT</text>
+<rect x="61" y="150" width="193" height="51" rx="6" fill="#694024"/><text x="78" y="172" font-family="Segoe UI,Arial" fill="#fff2e1" font-size="15" font-weight="700">npm / Tauri</text><text x="78" y="190" font-family="Consolas,monospace" fill="#d5aa83" font-size="11">package.json</text>
+<rect x="61" y="208" width="193" height="51" rx="6" fill="#694024"/><text x="78" y="230" font-family="Segoe UI,Arial" fill="#fff2e1" font-size="15" font-weight="700">CMake / Qt</text><text x="78" y="247" font-family="Consolas,monospace" fill="#d5aa83" font-size="11">CMakeLists.txt</text>
+<rect x="61" y="266" width="193" height="51" rx="6" fill="#694024"/><text x="78" y="287" font-family="Segoe UI,Arial" fill="#fff2e1" font-size="15" font-weight="700">Keil MDK</text><text x="78" y="305" font-family="Consolas,monospace" fill="#d5aa83" font-size="11">*.uvprojx</text>
+<path d="M281 224h65" fill="none" stroke="#d88e56" stroke-width="3" marker-end="url(#tip)"/>
+<rect x="354" y="140" width="208" height="170" rx="12" fill="#433025" stroke="#996743"/>
+<text x="373" y="172" font-family="Segoe UI,Arial" fill="#ffc28d" font-size="13" font-weight="800">02 · SELECT PROFILE</text>
+<text x="375" y="212" font-family="Segoe UI,Arial" fill="#f6e4d5" font-size="18" font-weight="700">One-click build</text>
+<text x="375" y="240" font-family="Segoe UI,Arial" fill="#e9bf9d" font-size="13">or save custom steps</text>
+<rect x="373" y="259" width="171" height="31" rx="6" fill="#ed9452"/><text x="459" y="279" text-anchor="middle" font-family="Segoe UI,Arial" font-weight="800" font-size="13" fill="#322016">Build now →</text>
+<path d="M567 224h65" fill="none" stroke="#d88e56" stroke-width="3" marker-end="url(#tip)"/>
+<rect x="638" y="112" width="241" height="225" rx="12" fill="#433025" stroke="#996743"/>
+<text x="656" y="145" font-family="Segoe UI,Arial" fill="#ffc28d" font-size="13" font-weight="800">03 · EXECUTE STEPS</text>
+<circle cx="672" cy="188" r="12" fill="#7b9f75"/><text x="672" y="193" fill="#fff" font-family="Segoe UI,Arial" text-anchor="middle" font-size="12">1</text>
+<text x="694" y="192" fill="#fff2e1" font-family="Consolas,monospace" font-size="14">configure</text>
+<path d="M672 203v30" stroke="#ac8061" stroke-width="2"/>
+<circle cx="672" cy="251" r="12" fill="#cf8b53"/><text x="672" y="256" fill="#fff" font-family="Segoe UI,Arial" text-anchor="middle" font-size="12">2</text>
+<text x="694" y="255" fill="#fff2e1" font-family="Consolas,monospace" font-size="14">compile</text>
+<text x="657" y="301" fill="#d9ab89" font-family="Segoe UI,Arial" font-size="11">stop on first failing step</text>
+<path d="M885 224h65" fill="none" stroke="#d88e56" stroke-width="3" marker-end="url(#tip)"/>
+<rect x="956" y="140" width="198" height="170" rx="12" fill="#24382b" stroke="#729879"/>
+<text x="974" y="172" font-family="Segoe UI,Arial" fill="#b5deb3" font-size="13" font-weight="800">04 · INSPECT</text>
+<text x="976" y="215" font-family="Consolas,monospace" fill="#effce9" font-size="15">stdout / stderr</text>
+<text x="976" y="244" font-family="Consolas,monospace" fill="#effce9" font-size="15">exit status</text>
+<rect x="975" y="263" width="153" height="25" rx="6" fill="#41664a"/><text x="1052" y="279" text-anchor="middle" font-family="Segoe UI,Arial" font-size="12" font-weight="700" fill="#d9ffdc">PASS / FAIL / STOP</text>
+<text x="44" y="384" fill="#d0b5a0" font-family="Segoe UI,Arial" font-size="12">Build and Package produce artifacts; Deploy is a separate manually authored workflow requiring confirmation.</text>
+</svg>

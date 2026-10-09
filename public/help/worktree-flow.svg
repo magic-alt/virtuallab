@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+<title id="title">Parallel Git worktrees</title><desc id="desc">One Git repository and its main branch spawn two independent worktrees for development and review</desc>
+<defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="#302117"/><stop offset="1" stop-color="#57341e"/></linearGradient><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L10 5L0 10Z" fill="#ed995e"/></marker></defs>
+<rect width="1200" height="420" rx="18" fill="url(#b)"/>
+<text x="45" y="47" fill="#ffc08d" font-family="Segoe UI,Arial" font-size="16" letter-spacing="2.5" font-weight="750">ISOLATED WORKSPACE LANES</text>
+<text x="1150" y="47" fill="#c4a086" text-anchor="end" font-family="Segoe UI,Arial" font-size="11">ONE REPOSITORY · MULTIPLE DIRECTORIES</text>
+<rect x="53" y="113" width="280" height="201" rx="14" fill="#3f2c21" stroke="#ba7547" stroke-width="2"/>
+<rect x="53" y="113" width="280" height="43" rx="14" fill="#9a521f"/><rect x="53" y="138" width="280" height="18" fill="#9a521f"/>
+<text x="76" y="141" font-family="Segoe UI,Arial" fill="#ffebd7" font-size="15" font-weight="800">REPOSITORY</text>
+<text x="76" y="191" font-family="Consolas,monospace" fill="#fff1df" font-size="22">demo-project.git</text>
+<text x="76" y="228" font-family="Segoe UI,Arial" fill="#cda58a" font-size="13">shared history &amp; objects</text>
+<path d="M84 256h140" stroke="#b8825e" stroke-width="2"/><circle cx="84" cy="256" r="6" fill="#f5a35e"/><circle cx="154" cy="256" r="6" fill="#f5a35e"/><circle cx="224" cy="256" r="6" fill="#f5a35e"/>
+<text x="76" y="291" font-family="Consolas,monospace" fill="#f7c6a2" font-size="13">base: main</text>
+<path d="M333 195H409Q435 195 435 171V125H513" fill="none" stroke="#ed995e" stroke-width="3" marker-end="url(#arrow)"/>
+<path d="M333 229H409Q435 229 435 258V296H513" fill="none" stroke="#ed995e" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="533" y="83" width="598" height="119" rx="13" fill="#3a2c25" stroke="#dca270" stroke-width="1.7"/>
+<rect x="533" y="83" width="6" height="119" rx="3" fill="#f7a462"/>
+<text x="561" y="112" font-family="Segoe UI,Arial" fill="#f8b67e" font-size="13" font-weight="750">WORKTREE / FEATURE</text>
+<text x="561" y="148" font-family="Consolas,monospace" fill="#fff4e3" font-size="21">feat/telemetry</text>
+<text x="561" y="178" font-family="Consolas,monospace" fill="#bea38f" font-size="13">../demo-telemetry/  →  Terminal / Run / Changes</text>
+<rect x="533" y="237" width="598" height="119" rx="13" fill="#3a2c25" stroke="#96bb9d" stroke-width="1.7"/>
+<rect x="533" y="237" width="6" height="119" rx="3" fill="#76ac86"/>
+<text x="561" y="267" font-family="Segoe UI,Arial" fill="#add7b8" font-size="13" font-weight="750">WORKTREE / REVIEW</text>
+<text x="561" y="302" font-family="Consolas,monospace" fill="#fff4e3" font-size="21">fix/build-timeout</text>
+<text x="561" y="331" font-family="Consolas,monospace" fill="#bea38f" font-size="13">../demo-review/  →  Terminal / Run / Changes</text>
+<text x="54" y="380" font-family="Segoe UI,Arial" font-size="13" fill="#e9c9aa">A branch may be checked out in only one worktree at a time. Changes remain in their own working directory.</text>
+</svg>
