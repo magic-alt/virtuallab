@@ -246,7 +246,7 @@ function Overview({
 
       <Panel
         title="Control plane"
-        subtitle="V0.2 separates interactive PTY, structured processes and reversible worktree mutation behind typed native commands."
+        subtitle="Git, PTY terminals, build workflows and optional agent harnesses are organized by workspace."
         icon={<MonitorDot size={16} />}
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -265,8 +265,8 @@ function Overview({
           <CapabilityCard
             icon={<CircleDot size={16} />}
             title="Agent harness"
-            description="Native Codex App Server foundation is present; its full agent workspace UI is not yet enabled."
-            state="next"
+            description="Codex, DeepSeek, Claude Code and OpenCode adapters are available from Agents when configured on this host."
+            state="available"
           />
         </div>
       </Panel>
@@ -287,7 +287,7 @@ function Checks({
     <div className="mx-auto max-w-[980px]">
       <Panel
         title="Local readiness checks"
-        subtitle="Normalized V0.2 check results; durable evidence and release gates arrive in V0.4."
+        subtitle="Local repository readiness; the restricted native verification evidence pipeline is separate from these checks."
         icon={<ListChecks size={16} />}
       >
         <div className="space-y-2">
