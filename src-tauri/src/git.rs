@@ -375,6 +375,132 @@ fn git_read_optional(repo: &str, args: &[&str]) -> Option<String> {
     git_read(repo, args).ok()
 }
 
+/**
+ * Restrict macOS GUI-origin authentication to GitHub HTTPS remotes. SSH and
+ * non-GitHub origins must continue using the user's existing Git transport.
+ * Compare only the authority: a malicious github.com.example host must never
+ * be handed GitHub credentials.
+ */
+fn is_github_https_remote(remote_url: &str) -> bool {
+    let Some(remainder) = remote_url.trim().strip_prefix("https://") else {
+        return false;
+    };
+    let authority = remainder.split('/').next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    host.eq_ignore_ascii_case("github.com") || host.eq_ignore_ascii_case("github.com:443")
+}
+
+/// Per-child Git config. An empty helper resets inherited osxkeychain/GCM
+/// helpers; the authenticated GitHub CLI is then the *only* credential helper.
+/// This never modifies ~/.gitconfig, persists a token, or puts a token in argv.
+fn configure_github_https_git(command: &mut std::process::Command, gh_cli: Option<&str>) {
+    command
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_ASKPASS", "/usr/bin/false")
+        .env("GCM_INTERACTIVE", "Never")
+        .env("GIT_CONFIG_COUNT", if gh_cli.is_some() { "2" } else { "1" })
+        .env("GIT_CONFIG_KEY_0", "credential.helper")
+        .env("GIT_CONFIG_VALUE_0", "");
+
+    if let Some(executable) = gh_cli {
+        command
+            .env("GIT_CONFIG_KEY_1", "credential.helper")
+            .env(
+                "GIT_CONFIG_VALUE_1",
+                format!("!{executable} auth git-credential"),
+            );
+    }
+}
+
+// Finder-launched .app processes do not necessarily inherit Homebrew's PATH.
+// Use the same installed gh binary as the developer's normal terminal without
+// globally changing Git credentials or the app's process environment.
+#[cfg(target_os = "macos")]
+fn macos_gh_cli() -> Option<&'static str> {
+    // Cache successful probes, but not absence: installing gh while VirtualLab
+    // is open must make the next remote operation usable without a restart.
+    static GH: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    if let Some(executable) = GH.get() {
+        return Some(*executable);
+    }
+    let discovered = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/opt/local/bin/gh"]
+        .into_iter()
+        .find(|executable| {
+            background_command(executable)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        });
+    if let Some(executable) = discovered {
+        let _ = GH.set(executable);
+    }
+    discovered
+}
+
+/// Only operations that contact origin pass through this path. On macOS,
+/// GitHub HTTPS remotes use gh's existing authentication rather than triggering
+/// a native git-credential-osxkeychain password dialog for each deletion.
+/// Linux/Windows and SSH/non-GitHub remotes keep their existing Git behavior.
+fn git_origin_network(repo: &str, args: &[&str], pushing: bool) -> Result<String, String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pushing;
+        git(repo, args)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let remote_url = if pushing {
+            git_read(repo, &["remote", "get-url", "--push", "origin"])?
+        } else {
+            git_read(repo, &["remote", "get-url", "origin"])?
+        };
+        if !is_github_https_remote(&remote_url) {
+            return git(repo, args);
+        }
+
+        let gh_cli = macos_gh_cli();
+        if pushing && gh_cli.is_none() {
+            return Err(
+                "GitHub HTTPS branch deletion on macOS requires the GitHub CLI (gh) to avoid repeated Keychain prompts. Install gh, run 'gh auth login -h github.com', and retry; alternatively use an SSH origin URL.".to_string()
+            );
+        }
+
+        let mut command = background_command("git");
+        configure_github_https_git(&mut command, gh_cli);
+        let output = command
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .map_err(|error| format!("Failed to launch git: {error}"))?;
+
+        if output.status.success() {
+            String::from_utf8(output.stdout)
+                .map_err(|error| format!("Git output was not valid UTF-8: {error}"))
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let lower = detail.to_ascii_lowercase();
+            if lower.contains("authentication failed")
+                || lower.contains("could not read username")
+                || lower.contains("could not read password")
+                || lower.contains("gh auth login")
+                || lower.contains("no oauth token")
+                || lower.contains("terminal prompts disabled")
+            {
+                Err(format!(
+                    "GitHub authentication is unavailable. In Terminal run 'gh auth login -h github.com' and verify repository write permission. Git detail: {detail}"
+                ))
+            } else if detail.is_empty() {
+                Err(format!("Git command failed with {}", output.status))
+            } else {
+                Err(detail)
+            }
+        }
+    }
+}
+
 
 
 
@@ -967,7 +1093,7 @@ fn git_fetch_origin_blocking(repository_root: String) -> Result<(), String> {
     let repository = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?;
     // Keep origin/* consistent with refs still advertised by origin.
     // Pruning remote-tracking refs never deletes local refs/heads/*.
-    git(repository.trim(), &["fetch", "--prune", "origin"])?;
+    git_origin_network(repository.trim(), &["fetch", "--prune", "origin"], false)?;
     Ok(())
 }
 
@@ -1045,9 +1171,10 @@ fn git_delete_origin_branch_blocking(repository_root: String, branch: String) ->
     let remote_ref = format!("refs/heads/{branch}");
     // Consult origin, not a potentially stale refs/remotes/origin/HEAD.
     // Resolve the branch SHA at the same time to use an explicit push lease.
-    let advertised = git_read(
+    let advertised = git_origin_network(
         &root,
         &["ls-remote", "--symref", "origin", "HEAD", remote_ref.as_str()],
+        false,
     )?;
     let remote_default = advertised
         .lines()
@@ -1081,7 +1208,7 @@ fn git_delete_origin_branch_blocking(repository_root: String, branch: String) ->
     // The lease rejects deletion if somebody pushed new commits since ls-remote.
     let lease = format!("--force-with-lease={remote_ref}:{expected_sha}");
     let deletion = format!(":{remote_ref}");
-    git(&root, &["push", "--porcelain", lease.as_str(), "origin", deletion.as_str()])
+    git_origin_network(&root, &["push", "--porcelain", lease.as_str(), "origin", deletion.as_str()], true)
         .map_err(|error| format!("Unable to delete 'origin/{branch}': {error}"))?;
 
     // Reflect the successful server deletion immediately without touching any
@@ -1110,7 +1237,7 @@ fn git_pull_current_blocking(repository_root: String, workspace_root: String) ->
     }
     // Supplying origin and the checked-out branch avoids pulling from a
     // surprising upstream; --ff-only refuses diverged histories.
-    git(&workspace, &["pull", "--ff-only", "origin", branch])?;
+    git_origin_network(&workspace, &["pull", "--ff-only", "origin", branch], false)?;
     Ok(())
 }
 
@@ -1491,6 +1618,53 @@ mod tests {
         assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_ok());
         assert!(git_delete_local_branch_blocking(path.clone(), "feat/no-such-branch".to_string()).is_err());
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn github_https_detection_never_matches_ssh_or_lookalike_hosts() {
+        assert!(is_github_https_remote("https://github.com/example/repo.git"));
+        assert!(is_github_https_remote("https://GITHUB.COM:443/example/repo.git"));
+        assert!(is_github_https_remote("https://user@github.com/example/repo.git"));
+        for url in [
+            "git@github.com:example/repo.git",
+            "ssh://git@github.com/example/repo.git",
+            "https://github.com.evil.example/example/repo.git",
+            "https://notgithub.com/example/repo.git",
+            "https://github.com:444/example/repo.git",
+            "http://github.com/example/repo.git",
+            "https://gitlab.com/example/repo.git",
+        ] {
+            assert!(!is_github_https_remote(url), "unexpected GitHub URL: {url}");
+        }
+    }
+
+    #[test]
+    fn github_https_child_git_disables_inherited_keychain_helpers() {
+        fn env(command: &std::process::Command, key: &str) -> Option<String> {
+            command
+                .get_envs()
+                .find(|(name, _)| *name == std::ffi::OsStr::new(key))
+                .and_then(|(_, value)| value)
+                .map(|value| value.to_string_lossy().to_string())
+        }
+
+        let mut with_gh = background_command("git");
+        configure_github_https_git(&mut with_gh, Some("/opt/homebrew/bin/gh"));
+        assert_eq!(env(&with_gh, "GIT_TERMINAL_PROMPT").as_deref(), Some("0"));
+        assert_eq!(env(&with_gh, "GIT_ASKPASS").as_deref(), Some("/usr/bin/false"));
+        assert_eq!(env(&with_gh, "GIT_CONFIG_COUNT").as_deref(), Some("2"));
+        assert_eq!(env(&with_gh, "GIT_CONFIG_KEY_0").as_deref(), Some("credential.helper"));
+        assert_eq!(env(&with_gh, "GIT_CONFIG_VALUE_0").as_deref(), Some(""));
+        assert_eq!(
+            env(&with_gh, "GIT_CONFIG_VALUE_1").as_deref(),
+            Some("!/opt/homebrew/bin/gh auth git-credential")
+        );
+
+        let mut without_gh = background_command("git");
+        configure_github_https_git(&mut without_gh, None);
+        assert_eq!(env(&without_gh, "GIT_CONFIG_COUNT").as_deref(), Some("1"));
+        assert_eq!(env(&without_gh, "GIT_CONFIG_VALUE_0").as_deref(), Some(""));
+        assert!(env(&without_gh, "GIT_CONFIG_KEY_1").is_none());
     }
 
     #[test]

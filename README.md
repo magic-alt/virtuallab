@@ -31,6 +31,8 @@ Local repository inspection and review work without GitHub authentication or an 
 
 Optional integrations require an installed and configured provider CLI. GitHub features use the existing `gh` authentication session. See the [agent harness guide](docs/V0.5_AGENT_HARNESSES.md) for agent setup and provider limitations.
 
+**macOS + GitHub HTTPS origin:** VirtualLab runs Fetch/Pull/Delete origin as background Git operations. To prevent repeated `git-credential-osxkeychain` dialogs from a packaged .app, these operations use the existing `gh auth git-credential` session when `gh` is installed; missing credentials fail with actionable errors instead of opening a hidden prompt. Install GitHub CLI (`brew install gh`), then run `gh auth login --hostname github.com --git-protocol https` and verify `gh auth status -h github.com` in Terminal. Authorize an account with write access before deleting a shared branch. SSH and non-GitHub origins retain normal Git authentication. VirtualLab never saves a GitHub token or rewrites your global Git credential configuration.
+
 ## Quick start
 
 Clone the repository and install the locked dependencies:
