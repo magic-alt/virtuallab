@@ -290,7 +290,7 @@ describe("GithubPanel", () => {
     await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
     expect(await screen.findByText("windows build")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Merge PR" })).toBeDisabled();
-    expect(screen.getByText("1 CI check(s) failed.")).toBeInTheDocument();
+    expect(screen.getByText(/1 CI check\\(s\\) failed\\./)).toBeInTheDocument();
     expect(adapter.mergePullRequest).not.toHaveBeenCalled();
   });
 
