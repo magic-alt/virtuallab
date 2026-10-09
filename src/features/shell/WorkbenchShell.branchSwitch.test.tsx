@@ -34,7 +34,11 @@ vi.mock("@/lib/backend", () => ({
 }));
 
 vi.mock("@/features/workspace/WorkspaceContent", () => ({
-  WorkspaceContent: () => <div data-testid="workspace-content" />,
+  WorkspaceContent: ({ tab, onTabChange }: { tab: string; onTabChange: (tab: "history") => void }) => (
+    <div data-testid="workspace-content" data-active-tab={tab}>
+      <button type="button" onClick={() => onTabChange("history")}>History</button>
+    </div>
+  ),
 }));
 
 import { WorkbenchShell } from "./WorkbenchShell";
@@ -114,7 +118,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     await user.click(screen.getByRole("menuitem", { name: /使用文档/ }));
     await user.click(screen.getByRole("button", { name: "关闭文档" }));
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeTab).toBe("history");
-    expect(screen.getByRole("button", { name: "History" })).toHaveClass("text-slate-100");
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
   });
 
   it("makes documentation available even before adding a repository", async () => {
