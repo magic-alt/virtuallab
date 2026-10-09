@@ -19,6 +19,7 @@ import {
   chooseRepositoryDirectory,
   createWorktree,
   deleteLocalBranchAfterConfirmation,
+  deleteOriginBranchAfterConfirmation,
   gitFetchOrigin,
   gitPullCurrent,
   gitSwitchBranch,
@@ -379,6 +380,13 @@ export function WorkbenchShell() {
     await runGitMutation(() => deleteLocalBranchAfterConfirmation(activeRepository.path, name));
   };
 
+  const deleteOriginBranch = async (name: string) => {
+    if (!activeRepository || gitBusy || loading) return;
+    const branch = snapshot.branches.find((item) => item.name === name);
+    if (!branch?.remote || name === "main" || name === "master" || name === snapshot.originDefaultBranch) return;
+    await runGitMutation(() => deleteOriginBranchAfterConfirmation(activeRepository.path, name));
+  };
+
   const isPreview = !activeRepository;
   const native = isDesktopRuntime();
 
@@ -462,6 +470,7 @@ export function WorkbenchShell() {
           branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
+          onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
         />
 
         <section className="vl-stage flex min-w-0 flex-1 flex-col">

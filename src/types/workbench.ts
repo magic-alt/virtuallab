@@ -41,6 +41,7 @@ export interface RepositorySnapshot {
   currentBranch: string;
   headSha: string;
   remoteUrl?: string | null;
+  originDefaultBranch?: string | null;
   dirtyCount: number;
   stagedCount: number;
   unstagedCount: number;

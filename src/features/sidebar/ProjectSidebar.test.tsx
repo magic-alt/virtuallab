@@ -17,6 +17,7 @@ function props() {
       ...PREVIEW_SNAPSHOT.branches,
       { name: "feat/unused", local: true, remote: false, worktreePath: null },
       { name: "feat/occupied", local: true, remote: false, worktreePath: "/workspace/another-lane" },
+      { name: "feat/shared", local: true, remote: true, worktreePath: "/workspace/another-shared-worktree" },
     ] },
     isPreview: false,
     onAdd: vi.fn(),
@@ -27,6 +28,7 @@ function props() {
     onRemoveWorkspace: vi.fn(),
     onSwitchBranch: vi.fn(),
     onDeleteBranch: vi.fn(),
+    onDeleteOriginBranch: vi.fn(),
     branchActionsEnabled: true,
     workspaceActionsEnabled: true,
     repositoryActionsEnabled: true,
@@ -70,6 +72,33 @@ describe("ProjectSidebar controls", () => {
     expect(screen.queryByRole("button", { name: "Delete local branch feat/remote-only" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete local branch feat/occupied" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Delete local branch feat/sample-workspace" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Delete origin branch origin/main" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete origin branch origin/feat/unused" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Delete origin branch origin/feat/remote-only" }));
+    await user.click(screen.getByRole("button", { name: "Delete origin branch origin/feat/shared" }));
+    expect(p.onDeleteOriginBranch).toHaveBeenNthCalledWith(1, "feat/remote-only");
+    expect(p.onDeleteOriginBranch).toHaveBeenNthCalledWith(2, "feat/shared");
+    expect(screen.getByRole("button", { name: "Delete origin branch origin/feat/shared" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Delete local branch feat/shared" })).toBeDisabled();
+  });
+
+  it("disables deletion of a nonstandard origin default branch", () => {
+    const p = props();
+    render(
+      <ProjectSidebar
+        {...p}
+        snapshot={{
+          ...p.snapshot,
+          originDefaultBranch: "release/stable",
+          branches: [...p.snapshot.branches, {
+            name: "release/stable", local: true, remote: true, worktreePath: null,
+          }],
+        }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Delete origin branch origin/release/stable" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete local branch release/stable" })).not.toBeInTheDocument();
   });
 
   it("filters repositories and disables native-only controls in web preview", () => {
@@ -98,5 +127,6 @@ describe("ProjectSidebar controls", () => {
     );
     expect(screen.getByRole("button", { name: /switch to feat\/remote-only/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Delete local branch feat/unused" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete origin branch origin/feat/remote-only" })).toBeDisabled();
   });
 });

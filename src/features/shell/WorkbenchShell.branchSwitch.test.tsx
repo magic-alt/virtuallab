@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   currentBranch: "codex/pr-15",
   inspect: vi.fn(),
   switchBranch: vi.fn(),
+  deleteOriginBranch: vi.fn(),
   watchStart: vi.fn(),
   watchStop: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock("@/lib/backend", () => ({
   gitFetchOrigin: vi.fn(),
   gitPullCurrent: vi.fn(),
   deleteLocalBranchAfterConfirmation: vi.fn(),
+  deleteOriginBranchAfterConfirmation: harness.deleteOriginBranch,
   chooseRepositoryDirectory: vi.fn(),
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
@@ -72,6 +74,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.currentBranch = "codex/pr-15";
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
+    harness.deleteOriginBranch.mockReset();
     harness.watchStart.mockReset();
     harness.watchStop.mockReset();
     harness.inspect.mockImplementation(async () => snapshot());
@@ -146,6 +149,63 @@ describe("workbench branch switching with untracked artifacts", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
       expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(mainRoot);
+    });
+    expect(harness.switchBranch).not.toHaveBeenCalled();
+  });
+
+  it("deletes origin independently and keeps the local branch after refresh", async () => {
+    const user = userEvent.setup();
+    let remoteExists = true;
+    harness.inspect.mockImplementation(async () => {
+      const next = snapshot();
+      next.branches.push({
+        name: "feat/shared", local: true, remote: remoteExists, worktreePath: null,
+      });
+      return next;
+    });
+    harness.deleteOriginBranch.mockImplementation(async () => {
+      remoteExists = false;
+      return true;
+    });
+
+    render(<WorkbenchShell />);
+    const originAction = await screen.findByRole("button", { name: "Delete origin branch origin/feat/shared" });
+    await waitFor(() => expect(originAction).toBeEnabled());
+    await user.click(originAction);
+
+    await waitFor(() => {
+      expect(harness.deleteOriginBranch).toHaveBeenCalledWith(repoRoot, "feat/shared");
+      expect(screen.queryByRole("button", { name: "Delete origin branch origin/feat/shared" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Delete local branch feat/shared" })).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "Switch to feat/shared" })).toHaveTextContent("local");
+  });
+
+  it("allows deletion of an origin-only branch without creating a local branch", async () => {
+    const user = userEvent.setup();
+    let remoteExists = true;
+    harness.inspect.mockImplementation(async () => {
+      const next = snapshot();
+      if (remoteExists) {
+        next.branches.push({
+          name: "feat/remote-only", local: false, remote: true, worktreePath: null,
+        });
+      }
+      return next;
+    });
+    harness.deleteOriginBranch.mockImplementation(async () => {
+      remoteExists = false;
+      return true;
+    });
+
+    render(<WorkbenchShell />);
+    const originAction = await screen.findByRole("button", { name: "Delete origin branch origin/feat/remote-only" });
+    await waitFor(() => expect(originAction).toBeEnabled());
+    await user.click(originAction);
+
+    await waitFor(() => {
+      expect(harness.deleteOriginBranch).toHaveBeenCalledWith(repoRoot, "feat/remote-only");
+      expect(screen.queryByRole("button", { name: "Switch to feat/remote-only" })).not.toBeInTheDocument();
     });
     expect(harness.switchBranch).not.toHaveBeenCalled();
   });
