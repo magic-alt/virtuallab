@@ -6,7 +6,7 @@ describe("desktop startup window", () => {
     const window = tauriConfig.app.windows[0];
     expect(window.maximized).toBe(true);
     expect(window.resizable).toBe(true);
-    expect(window.minWidth).toBeLessThanOrEqual(800);
-    expect(window.minHeight).toBeLessThanOrEqual(520);
+    expect(window.minWidth).toBeLessThanOrEqual(640);
+    expect(window.minHeight).toBeLessThanOrEqual(360);
   });
 });
