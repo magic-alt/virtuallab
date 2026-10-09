@@ -278,8 +278,31 @@ export interface GithubPullRequest {
   baseSha?: string | null;
   isDraft: boolean;
   author?: string | null;
+  mergeable?: string | null;
+  mergeStateStatus?: string | null;
+  reviewDecision?: string | null;
   changedFiles: GithubChangedFile[];
   checks: GithubCheckSummary;
+}
+
+export interface GithubPullRequestList {
+  capabilities: GithubCapabilities;
+  pullRequests: GithubPullRequest[];
+}
+
+export type GithubMergeMethod = "squash" | "merge" | "rebase";
+
+export interface GithubMergeRequest {
+  workspaceRoot: string;
+  repository: string;
+  prNumber: number;
+  expectedHeadSha: string;
+  mergeMethod: GithubMergeMethod;
+}
+
+export interface GithubMergeResponse {
+  merged: boolean;
+  sha?: string | null;
 }
 
 export interface GithubIssue {
