@@ -56,6 +56,9 @@ pub struct GithubPullRequest {
     base_sha: Option<String>,
     is_draft: bool,
     author: Option<String>,
+    mergeable: Option<String>,
+    merge_state_status: Option<String>,
+    review_decision: Option<String>,
     changed_files: Vec<GithubChangedFile>,
     checks: GithubCheckSummary,
 }
@@ -78,6 +81,31 @@ pub struct GithubContext {
     reference: Option<String>,
     pull_request: Option<GithubPullRequest>,
     issue: Option<GithubIssue>,
+}
+
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubPullRequestList {
+    capabilities: GithubCapabilities,
+    pull_requests: Vec<GithubPullRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubMergeRequest {
+    workspace_root: String,
+    repository: String,
+    pr_number: u64,
+    expected_head_sha: String,
+    merge_method: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubMergeResponse {
+    merged: bool,
+    sha: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +155,20 @@ pub async fn github_context(request: GithubContextRequest) -> Result<GithubConte
     tauri::async_runtime::spawn_blocking(move || github_context_blocking(request))
         .await
         .map_err(|error| format!("GitHub context task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn github_list_pull_requests(workspace_root: String) -> Result<GithubPullRequestList, String> {
+    tauri::async_runtime::spawn_blocking(move || github_list_pull_requests_blocking(&workspace_root))
+        .await
+        .map_err(|error| format!("GitHub PR list task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn github_merge_pull_request(request: GithubMergeRequest) -> Result<GithubMergeResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || github_merge_pull_request_blocking(request))
+        .await
+        .map_err(|error| format!("GitHub merge task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -283,6 +325,97 @@ fn github_context_blocking(request: GithubContextRequest) -> Result<GithubContex
     })
 }
 
+
+fn github_list_pull_requests_blocking(workspace_root: &str) -> Result<GithubPullRequestList, String> {
+    let capabilities = github_capabilities_blocking(workspace_root);
+    let Some(repository) = capabilities.repository.as_deref() else {
+        return Ok(GithubPullRequestList { capabilities, pull_requests: Vec::new() });
+    };
+    if capabilities.mode != "connected" {
+        return Ok(GithubPullRequestList { capabilities, pull_requests: Vec::new() });
+    }
+
+    let value = run_gh_json(workspace_root, &[
+        "pr", "list", "--repo", repository, "--state", "open", "--limit", "50",
+        "--json",
+        "number,title,state,url,baseRefName,headRefName,headRefOid,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup",
+    ])?;
+    let items = value.as_array().ok_or_else(|| "GitHub PR list did not return an array".to_string())?;
+    let pull_requests = items.iter().map(parse_pull_request).collect::<Result<Vec<_>, _>>()?;
+    Ok(GithubPullRequestList { capabilities, pull_requests })
+}
+
+fn github_merge_pull_request_blocking(
+    request: GithubMergeRequest,
+) -> Result<GithubMergeResponse, String> {
+    // Both the origin and live PR state are verified again on the native side.
+    // UI confirmation is mandatory but is not relied on as the authorization boundary.
+    let capabilities = github_capabilities_blocking(&request.workspace_root);
+    if capabilities.mode != "connected" {
+        return Err(capabilities.detail);
+    }
+    let repository = capabilities.repository.as_deref()
+        .ok_or_else(|| "Workspace origin is not a GitHub repository".to_string())?;
+    if !repository.eq_ignore_ascii_case(request.repository.trim()) {
+        return Err("Merge target no longer matches this workspace's origin".to_string());
+    }
+    if request.expected_head_sha.len() != 40
+        || !request.expected_head_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("Expected PR HEAD must be a full 40-character SHA".to_string());
+    }
+    if !matches!(request.merge_method.as_str(), "squash" | "merge" | "rebase") {
+        return Err("Merge method must be squash, merge or rebase".to_string());
+    }
+    let latest = load_pull_request(&request.workspace_root, repository, Some(request.pr_number))?;
+    if latest.head_sha != request.expected_head_sha {
+        return Err("PR HEAD changed since it was inspected; refresh before merging".to_string());
+    }
+    ensure_merge_ready(&latest)?;
+
+    // GitHub enforces branch protection and atomically rejects a moved HEAD via sha.
+    // Never use --admin, auto-merge, --delete-branch, or a force option.
+    let endpoint = format!("repos/{repository}/pulls/{}/merge", request.pr_number);
+    let sha_arg = format!("sha={}", request.expected_head_sha);
+    let method_arg = format!("merge_method={}", request.merge_method);
+    let response = run_gh_json(&request.workspace_root, &[
+        "api", "--method", "PUT", &endpoint,
+        "--raw-field", &sha_arg, "--raw-field", &method_arg,
+    ])?;
+    if response.get("merged").and_then(Value::as_bool) != Some(true) {
+        let message = response.get("message").and_then(Value::as_str)
+            .unwrap_or("GitHub did not report a completed merge");
+        return Err(message.to_string());
+    }
+    Ok(GithubMergeResponse {
+        merged: true,
+        sha: response.get("sha").and_then(Value::as_str).map(ToOwned::to_owned),
+    })
+}
+
+fn ensure_merge_ready(pr: &GithubPullRequest) -> Result<(), String> {
+    if pr.state != "OPEN" || pr.is_draft {
+        return Err("Only an open, non-draft PR can be merged".to_string());
+    }
+    if pr.checks.total == 0 || pr.checks.success == 0 {
+        return Err("No successful CI checks were reported for the PR HEAD".to_string());
+    }
+    if pr.checks.failure > 0 || pr.checks.pending > 0 {
+        return Err("CI checks are failing or still pending".to_string());
+    }
+    if pr.mergeable.as_deref() != Some("MERGEABLE")
+        || pr.merge_state_status.as_deref() != Some("CLEAN")
+    {
+        return Err("GitHub does not report the PR as cleanly mergeable".to_string());
+    }
+    if let Some(decision) = pr.review_decision.as_deref() {
+        if decision != "APPROVED" {
+            return Err(format!("Review decision prevents merge: {decision}"));
+        }
+    }
+    Ok(())
+}
+
 fn github_post_review_comment_blocking(
     request: GithubPostReviewCommentRequest,
 ) -> Result<GithubPostReviewCommentResponse, String> {
@@ -411,15 +544,28 @@ fn load_pull_request(
     repository: &str,
     number: Option<u64>,
 ) -> Result<GithubPullRequest, String> {
-    let mut args = vec!["pr".to_string(), "view".to_string()];
-    if let Some(number) = number {
-        args.push(number.to_string());
-    }
+    // gh pr view without a selector fails ambiguously on main/detached worktrees.
+    // Always supply a PR number or a resolved local branch.
+    let selector = match number {
+        Some(number) => number.to_string(),
+        None => {
+            let output = background_command("git")
+                .args(["-C", workspace_root, "branch", "--show-current"])
+                .output()
+                .map_err(|error| format!("Cannot inspect current branch: {error}"))?;
+            let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !output.status.success() || branch.is_empty() {
+                return Err("No current branch; select a PR from the PR list".to_string());
+            }
+            branch
+        }
+    };
+    let mut args = vec!["pr".to_string(), "view".to_string(), selector];
     args.extend([
         "--repo".to_string(),
         repository.to_string(),
         "--json".to_string(),
-        "number,title,state,url,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,author,files,statusCheckRollup"
+        "number,title,state,url,baseRefName,baseRefOid,headRefName,headRefOid,isDraft,author,files,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision"
             .to_string(),
     ]);
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -495,6 +641,9 @@ fn parse_pull_request(value: &Value) -> Result<GithubPullRequest, String> {
         head_sha: required_string(value, "headRefOid")?,
         base_sha: value.get("baseRefOid").and_then(Value::as_str).map(ToOwned::to_owned),
         is_draft: value.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
+        mergeable: value.get("mergeable").and_then(Value::as_str).map(ToOwned::to_owned),
+        merge_state_status: value.get("mergeStateStatus").and_then(Value::as_str).map(ToOwned::to_owned),
+        review_decision: value.get("reviewDecision").and_then(Value::as_str).map(ToOwned::to_owned),
         author: value
             .get("author")
             .and_then(|author| author.get("login"))
@@ -835,6 +984,61 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(issue.labels, vec!["enhancement"]);
+    }
+
+    #[test]
+    fn merge_preflight_rejects_missing_ci_failing_ci_and_non_clean_prs() {
+        let mut pr = parse_pull_request(&json!({
+            "number": 8, "title": "Fixture", "state": "OPEN",
+            "url": "https://github.com/example-org/sample-repo/pull/8",
+            "baseRefName": "main", "headRefName": "feature",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "reviewDecision": null,
+            "statusCheckRollup": []
+        })).unwrap();
+        assert!(ensure_merge_ready(&pr).is_err());
+        pr.checks = summarize_checks(&[
+            json!({"name":"tests","status":"COMPLETED","conclusion":"SUCCESS"}),
+            json!({"name":"build","status":"COMPLETED","conclusion":"FAILURE"}),
+        ]);
+        assert!(ensure_merge_ready(&pr).is_err());
+        pr.checks = summarize_checks(&[
+            json!({"name":"tests","status":"COMPLETED","conclusion":"SUCCESS"}),
+            json!({"name":"build","status":"IN_PROGRESS","conclusion":null}),
+        ]);
+        assert!(ensure_merge_ready(&pr).is_err());
+        pr.checks = summarize_checks(&[
+            json!({"name":"tests","status":"COMPLETED","conclusion":"SUCCESS"}),
+            json!({"name":"optional","status":"COMPLETED","conclusion":"SKIPPED"}),
+        ]);
+        assert!(ensure_merge_ready(&pr).is_ok());
+        pr.merge_state_status = Some("DIRTY".to_string());
+        assert!(ensure_merge_ready(&pr).is_err());
+        pr.merge_state_status = Some("CLEAN".to_string());
+        pr.review_decision = Some("CHANGES_REQUESTED".to_string());
+        assert!(ensure_merge_ready(&pr).is_err());
+        pr.review_decision = Some("APPROVED".to_string());
+        assert!(ensure_merge_ready(&pr).is_ok());
+        pr.is_draft = true;
+        assert!(ensure_merge_ready(&pr).is_err());
+    }
+
+    #[test]
+    fn parses_pr_list_shape_without_changed_files() {
+        let pr = parse_pull_request(&json!({
+            "number": 12, "title": "List", "state": "OPEN",
+            "url": "https://github.com/example-org/sample-repo/pull/12",
+            "baseRefName": "main", "headRefName": "feature",
+            "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "isDraft": false, "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "statusCheckRollup": [{"name":"test","status":"COMPLETED","conclusion":"SUCCESS"}]
+        })).unwrap();
+        assert_eq!(pr.number, 12);
+        assert_eq!(pr.checks.success, 1);
+        assert!(pr.changed_files.is_empty());
+        assert_eq!(pr.merge_state_status.as_deref(), Some("CLEAN"));
     }
 
     #[test]

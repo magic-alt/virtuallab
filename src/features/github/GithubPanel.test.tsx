@@ -4,12 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { githubAdapter } from "@/lib/github";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { GithubPanel } from "./GithubPanel";
-import type { RepositorySnapshot } from "@/types/workbench";
+import type { GithubPullRequest, RepositorySnapshot } from "@/types/workbench";
 
-vi.mock("@/lib/github", () => ({
+vi.mock("@/lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/github")>()),
   githubAdapter: {
     capabilities: vi.fn(),
     loadContext: vi.fn(),
+    listPullRequests: vi.fn(),
+    mergePullRequest: vi.fn(),
     postReviewComment: vi.fn(),
   },
 }));
@@ -46,7 +49,14 @@ describe("GithubPanel", () => {
     useWorkbenchStore.setState({ reviewStates: {} });
     adapter.capabilities.mockReset();
     adapter.loadContext.mockReset();
+    adapter.listPullRequests.mockReset();
+    adapter.mergePullRequest.mockReset();
     adapter.postReviewComment.mockReset();
+    adapter.capabilities.mockResolvedValue(connected);
+    adapter.listPullRequests.mockImplementation(async () => ({
+      capabilities: await adapter.capabilities("D:/repo"),
+      pullRequests: [],
+    }));
   });
 
   it("keeps a graceful local-only mode when gh is unavailable", async () => {
@@ -217,6 +227,113 @@ describe("GithubPanel", () => {
     render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
     expect(await screen.findByText(/#9 Restored/)).toBeInTheDocument();
     expect(adapter.loadContext).toHaveBeenCalledWith("D:/repo",url);
+  });
+
+
+  const readyPr: GithubPullRequest = {
+    number: 77,
+    title: "Make PR dashboard",
+    state: "OPEN",
+    url: "https://github.com/example-org/sample-repo/pull/77",
+    baseRef: "main",
+    headRef: "feature/dashboard",
+    headSha: "abcdef1234567890abcdef1234567890abcdef12",
+    isDraft: false,
+    mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "APPROVED",
+    author: "example-user",
+    changedFiles: [{ path: "src/feature.ts", additions: 8, deletions: 1 }],
+    checks: {
+      total: 2, success: 2, pending: 0, failure: 0, neutral: 0,
+      checks: [
+        { name: "build", status: "COMPLETED", conclusion: "SUCCESS", url: "https://github.com/example-org/sample-repo/actions/runs/1" },
+        { name: "tests", status: "COMPLETED", conclusion: "SUCCESS", url: "https://github.com/example-org/sample-repo/actions/runs/2" },
+      ],
+    },
+  };
+
+  it("lists PRs independent of the local branch and displays every CI check", async () => {
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [readyPr] });
+    adapter.loadContext.mockResolvedValue({
+      capabilities: connected, reference: "pr:77", pullRequest: readyPr, issue: null,
+    });
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
+    expect(await screen.findByText(/#77 Make PR dashboard/)).toBeInTheDocument();
+    expect(screen.getByText("build")).toHaveAttribute("href", "https://github.com/example-org/sample-repo/actions/runs/1");
+    expect(screen.getByText("tests")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge PR" })).toBeEnabled();
+  });
+
+  it("blocks merge when CI fails or is pending, or GitHub status is unknown", async () => {
+    const failingPr = {
+      ...readyPr,
+      checks: {
+        ...readyPr.checks,
+        success: 1,
+        failure: 1,
+        pending: 0,
+        checks: [
+          { name: "unit", status: "COMPLETED", conclusion: "SUCCESS", url: null },
+          { name: "windows build", status: "COMPLETED", conclusion: "FAILURE", url: null },
+        ],
+      },
+    };
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [failingPr] });
+    adapter.loadContext.mockResolvedValue({
+      capabilities: connected, reference: "pr:77", pullRequest: failingPr, issue: null,
+    });
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
+    expect(await screen.findByText("windows build")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge PR" })).toBeDisabled();
+    expect(screen.getByText(/1 CI check\(s\) failed\./)).toBeInTheDocument();
+    expect(adapter.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it("merges only with explicit user approval, passing the exact inspected HEAD", async () => {
+    adapter.listPullRequests.mockResolvedValueOnce({ capabilities: connected, pullRequests: [readyPr] })
+      .mockResolvedValueOnce({ capabilities: connected, pullRequests: [] });
+    adapter.loadContext.mockResolvedValueOnce({
+      capabilities: connected, reference: "pr:77", pullRequest: readyPr, issue: null,
+    }).mockResolvedValueOnce({
+      capabilities: connected, reference: "pr:77", pullRequest: { ...readyPr, state: "MERGED" }, issue: null,
+    });
+    adapter.mergePullRequest.mockResolvedValue({ merged: true, sha: "c".repeat(40) });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
+    await screen.findByText(/#77 Make PR dashboard/);
+    await user.click(screen.getByRole("button", { name: "Merge PR" }));
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(adapter.mergePullRequest).toHaveBeenCalledWith({
+      workspaceRoot: "D:/repo",
+      repository: "example-org/sample-repo",
+      prNumber: 77,
+      expectedHeadSha: readyPr.headSha,
+      mergeMethod: "squash",
+    }));
+    expect(await screen.findByRole("status")).toHaveTextContent("PR #77 merged");
+    expect(screen.getByRole("button", { name: "Merge PR" })).toBeDisabled();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not merge after a cancelled confirmation", async () => {
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [readyPr] });
+    adapter.loadContext.mockResolvedValue({
+      capabilities: connected, reference: "pr:77", pullRequest: readyPr, issue: null,
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
+    await user.click(await screen.findByRole("button", { name: "Merge PR" }));
+    expect(adapter.mergePullRequest).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
   });
 
 });

@@ -7,16 +7,19 @@ import {
   MessageSquare,
   RefreshCw,
   GitBranchPlus,
+  GitMerge,
   TriangleAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { githubAdapter } from "@/lib/github";
+import { getPrCheckLabel, getPrMergeBlockers, githubAdapter } from "@/lib/github";
 import { correlatePrHead } from "@/lib/reviewLoop";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import type {
   GithubCapabilities,
   GithubContext,
+  GithubMergeMethod,
+  GithubPullRequest,
   RepositorySnapshot,
   ReviewDraft,
   ReviewWorkspaceRequest,
@@ -46,6 +49,11 @@ export function GithubPanel({
   const [context, setContext] = useState<GithubContext | null>(null);
   const [reference, setReference] = useState(reviewState?.githubReference ?? "");
   const [loading, setLoading] = useState(false);
+  const [pullRequests, setPullRequests] = useState<GithubPullRequest[]>([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [mergeMethod, setMergeMethod] = useState<GithubMergeMethod>("squash");
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,12 +71,16 @@ export function GithubPanel({
       .reviewStates[reviewWorkspaceKey(workspaceRoot)]?.githubReference;
     setContext(null);
     setCapabilities(null);
+    setPullRequests([]);
+    setError(null);
+    setMergeResult(null);
     setLoading(true);
-    void githubAdapter.capabilities(workspaceRoot)
-      .then(async (next) => {
+    void githubAdapter.listPullRequests(workspaceRoot)
+      .then(async (list) => {
         if (disposed) return;
-        setCapabilities(next);
-        if (next.mode === "connected" && savedReference) {
+        setCapabilities(list.capabilities);
+        setPullRequests(list.pullRequests);
+        if (list.capabilities.mode === "connected" && savedReference) {
           const restored = await githubAdapter.loadContext(workspaceRoot, savedReference);
           if (!disposed) {
             setCapabilities(restored.capabilities);
@@ -85,43 +97,57 @@ export function GithubPanel({
     return () => { disposed = true; };
   }, [enabled, workspaceRoot]);
 
-  const loadContext = async () => {
+  const loadContext = async (selectedReference = reference) => {
     if (!enabled) return;
     setLoading(true);
     setError(null);
+    setContext(null); // Never enable actions against a stale selection.
+    setMergeResult(null);
     try {
-      const next = await githubAdapter.loadContext(workspaceRoot, reference);
+      const next = await githubAdapter.loadContext(workspaceRoot, selectedReference);
       setCapabilities(next.capabilities);
       setContext(next);
       const resolved =
         next.pullRequest?.url ??
         next.issue?.url ??
-        (reference.trim() ? reference.trim() : null);
+        (selectedReference.trim() ? selectedReference.trim() : null);
       setGithubReference(workspaceRoot, resolved);
-      if (resolved) setReference(resolved);
+      setReference(resolved ?? "");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const detail = err instanceof Error ? err.message : String(err);
+      setError(!selectedReference.trim() && /no pull requests|no pull request|argument required|not found/i.test(detail)
+        ? "No PR is associated with this branch. Select an open PR from the list below."
+        : detail);
     } finally {
       setLoading(false);
     }
   };
 
-  const refreshCapabilities = async () => {
-    if (!enabled) return;
-    setLoading(true);
+  const refreshPrList = async () => {
+    if (!enabled || listLoading) return;
+    setListLoading(true);
     setError(null);
     try {
-      const next = await githubAdapter.capabilities(workspaceRoot);
-      setCapabilities(next);
-      if (next.mode !== "connected") setContext(null);
+      const list = await githubAdapter.listPullRequests(workspaceRoot);
+      setCapabilities(list.capabilities);
+      setPullRequests(list.pullRequests);
+      if (list.capabilities.mode !== "connected") setContext(null);
+      else if (context?.pullRequest) {
+        const latest = await githubAdapter.loadContext(workspaceRoot, `pr:${context.pullRequest.number}`);
+        setContext(latest);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      setListLoading(false);
     }
   };
 
   const pr = context?.pullRequest ?? null;
+  const mergeBlockers = pr ? getPrMergeBlockers(pr) : [];
+  const sortedChecks = [...(pr?.checks.checks ?? [])].sort(
+    (a, b) => checkPriority(a.conclusion ?? a.status) - checkPriority(b.conclusion ?? b.status),
+  );
   const headRelation = pr ? correlatePrHead(snapshot.headSha, pr) : "unknown";
   const headMatches = headRelation === "head";
 
@@ -177,6 +203,50 @@ export function GithubPanel({
     }
   };
 
+  const mergePr = async () => {
+    if (!pr || !capabilities?.repository || merging || loading || mergeBlockers.length) return;
+    const approved = window.confirm(
+      `Merge GitHub PR #${pr.number} into ${pr.baseRef} using ${mergeMethod}?\n\n` +
+      `${pr.title}\nHead: ${pr.headSha}\n` +
+      `Checks: ${pr.checks.success} passed, ${pr.checks.failure} failed, ${pr.checks.pending} pending.\n\n` +
+      "This updates the remote base branch. Review the PR and confirm before proceeding.",
+    );
+    if (!approved) return;
+
+    setMerging(true);
+    setError(null);
+    setMergeResult(null);
+    try {
+      const result = await githubAdapter.mergePullRequest({
+        workspaceRoot,
+        repository: capabilities.repository,
+        prNumber: pr.number,
+        expectedHeadSha: pr.headSha,
+        mergeMethod,
+      });
+      if (!result.merged) throw new Error("GitHub did not confirm the merge");
+      setMergeResult(`PR #${pr.number} merged into ${pr.baseRef} (${mergeMethod}).`);
+      setContext((previous) => previous?.pullRequest?.number === pr.number
+        ? { ...previous, pullRequest: { ...previous.pullRequest, state: "MERGED" } }
+        : previous);
+      setPullRequests((previous) => previous.filter((item) => item.number !== pr.number));
+      try {
+        const [list, latest] = await Promise.all([
+          githubAdapter.listPullRequests(workspaceRoot),
+          githubAdapter.loadContext(workspaceRoot, `pr:${pr.number}`),
+        ]);
+        setPullRequests(list.pullRequests);
+        setContext(latest);
+      } catch (refreshError) {
+        setError(`Merge completed, but refresh failed: ${String(refreshError)}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setMerging(false);
+    }
+  };
+
   if (!enabled) {
     return (
       <PanelMessage
@@ -204,9 +274,9 @@ export function GithubPanel({
                 {capabilities.mode === "connected" ? "connected" : "local only"}
               </Badge>
             )}
-            <Button disabled={loading} onClick={() => void refreshCapabilities()} size="sm" variant="ghost">
-              <RefreshCw size={12} className={loading ? "animate-spin" : undefined} />
-              Detect
+            <Button disabled={loading || listLoading} onClick={() => void refreshPrList()} size="sm" variant="ghost">
+              <RefreshCw size={12} className={loading || listLoading ? "animate-spin" : undefined} />
+              Refresh
             </Button>
           </div>
         </div>
@@ -238,7 +308,7 @@ export function GithubPanel({
                   <input
                     aria-label="GitHub reference"
                     className="field mt-1 w-full"
-                    placeholder="PR URL, issue URL, pr:7, issue:4, #7, or blank = current PR"
+                    placeholder="PR URL, issue URL, pr:7, issue:4, #7; blank = current branch"
                     value={reference}
                     onChange={(event) => setReference(event.target.value)}
                   />
@@ -249,7 +319,8 @@ export function GithubPanel({
                 </Button>
               </div>
               <div className="mt-2 text-[10px] text-slate-600">
-                Repository: <span className="mono text-slate-400">{capabilities.repository}</span>
+                Repository: <span className="mono text-slate-400">{capabilities.repository}</span>.
+                You can also select any open PR below, including PRs not on the current local branch.
               </div>
             </>
           )}
@@ -262,6 +333,57 @@ export function GithubPanel({
           )}
         </div>
       </section>
+
+      {capabilities?.mode === "connected" && (
+        <section className="border border-white/[0.07] bg-[#15100c]/92">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
+            <div className="flex items-center gap-2">
+              <GitPullRequest size={15} className="text-orange-300" />
+              <span className="text-sm font-medium text-slate-200">Open pull requests</span>
+              <Badge tone="neutral">{pullRequests.length}</Badge>
+            </div>
+            <span className="text-[10px] text-slate-500">Select a PR to inspect all CI checks and merge eligibility</span>
+          </div>
+          {pullRequests.length === 0 ? (
+            <div className="px-4 py-4 text-xs text-slate-500">
+              {loading || listLoading ? "Loading pull requests…" : "No open PRs found. You can still load a closed PR or issue by reference."}
+            </div>
+          ) : (
+            <div className="grid max-h-64 grid-cols-1 gap-2 overflow-y-auto p-3 lg:grid-cols-2">
+              {pullRequests.map((item) => (
+                <button
+                  type="button"
+                  key={item.number}
+                  aria-label={`Open PR #${item.number}`}
+                  disabled={loading || merging}
+                  onClick={() => void loadContext(`pr:${item.number}`)}
+                  className={`min-w-0 border p-3 text-left transition-colors hover:border-orange-400/40 hover:bg-white/[0.03] disabled:opacity-50 ${
+                    pr?.number === item.number ? "border-orange-400/50 bg-orange-400/[0.07]" : "border-white/[0.07]"
+                  }`}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="mono text-xs text-orange-300">#{item.number}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-slate-200">{item.title}</span>
+                    {item.isDraft && <Badge tone="amber">draft</Badge>}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                    <span className="mono max-w-[60%] truncate">{item.baseRef} ← {item.headRef}</span>
+                    <Badge tone={item.checks.failure ? "red" : item.checks.pending || !item.checks.total ? "amber" : "green"}>
+                      {getPrCheckLabel(item)}
+                    </Badge>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {mergeResult && (
+        <div role="status" className="border border-emerald-400/20 bg-emerald-400/[0.05] px-4 py-3 text-xs text-emerald-200">
+          {mergeResult}
+        </div>
+      )}
 
       {(pr || context?.issue) && (
         <div className="flex flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-4 py-3 text-[11px]">
@@ -325,31 +447,38 @@ export function GithubPanel({
           )}
           <div className="grid min-w-0 grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
             <div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 <Metric label="Files" value={String(pr.changedFiles.length)} />
                 <Metric label="Checks" value={String(pr.checks.total)} />
                 <Metric label="Pass" value={String(pr.checks.success)} tone="green" />
                 <Metric label="Fail" value={String(pr.checks.failure)} tone={pr.checks.failure ? "red" : "neutral"} />
+                <Metric label="Pending" value={String(pr.checks.pending)} tone={pr.checks.pending ? "red" : "neutral"} />
               </div>
-              <div className="mt-3 space-y-1">
-                {pr.checks.checks.slice(0, 8).map((check, index) => (
-                  <div key={`${check.name}-${index}`} className="flex items-center gap-2 text-[10px]">
-                    <CheckCircle2
-                      size={11}
-                      className={
-                        check.conclusion === "SUCCESS" || check.status === "SUCCESS"
-                          ? "text-emerald-300"
-                          : check.conclusion === "FAILURE" || check.status === "FAILURE"
-                            ? "text-rose-300"
-                            : "text-amber-300"
-                      }
-                    />
-                    <span className="min-w-0 flex-1 truncate text-slate-500">{check.name}</span>
-                    <span className="mono text-slate-600">
-                      {check.conclusion ?? check.status}
-                    </span>
-                  </div>
-                ))}
+              <div className="mt-3 max-h-64 space-y-1 overflow-y-auto" aria-label="PR CI checks">
+                {sortedChecks.length === 0 && (
+                  <div className="text-[11px] text-amber-300">No CI checks reported for this PR HEAD.</div>
+                )}
+                {sortedChecks.map((check, index) => {
+                  const status = check.conclusion ?? check.status;
+                  const failed = checkPriority(status) === 0;
+                  const passed = status === "SUCCESS";
+                  const safeUrl = check.url && /^https?:\/\//i.test(check.url) ? check.url : null;
+                  return (
+                    <div key={`${check.name}-${index}`} className="flex items-center gap-2 py-1 text-[11px]">
+                      <CheckCircle2 size={13} className={failed ? "text-rose-300" : passed ? "text-emerald-300" : "text-amber-300"} />
+                      {safeUrl ? (
+                        <a href={safeUrl} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-slate-300 underline-offset-2 hover:underline">
+                          {check.name}
+                        </a>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-slate-400">{check.name}</span>
+                      )}
+                      <span className={`mono ${failed ? "text-rose-300" : passed ? "text-emerald-300" : "text-amber-300"}`}>
+                        {status}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -367,6 +496,45 @@ export function GithubPanel({
                 ))}
               </div>
             </div>
+          </div>
+
+          <div className="border-t border-white/[0.06] p-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <GitMerge size={15} className="text-orange-300" />
+              <div className="text-xs font-medium text-slate-200">Merge eligibility</div>
+              <Badge tone={mergeBlockers.length === 0 ? "green" : "amber"}>
+                {mergeBlockers.length === 0 ? "Ready to merge" : "Merge blocked"}
+              </Badge>
+              <span className="mono text-[10px] text-slate-500">
+                GitHub: {pr.mergeStateStatus ?? "unknown"} · Review: {pr.reviewDecision ?? "not required"}
+              </span>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <select
+                  aria-label="Merge method"
+                  className="field min-w-[110px] py-1 text-xs"
+                  disabled={merging}
+                  value={mergeMethod}
+                  onChange={(event) => setMergeMethod(event.target.value as GithubMergeMethod)}
+                >
+                  <option value="squash">Squash</option>
+                  <option value="merge">Merge commit</option>
+                  <option value="rebase">Rebase</option>
+                </select>
+                <Button disabled={mergeBlockers.length > 0 || merging || loading} onClick={() => void mergePr()} size="sm">
+                  {merging ? <LoaderCircle size={13} className="animate-spin" /> : <GitMerge size={13} />}
+                  Merge PR
+                </Button>
+              </div>
+            </div>
+            {mergeBlockers.length > 0 ? (
+              <ul className="mt-3 space-y-1 text-[11px] text-amber-200">
+                {mergeBlockers.map((reason) => <li key={reason}>• {reason}</li>)}
+              </ul>
+            ) : (
+              <p className="mt-2 text-[11px] text-slate-500">
+                All reported CI checks passed or were skipped. GitHub reports CLEAN; merge requires explicit confirmation and a fresh server-side verification.
+              </p>
+            )}
           </div>
 
           <div className="border-t border-white/[0.06] p-4">
@@ -534,4 +702,11 @@ function PanelMessage({
       </div>
     </div>
   );
+}
+
+function checkPriority(status: string): number {
+  if (["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"].includes(status)) return 0;
+  if (status === "SUCCESS") return 2;
+  if (status === "SKIPPED" || status === "NEUTRAL") return 3;
+  return 1;
 }
