@@ -40,8 +40,8 @@ export function NewWorkspaceDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm">
-      <div className="vl-dialog w-[560px] rounded-2xl border p-5 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/65 p-4 backdrop-blur-sm">
+      <div className="vl-dialog my-auto max-h-[calc(100dvh-2rem)] w-full max-w-[560px] overflow-y-auto rounded-2xl border p-5 shadow-2xl">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2 text-slate-100">

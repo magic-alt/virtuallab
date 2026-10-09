@@ -405,8 +405,8 @@ function ProfileEditor({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="vl-dialog w-[520px] rounded-2xl border p-5 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm">
+      <div className="vl-dialog my-auto max-h-[calc(100dvh-2rem)] w-full max-w-[520px] overflow-y-auto rounded-2xl border p-5 shadow-2xl">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="m-0 text-base font-semibold text-slate-100">New run profile</h2>

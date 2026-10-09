@@ -57,6 +57,7 @@ describe("ProcessRunner controls", () => {
 
     await user.click(screen.getByRole("button", { name: /profile/i }));
     expect(screen.getByText("New run profile")).toBeInTheDocument();
+    expect(screen.getByText("New run profile").closest(".vl-dialog")).toHaveClass("overflow-y-auto", "w-full");
     await user.click(screen.getByRole("button", { name: /close profile editor/i }));
     expect(screen.queryByText("New run profile")).not.toBeInTheDocument();
 

@@ -508,15 +508,15 @@ export function WorkbenchShell() {
             }}
           />
 
-          <footer className="vl-footer flex h-7 shrink-0 items-center justify-between border-t px-3 text-[10px] text-stone-600">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1.5">
+          <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">
+            <div className="flex min-w-0 items-center gap-4">
+              <span className="flex shrink-0 items-center gap-1.5">
                 <Command size={11} />
                 local-first
               </span>
-              <span>workspace owns execution context</span>
+              <span className="min-w-0 truncate" title="workspace owns execution context">workspace owns execution context</span>
             </div>
-            <span className="mono text-orange-300/70">VirtualLab v{appManifest.version}</span>
+            <span className="mono shrink-0 text-orange-300/70">VirtualLab v{appManifest.version}</span>
           </footer>
         </section>
       </div>

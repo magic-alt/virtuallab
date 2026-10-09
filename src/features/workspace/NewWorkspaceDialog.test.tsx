@@ -10,6 +10,7 @@ describe("NewWorkspaceDialog", () => {
     const onClose = vi.fn();
     render(<NewWorkspaceDialog defaultBaseRef="main" onClose={onClose} onCreate={onCreate} />);
 
+    expect(screen.getByText("New workspace").closest(".vl-dialog")).toHaveClass("overflow-y-auto", "w-full");
     const create = screen.getByRole("button", { name: /create workspace/i });
     expect(create).toBeDisabled();
 
