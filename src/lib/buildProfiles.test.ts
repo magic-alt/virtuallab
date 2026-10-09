@@ -27,14 +27,14 @@ describe("build profiles", () => {
       kind: "build" as const,
       tool: "Qt", description: "Configure and compile", supported: true,
       steps: [
-        { name: "Configure", program: "cmake", args: ["-S", ".", "-B", "build/virtuallab"] },
-        { name: "Compile", program: "cmake", args: ["--build", "build/virtuallab"] },
+        { name: "Configure", program: "cmake", args: ["-S", ".", "-B", "build/auto"] },
+        { name: "Compile", program: "cmake", args: ["--build", "build/auto"] },
       ],
     };
     const profile = profileFromSuggestion(suggestion, "C:/Project/sample");
     expect(profile.repositoryRoot).toBe("C:/Project/sample");
     expect(stepsForProfile(profile)).toHaveLength(2);
     expect(profile.program).toBe("cmake");
-    expect(formatStep(stepsForProfile(profile)[1])).toBe("cmake --build build/virtuallab");
+    expect(formatStep(stepsForProfile(profile)[1])).toBe("cmake --build build/auto");
   });
 });
