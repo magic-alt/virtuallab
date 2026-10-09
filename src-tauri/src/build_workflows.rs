@@ -694,6 +694,94 @@ mod tests {
     }
 
     #[test]
+    fn generic_cmake_fallback_uses_a_project_local_not_product_named_build_directory() {
+        let first = fixture();
+        let second = fixture();
+        for root in [&first, &second] {
+            fs::write(root.join("CMakeLists.txt"), "project(Independent CXX)").unwrap();
+            let builds = discover(root);
+            assert_eq!(builds.len(), 1);
+            let recipe = &builds[0];
+            assert_eq!(recipe.id, "cmake-configure-build");
+            assert!(recipe.description.contains("this worktree's build/auto"));
+            assert_eq!(recipe.steps[0].args, vec!["-S", ".", "-B", "build/auto"]);
+            assert_eq!(recipe.steps[1].args, vec!["--build", "build/auto", "--config", "Release"]);
+            assert!(!recipe.description.contains("build/virtuallab"));
+            assert!(!root.join("build").exists(), "discovery must not configure the project");
+        }
+        fs::remove_dir_all(first).unwrap();
+        fs::remove_dir_all(second).unwrap();
+    }
+
+    #[test]
+    fn project_cmake_presets_are_first_and_filter_inapplicable_or_hidden_builds() {
+        let root = fixture();
+        fs::write(root.join("CMakeLists.txt"), "project(OtherProject CXX)").unwrap();
+        let project_presets = serde_json::json!({
+            "version": 3,
+            "configurePresets": [
+                {"name": "base", "hidden": true, "generator": "Ninja",
+                 "binaryDir": "${sourceDir}/build/${presetName}"},
+                {"name": "native-release", "inherits": "base",
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}",
+                               "rhs": cmake_host_system_name()}},
+                {"name": "other-platform", "inherits": "base",
+                 "condition": {"type": "equals", "lhs": "${hostSystemName}", "rhs": "NoSuchHost"}}
+            ],
+            "buildPresets": [
+                {"name": "native-release", "configurePreset": "native-release"},
+                {"name": "other-platform", "configurePreset": "other-platform"},
+                {"name": "hidden-build", "hidden": true, "configurePreset": "native-release"}
+            ]
+        });
+        fs::write(root.join("CMakePresets.json"), project_presets.to_string()).unwrap();
+        let user_presets = serde_json::json!({
+            "version": 3,
+            "configurePresets": [{"name": "user-release", "generator": "Ninja",
+                                  "binaryDir": "${sourceDir}/build/user"}],
+            "buildPresets": [
+                {"name": "parent-user", "hidden": true, "configurePreset": "user-release"},
+                {"name": "child-user", "inherits": "parent-user"}
+            ]
+        });
+        fs::write(root.join("CMakeUserPresets.json"), user_presets.to_string()).unwrap();
+
+        let suggestions = discover(&root);
+        assert_eq!(suggestions.len(), 3);
+        assert_eq!(suggestions[0].id, "cmake-preset-native-release");
+        assert_eq!(suggestions[0].steps[0].args, vec!["--preset", "native-release"]);
+        assert_eq!(suggestions[0].steps[1].args, vec!["--build", "--preset", "native-release"]);
+        assert_eq!(suggestions[1].id, "cmake-preset-child-user");
+        assert_eq!(suggestions[1].steps[0].args, vec!["--preset", "user-release"]);
+        assert_eq!(suggestions[1].steps[1].args, vec!["--build", "--preset", "child-user"]);
+        assert_eq!(suggestions[2].id, "cmake-configure-build");
+        assert!(!root.join("build").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn qt_in_an_included_cmake_file_is_identified_without_another_repository() {
+        let root = fixture();
+        fs::create_dir(root.join("cmake")).unwrap();
+        fs::write(root.join("CMakeLists.txt"), "include(cmake/ProjectQt.cmake)").unwrap();
+        fs::write(root.join("cmake/ProjectQt.cmake"), "find_package(Qt6 REQUIRED COMPONENTS Widgets)").unwrap();
+        let suggestions = discover(&root);
+        assert_eq!(suggestions[0].tool, "Qt / CMake");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keil_projects_take_priority_over_generic_cmake_fallback() {
+        let root = fixture();
+        fs::write(root.join("CMakeLists.txt"), "project(Firmware C)").unwrap();
+        fs::write(root.join("Firmware.uvprojx"), "<Project/>").unwrap();
+        let suggestions = discover(&root);
+        assert_eq!(suggestions[0].name, "Keil · Firmware.uvprojx");
+        assert_eq!(suggestions[1].id, "cmake-configure-build");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn keil_discovery_is_bounded_and_does_not_follow_links() {
         let root = fixture();
         fs::create_dir_all(root.join("App/MDK-ARM")).unwrap();
