@@ -156,8 +156,8 @@ describe("ProcessRunner controls", () => {
       id: "cmake-configure-build", name: "Qt / CMake · Build", kind: "build",
       tool: "Qt / CMake", supported: true, description: "Configure and build",
       steps: [
-        { name: "Configure", program: "cmake", args: ["-S", ".", "-B", "build/virtuallab"] },
-        { name: "Compile", program: "cmake", args: ["--build", "build/virtuallab", "--config", "Release"] },
+        { name: "Configure", program: "cmake", args: ["-S", ".", "-B", "build/auto"] },
+        { name: "Compile", program: "cmake", args: ["--build", "build/auto", "--config", "Release"] },
       ],
     }]);
     const user = userEvent.setup();
@@ -171,6 +171,33 @@ describe("ProcessRunner controls", () => {
       ],
     }));
     expect(backend.processSpawn).not.toHaveBeenCalled();
+  });
+
+  it("executes a project-owned CMake preset inside the selected worktree", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce([{
+      id: "cmake-preset-windows-mingw-release-qt6",
+      name: "Qt / CMake · Windows MinGW Release / Qt6",
+      kind: "build",
+      tool: "Qt / CMake",
+      supported: true,
+      description: "Project-defined CMake build preset.",
+      steps: [
+        { name: "Configure", program: "cmake", args: ["--preset", "windows-mingw-release-qt6"] },
+        { name: "Compile", program: "cmake", args: ["--build", "--preset", "windows-mingw-release-qt6"] },
+      ],
+    }]);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/repo/.worktrees/feature" repositoryRoot="D:/repo" enabled />);
+    expect(await screen.findByText("Qt / CMake · Windows MinGW Release / Qt6")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Build now" }));
+    expect(backend.buildWorkflowStart).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "D:/repo/.worktrees/feature",
+      steps: [
+        { name: "Configure", program: "cmake", args: ["--preset", "windows-mingw-release-qt6"] },
+        { name: "Compile", program: "cmake", args: ["--build", "--preset", "windows-mingw-release-qt6"] },
+      ],
+    }));
   });
 
   it("saves and executes a configurable two-step workflow", async () => {
