@@ -42,6 +42,6 @@ describe("in-app illustrated user guide", () => {
     render(<HelpCenter />);
     await user.click(screen.getByRole("button", { name: /查看实战案例/ }));
     expect(screen.getByRole("heading", { name: "端到端实践案例" })).toBeInTheDocument();
-    expect(screen.getByText("案例 2 · 第三方 Qt 工程交付前编译")).toBeInTheDocument();
+    expect(within(screen.getByRole("article")).getByRole("heading", { name: "案例 2 · 第三方 Qt 工程交付前编译" })).toBeInTheDocument();
   });
 });
