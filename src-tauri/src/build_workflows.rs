@@ -465,9 +465,13 @@ fn terminate_tree(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
     fn fixture() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("virtuallab-build-{}-{}", std::process::id(), now_ms()));
+        let id = NEXT_FIXTURE.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!("virtuallab-build-{}-{}-{id}", std::process::id(), now_ms()));
         fs::create_dir_all(&root).unwrap();
         root
     }
