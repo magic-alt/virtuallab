@@ -231,7 +231,7 @@ export function GithubPanel({
           ) : (
             <>
               <div className="flex flex-wrap items-end gap-2">
-                <label className="min-w-[420px] flex-1">
+                <label className="min-w-0 flex-[1_1_320px]">
                   <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-600">
                     PR / issue reference
                   </span>
@@ -323,9 +323,9 @@ export function GithubPanel({
                 : "Local HEAD does not match the loaded PR head. Review-comment posting stays disabled."}
             </div>
           )}
-          <div className="grid grid-cols-[0.75fr_1.25fr] gap-4 p-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
             <div>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Metric label="Files" value={String(pr.changedFiles.length)} />
                 <Metric label="Checks" value={String(pr.checks.total)} />
                 <Metric label="Pass" value={String(pr.checks.success)} tone="green" />

@@ -71,7 +71,7 @@ export function ProjectSidebar({
   ).slice(0, 6);
 
   return (
-    <aside className="vl-sidebar flex min-h-0 w-[286px] shrink-0 flex-col border-r">
+    <aside className="vl-sidebar flex min-h-0 w-[clamp(220px,20vw,286px)] shrink-0 flex-col border-r">
       <div className="border-b border-white/[0.07] px-4 pb-4 pt-4">
         <Button className="w-full" disabled={!repositoryActionsEnabled} onClick={onAdd} title={repositoryActionsEnabled ? "Add local Git repository" : "Desktop runtime required"}>
           <Plus size={15} />

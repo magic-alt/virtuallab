@@ -383,12 +383,12 @@ export function WorkbenchShell() {
   const native = isDesktopRuntime();
 
   return (
-    <div className="pixel-ui vl-workbench flex h-screen min-h-0 flex-col text-slate-100">
+    <div className="pixel-ui vl-workbench flex h-screen min-h-0 min-w-0 flex-col overflow-hidden text-slate-100">
       <div
-        className="vl-topbar flex h-12 shrink-0 items-center border-b px-4"
+        className="vl-topbar flex h-12 min-w-0 shrink-0 items-center gap-3 border-b px-3 sm:px-4"
         data-tauri-drag-region
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 shrink-0 items-center gap-2.5">
           <div className="flex size-7 items-center justify-center rounded-lg border border-orange-400/20 bg-orange-400/10 text-orange-300">
             <Layers3 size={15} />
           </div>
@@ -402,19 +402,21 @@ export function WorkbenchShell() {
           </div>
         </div>
 
-        <div className="mx-auto w-[420px]">
+        <div className="mx-auto min-w-0 w-full max-w-[420px] flex-1">
           <WorkspaceSearch value={searchQuery} onChange={setSearchQuery} />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge tone={native ? "green" : "amber"}>
             <Cpu size={11} />
             {native ? "Native" : "Web preview"}
           </Badge>
-          <Badge tone="orange">
-            <ShieldCheck size={11} />
-            Workspace execution
-          </Badge>
+          <span title="Workspace execution">
+            <Badge tone="orange">
+              <ShieldCheck size={11} />
+              <span className="hidden min-[1150px]:inline">Workspace execution</span>
+            </Badge>
+          </span>
         </div>
       </div>
 

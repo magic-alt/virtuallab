@@ -73,8 +73,8 @@ export function WorkspaceContent({
   onTabChange,
 }: Props) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="vl-tabs flex h-11 shrink-0 items-end gap-1 border-b px-5">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <nav className="vl-tabs scrollbar-thin flex h-11 min-w-0 shrink-0 items-end gap-1 overflow-x-auto overflow-y-hidden border-b px-2 sm:px-5">
         {tabs.map((item) => {
           const active = item.id === tab;
           const counter = item.counter?.(snapshot) ?? null;
@@ -82,7 +82,7 @@ export function WorkspaceContent({
             <button
               key={item.id}
               className={cn(
-                "relative flex h-10 items-center gap-2 px-3 text-xs font-medium transition",
+                "relative flex h-10 shrink-0 items-center gap-2 px-3 text-xs font-medium transition",
                 active ? "text-slate-100" : "text-slate-500 hover:text-slate-300",
               )}
               onClick={() => onTabChange(item.id)}
@@ -103,7 +103,7 @@ export function WorkspaceContent({
         })}
       </nav>
 
-      <main className="vl-main surface-grid scrollbar-thin min-h-0 flex-1 overflow-y-auto p-5">
+      <main className="vl-main surface-grid scrollbar-thin min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto p-3 sm:p-5">
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && (
           <ChangesReview
@@ -155,7 +155,7 @@ function Overview({
 
   return (
     <div className="mx-auto max-w-[1320px] space-y-5">
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid min-w-0 grid-cols-2 gap-3 xl:grid-cols-4">
         <Metric
           label="Working tree"
           value={clean ? "Clean" : `${snapshot.dirtyCount} changes`}
@@ -181,7 +181,7 @@ function Overview({
         />
       </div>
 
-      <div className="grid grid-cols-[1.15fr_0.85fr] gap-4">
+      <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
         <Panel
           title="Workspace topology"
           subtitle="Git worktrees are the substrate for isolated engineering lanes."
@@ -239,7 +239,7 @@ function Overview({
         subtitle="V0.2 separates interactive PTY, structured processes and reversible worktree mutation behind typed native commands."
         icon={<MonitorDot size={16} />}
       >
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           <CapabilityCard
             icon={<CheckCircle2 size={16} />}
             title="Repository inventory"
@@ -373,7 +373,7 @@ function Metric({
   tone?: "neutral" | "green" | "amber";
 }) {
   return (
-    <div className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92 p-4">
+    <div className="soft-shadow min-w-0 rounded-2xl border border-white/[0.07] bg-[#15100c]/92 p-4">
       <div className="text-[10px] font-semibold uppercase tracking-[0.13em] text-slate-600">
         {label}
       </div>
@@ -410,7 +410,7 @@ function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className="soft-shadow rounded-2xl border border-white/[0.07] bg-[#15100c]/92">
+    <section className="soft-shadow min-w-0 rounded-2xl border border-white/[0.07] bg-[#15100c]/92">
       <div className="flex items-start gap-3 border-b border-white/[0.06] px-4 py-3.5">
         <div className="mt-0.5 text-slate-500">{icon}</div>
         <div>

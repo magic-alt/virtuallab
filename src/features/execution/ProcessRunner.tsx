@@ -227,7 +227,7 @@ export function ProcessRunner({
   };
 
   return (
-    <div className="mx-auto grid max-w-[1320px] grid-cols-[360px_1fr] gap-4">
+    <div className="mx-auto grid min-w-0 max-w-[1320px] grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
       <section className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0d0b08]/95">
         <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
           <div>
