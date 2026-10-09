@@ -22,12 +22,13 @@ Recipe detection is bounded, local and read-only. It does not execute project fi
 | --- | --- | --- | --- |
 | package.json with scripts.tauri:build | Tauri · Desktop build (displayed first) | npm run tauri:build — includes frontend + Rust + OS package | Windows/macOS/Linux |
 | package.json with scripts.build | npm · Frontend only | npm run build — dist/ web assets, no desktop installer | Windows/macOS/Linux |
-| CMakeLists.txt | CMake · Build (Qt label when detected) | cmake -S . -B build/virtuallab; cmake --build build/virtuallab --config Release | Windows/macOS/Linux |
+| CMakePresets.json / CMakeUserPresets.json with buildPresets + configurePresets | CMake · project preset (Qt label when detected) | cmake --preset <configure-preset>; cmake --build --preset <build-preset> | Host-compatible presets |
+| CMakeLists.txt | CMake · Generic build (fallback) | cmake -S . -B build/auto; cmake --build build/auto --config Release | Windows/macOS/Linux |
 | *.uvprojx under the worktree (up to 3 folders deep) | Keil · project | UV4.exe -b <relative-project-path> | Windows |
 
 Keil discovery never invokes the IDE or a flashing command. An absolute path to UV4.exe can be entered via **Customize** if Keil MDK is not on PATH. To target a specific configuration, add two separate arguments: -t and the exact target name.
 
-The generic CMake recipe uses the host's default CMake generator; adjust the editor for Ninja/MSVC generators, CMakePresets, CMAKE_PREFIX_PATH/Qt6_DIR, toolchain files, build directory and build target. Qt's windeployqt/macdeployqt tooling is *not* inferred because deployment directories and host targets differ by project.
+CMake build presets defined **by the selected worktree** take priority over the generic fallback. Each usable build preset is paired with its configure preset; hidden and known host-incompatible presets are omitted, and simple inherited conditions are respected. CMake itself resolves preset configuration, generator, build directory, toolchain and Qt paths; VirtualLab does not inject application-specific paths. Unsupported/unknown preset conditions and external includes are not executed or guessed during discovery. For projects without a usable build preset, the generic recipe uses this worktree's isolated `build/auto` directory and the host's default CMake generator. Customize that fallback for explicit Ninja/MSVC generators, `CMAKE_PREFIX_PATH`/`Qt6_DIR`, toolchain files and targets. Qt's windeployqt/macdeployqt tooling is *not* inferred.
 
 The project manifests and npm scripts are user-controlled: npm itself may invoke a shell internally. **Only run recipes from trusted repositories.** VirtualLab does not sandbox build scripts.
 
@@ -48,10 +49,15 @@ The target name must match the .uvprojx configuration. The result is the configu
 
 ### Example: Qt/CMake
 
-A saved multi-step profile for Qt6 may use:
+For a Qt6 project such as `servo_host` that defines `CMakePresets.json`, choose a host-compatible project preset. For example, with its Windows MinGW Qt6 Release preset:
 
-- Configure: program cmake; args -S, ., -B, build/virtuallab, -DCMAKE_PREFIX_PATH=<Qt-install-prefix> (one argument per line).
-- Compile: program cmake; args --build, build/virtuallab, --config, Release.
+- Configure: `cmake --preset windows-mingw-release-qt6`
+- Compile: `cmake --build --preset windows-mingw-release-qt6`
+
+The project's preset controls the binary directory, generator, and toolchain; no `virtuallab`-named directory is introduced. Alternatively, customize the **Generic build** fallback:
+
+- Configure: program `cmake`; args `-S`, `.`, `-B`, `build/auto`, `-DCMAKE_PREFIX_PATH=<Qt-install-prefix>` (one argument per line).
+- Compile: program `cmake`; args `--build`, `build/auto`, `--config`, `Release`.
 
 Configure/build run sequentially, with the active worktree as cwd. The compiler environment (Windows MSVC Developer Prompt, Xcode, Ninja, cross SDK, etc.) must already be installed. For staging/install, create a separate, explicitly invoked Deploy profile using cmake --install and an operator-reviewed destination; do not point it at a privileged/system directory by default.
 
@@ -69,7 +75,7 @@ Configure/build run sequentially, with the active worktree as cwd. The compiler 
     selected Git worktree
        └─ Read-only detector (Rust build_workflow_discover)
            ├─ package.json scripts
-           ├─ CMakeLists.txt
+           ├─ CMakeLists.txt + optional project/user CMakePresets
            └─ bounded *.uvprojx search
                  │ typed BuildSuggestion[]
                  ▼
@@ -96,10 +102,11 @@ The on-screen output ring is bounded and session-local. It is not an immutable l
 | npm package.json build | Build frontend → npm run build, stdout/stderr and exit status shown; no installer implied |
 | Tauri packaging script | Build desktop app → npm run tauri:build, preset appears before npm frontend, no install/publish |
 | ANSI / Unicode output | Compiler color codes and OSC controls are removed in the Run log; valid UTF-8 split across native pipe reads survives intact; final output is drained before status |
-| Qt CMake | Configure must succeed before Compile; failure skips Compile |
+| Qt CMake presets | Detect worktree-owned configure/build pairs; host filter and hidden presets respected; Configure must succeed before Compile |
+| Generic CMake fallback | Only uses current worktree's build/auto; no product-named paths or shared outputs |
 | Keil *.uvprojx | Windows-only suggestion; missing UV4 path fails visibly; no flash |
 | Custom two-step editor | Saves across app restart and runs in selected worktree |
-| Repo A / Repo B | Saved profiles are not shown in unrelated repos |
+| Repo A / Repo B | Detected recipes and saved profiles are isolated to their own selected repositories |
 | Git worktrees | Shared repository profile executes in selected worktree cwd |
 | Deploy cancelled | No native process is started |
 | Stop requested | Marks completed native workflow stopped and prevents the next step |
