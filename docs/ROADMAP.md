@@ -210,6 +210,18 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 An independent, opt-in, provider-neutral hardware/HIL integration may be proposed **only** via a separate safety RFC. The provider must enforce leases/interlocks/watchdog/safe-state outside VirtualLab; neither a TypeScript approval broker nor the Rust policy model is a physical authorization boundary. No reference project or hardware board will be bundled.
 
 
+## Cross-project build workflow extension (feature branch; pending manual acceptance)
+
+- [x] Opt-in worktree-local npm/Tauri package, CMake/Qt and Keil MDK recipe discovery (no third-party project binding)
+- [x] Repository-scoped Build/Test/Package/Deploy profiles with ordered executable/argv steps; V0.2 profile compatibility
+- [x] Native sequential workflow start/stop, step output and fail-fast status
+- [x] Explicit user confirmation for manually configured deployments; no automatic firmware flash/publish
+- [x] TypeScript/Rust detection, orchestration and UI regression tests added
+- [ ] Cross-platform CI and manual native toolchain acceptance recorded (Keil Windows; Qt and npm on provisioned hosts)
+- [ ] Durable run-history and reliable process-recovery integration (tracked with V0.6/V0.8)
+
+See [Project Build Workflows](PROJECT_BUILD_WORKFLOWS.md). The workflow's return code is not a trusted release gate.
+
 ## Non-goals through V1.0
 
 - cloud execution or multi-tenant team backend
