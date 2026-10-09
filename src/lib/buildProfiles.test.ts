@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { formatStep, profileFromSuggestion, stepsForProfile } from "./buildProfiles";
+import { formatStep, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "./buildProfiles";
 
 describe("build profiles", () => {
+  it("distinguishes full Tauri builds from web-only npm builds", () => {
+    const base = { tool: "npm", description: "test", supported: true, steps: [] };
+    expect(suggestionActionLabel({ ...base, id: "npm-tauri-package", name: "Tauri", kind: "package" }))
+      .toBe("Build desktop app");
+    expect(suggestionActionLabel({ ...base, id: "npm-build", name: "Vite", kind: "build" }))
+      .toBe("Build frontend");
+    expect(suggestionActionLabel({ ...base, id: "cmake-configure-build", name: "Qt", kind: "build" }))
+      .toBe("Build now");
+  });
+
   it("preserves a legacy repository-scoped single-command profile", () => {
     const profile = {
       id: "old", name: "Build", kind: "build" as const,

@@ -125,6 +125,32 @@ describe("ProcessRunner controls", () => {
     expect(screen.getByRole("button", { name: /^run$/i })).toBeDisabled();
   });
 
+  it("makes the full desktop build distinct from frontend-only npm compilation", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce([
+      {
+        id: "npm-tauri-package", name: "Tauri · Desktop build", kind: "package",
+        tool: "Node.js / Tauri", supported: true,
+        description: "Build the frontend, Rust backend and desktop bundle.",
+        steps: [{ name: "Build desktop app", program: "npm", args: ["run", "tauri:build"] }],
+      },
+      {
+        id: "npm-build", name: "npm · Frontend only", kind: "build",
+        tool: "Node.js / npm", supported: true,
+        description: "This does not compile Rust or generate an installer.",
+        steps: [{ name: "Build frontend", program: "npm", args: ["run", "build"] }],
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/repo" repositoryRoot="D:/repo" enabled />);
+    expect(await screen.findByRole("button", { name: "Build desktop app" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Build frontend" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Build desktop app" }));
+    expect(backend.processSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "D:/repo", program: "npm", args: ["run", "tauri:build"],
+    }));
+  });
+
   it("discovers Qt CMake steps and triggers a single native sequential run", async () => {
     backend.buildWorkflowDiscover.mockResolvedValueOnce([{
       id: "cmake-configure-build", name: "Qt / CMake · Build", kind: "build",
