@@ -6,7 +6,8 @@ import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { GithubPanel } from "./GithubPanel";
 import type { GithubPullRequest, RepositorySnapshot } from "@/types/workbench";
 
-vi.mock("@/lib/github", () => ({
+vi.mock("@/lib/github", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/github")>()),
   githubAdapter: {
     capabilities: vi.fn(),
     loadContext: vi.fn(),
