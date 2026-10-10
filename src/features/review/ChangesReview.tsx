@@ -564,7 +564,7 @@ export function ChangesReview({
                   ? removeUntracked(selectedChange) : discardTracked(selectedChange))}>
                 {selectedChange.kind === "untracked" ? "Delete selected untracked" : "Discard selected tracked"}
               </Button>
-            )
+            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden" data-testid="changes-review-editor-body">
