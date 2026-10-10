@@ -1560,7 +1560,7 @@ mod tests {
         fs::write(repo.join("hardware/.history/backup.kicad_sch"), "important data").unwrap();
 
         git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some("README.md"))).unwrap();
-        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "line one\n");
         assert_eq!(fs::read_to_string(repo.join("staged.txt")).unwrap(), "staged file");
         assert_eq!(fs::read_to_string(repo.join("hardware/.history/backup.kicad_sch")).unwrap(), "important data");
         let now = inspect_repository_blocking(root).unwrap();
@@ -1580,7 +1580,7 @@ mod tests {
         fs::write(repo.join("hardware/.history/autosave"), "must remain").unwrap();
 
         git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None)).unwrap();
-        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "line one\n");
         assert!(!repo.join("added.txt").exists(), "staged added files are reverted to HEAD");
         assert_eq!(fs::read_to_string(repo.join("hardware/.history/autosave")).unwrap(), "must remain");
         let now = inspect_repository_blocking(root).unwrap();
@@ -1650,7 +1650,7 @@ mod tests {
         assert_eq!(entry.old_path.as_deref(), Some("README.md"));
         let path = entry.path.clone();
         git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some(&path))).unwrap();
-        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "line one\n");
         assert!(!repo.join("renamed README.md").exists());
         fs::remove_dir_all(sandbox).unwrap();
     }

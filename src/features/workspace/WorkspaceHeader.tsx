@@ -30,6 +30,7 @@ export function WorkspaceHeader({
   onPull,
 }: Props) {
   const clean = snapshot.dirtyCount === 0;
+  const trackedDirty = snapshot.stagedCount > 0 || snapshot.unstagedCount > 0;
 
   return (
     <header className="vl-header min-w-0 shrink-0 border-b px-4 py-3 sm:px-6 sm:py-4">
@@ -81,12 +82,12 @@ export function WorkspaceHeader({
           <Button
             disabled={
               isPreview || loading || gitBusy || !snapshot.remoteUrl ||
-              snapshot.dirtyCount > 0 || snapshot.currentBranch.startsWith("detached@")
+              trackedDirty || snapshot.currentBranch.startsWith("detached@")
             }
             onClick={onPull}
             variant="outline"
             size="sm"
-            title="Fast-forward the current branch from origin (no merge or reset)"
+            title="Fast-forward from origin; untracked files remain unless they conflict with incoming files"
           >
             <GitBranch size={13} />
             Pull

@@ -5,6 +5,7 @@ import type {
   BuildWorkflowSpec,
   DiffRequest,
   DiffResponse,
+  LocalChangesRequest,
   ProcessSpec,
   RepositorySnapshot,
   WorkspaceMutationResult,
@@ -113,6 +114,59 @@ export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {
 export async function gitPullCurrent(repositoryRoot: string, workspaceRoot: string): Promise<void> {
   requireDesktop();
   return invoke("git_pull_current", { repositoryRoot, workspaceRoot });
+}
+
+/**
+ * Native confirmation is mandatory. Rust repeats worktree/branch/HEAD/status
+ * checks after the dialog, so a stale UI cannot silently discard another
+ * checkout's changes. Stash preserves tracked and untracked data.
+ */
+export async function resolveLocalChangesAfterConfirmation(request: LocalChangesRequest): Promise<boolean> {
+  requireDesktop();
+  const tracked = request.expectedChanges.filter((change) => change.kind !== "untracked");
+  const untracked = request.expectedChanges.filter((change) => change.kind === "untracked");
+  if (request.expectedChanges.length === 0) return false;
+  const selected = request.expectedChanges.find((change) => change.path === request.path);
+  const paths = tracked.slice(0, 8).map((change) =>
+    "  • " + (change.oldPath ? change.oldPath + " → " : "") + change.path).join("\n");
+  const remaining = tracked.length > 8 ? "\n  … and " + (tracked.length - 8) + " more" : "";
+  let title: string;
+  let actionLabel: string;
+  let warning: string;
+  if (request.action === "stashAll" && request.path === null) {
+    title = "Back up local changes to Git stash";
+    actionLabel = "Stash all";
+    warning = "Save " + tracked.length + " tracked and " + untracked.length + " untracked change(s) to a Git stash?\n\n" +
+      "The workspace will be cleaned for switching branches and Pull. Recover with git stash list / git stash pop. Ignored files remain untouched.\n\n" +
+      "Workspace: " + request.workspaceRoot;
+  } else if (request.action === "discardTrackedAll" && tracked.length > 0 && request.path === null) {
+    title = "Discard ALL tracked changes";
+    actionLabel = "Discard tracked";
+    warning = "Permanently restore " + tracked.length + " tracked change(s) to HEAD, including staged and unstaged files?\n\n" +
+      paths + remaining + "\n\nNewly staged files may be deleted. Untracked files and directories will NOT be removed. " +
+      "THIS CANNOT BE UNDONE. Use Stash all to keep a backup instead.\n\nWorkspace: " + request.workspaceRoot;
+  } else if (request.action === "discardTrackedSelected" && selected?.kind !== "untracked" && selected && request.path) {
+    title = "Discard selected tracked file";
+    actionLabel = "Discard file";
+    warning = "Permanently revert the tracked change to HEAD?\n\n" +
+      (selected.oldPath ? selected.oldPath + " → " : "") + selected.path + "\n\n" +
+      "Includes staged and unstaged edits. Newly staged files may be deleted. " +
+      "Other files and untracked items remain. THIS CANNOT BE UNDONE.\n\nWorkspace: " + request.workspaceRoot;
+  } else if (request.action === "deleteUntrackedSelected" && selected?.kind === "untracked" && request.path) {
+    title = "Delete untracked local files";
+    actionLabel = "Delete untracked";
+    warning = "Permanently DELETE this UNTRACKED " + (selected.path.endsWith("/") ? "DIRECTORY and its unignored contents" : "FILE") + "?\n\n" +
+      selected.path + "\n\nThis includes files not saved to Git. Other entries and ignored files remain. " +
+      "THIS CANNOT BE UNDONE. Use Stash all to preserve them instead.\n\nWorkspace: " + request.workspaceRoot;
+  } else {
+    throw new Error("Invalid or stale local changes selection; refresh Changes first.");
+  }
+  const confirmed = await confirm(warning, {
+    title, kind: "warning", okLabel: actionLabel, cancelLabel: "Cancel",
+  });
+  if (!confirmed) return false;
+  await invoke("git_local_changes", { request });
+  return true;
 }
 
 export async function gitDiff(request: DiffRequest): Promise<DiffResponse> {

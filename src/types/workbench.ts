@@ -15,6 +15,23 @@ export interface ChangeEntry {
   kind: ChangeKind;
 }
 
+/** Explicit user-selected local recovery scopes; never switch branches implicitly. */
+export type LocalChangesAction =
+  | "stashAll"
+  | "discardTrackedAll"
+  | "discardTrackedSelected"
+  | "deleteUntrackedSelected";
+
+export interface LocalChangesRequest {
+  repositoryRoot: string;
+  workspaceRoot: string;
+  expectedHeadSha: string;
+  expectedBranch: string;
+  expectedChanges: ChangeEntry[];
+  action: LocalChangesAction;
+  path: string | null;
+}
+
 export interface WorktreeSummary {
   path: string;
   head: string;
