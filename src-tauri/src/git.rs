@@ -1996,7 +1996,7 @@ mod tests {
         fs::write(repo.join("README.md"), b"changed tracked text\n").unwrap();
         let request = changes_request(&repo, Some("README.md"), None);
         discard_tracked_blocking(request).unwrap();
-        assert_eq!(fs::read(repo.join("README.md")).unwrap(), b"line one\n");
+        assert_eq!(String::from_utf8(fs::read(repo.join("README.md")).unwrap()).unwrap().replace("\r\n", "\n"), "line one\n");
         assert_eq!(fs::read(repo.join("hardware/.history/backup.kicad_pcb")).unwrap(), b"critical untracked backup");
         assert_eq!(changes_request(&repo, None, None).expected_changes.len(), 1);
         fs::remove_dir_all(sandbox).unwrap();
@@ -2012,7 +2012,7 @@ mod tests {
         fs::write(repo.join("hardware/.history/backup"), b"keep this").unwrap();
         let request = changes_request(&repo, None, None);
         discard_tracked_blocking(request).unwrap();
-        assert_eq!(fs::read(repo.join("README.md")).unwrap(), b"line one\n");
+        assert_eq!(String::from_utf8(fs::read(repo.join("README.md")).unwrap()).unwrap().replace("\r\n", "\n"), "line one\n");
         assert!(!repo.join("renamed 文档.md").exists());
         assert!(!repo.join("created.txt").exists());
         assert!(repo.join("hardware/.history/backup").is_file());
@@ -2038,8 +2038,8 @@ mod tests {
     fn clean_untracked_is_separate_and_literal_scoped() {
         let (sandbox, repo) = init_fixture_repo("remove-untracked");
         fs::write(repo.join("README.md"), b"important tracked edits").unwrap();
-        fs::write(repo.join("glob*.txt"), b"remove exact literal").unwrap();
-        fs::write(repo.join("globX.txt"), b"preserve neighbor").unwrap();
+        fs::write(repo.join("glob[abc].txt"), b"remove exact literal").unwrap();
+        fs::write(repo.join("globa.txt"), b"preserve neighbor").unwrap();
         // Match the user's KiCad layout: hardware/ is tracked, .history/ is
         // separately untracked. Without a tracked parent file, Git correctly
         // groups the whole "hardware/" directory as one status entry.
@@ -2048,10 +2048,10 @@ mod tests {
         git_ok(&repo, &["add", "hardware/board.kicad_sch"]);
         git_ok(&repo, &["commit", "-m", "tracked KiCad fixture"]);
         fs::write(repo.join("hardware/.history/backup"), b"remove with explicit confirmation").unwrap();
-        let request = changes_request(&repo, Some("glob*.txt"), None);
+        let request = changes_request(&repo, Some("glob[abc].txt"), None);
         remove_untracked_blocking(request).unwrap();
-        assert!(!repo.join("glob*.txt").exists());
-        assert!(repo.join("globX.txt").exists());
+        assert!(!repo.join("glob[abc].txt").exists());
+        assert!(repo.join("globa.txt").exists());
         assert_eq!(fs::read(repo.join("README.md")).unwrap(), b"important tracked edits");
         let dir_request = changes_request(&repo, Some("hardware/.history/"), None);
         remove_untracked_blocking(dir_request).unwrap();
