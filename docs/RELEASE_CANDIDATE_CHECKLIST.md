@@ -1,11 +1,13 @@
 # VirtualLab v0.5.0 Release Candidate — release qualification contract
 
+> **2026-10-10 最新结论**：PR #44 合并 main@e693f4f690d10a6439377e1466e6a828cf54e7e8；[main CI](https://github.com/magic-alt/virtuallab/actions/runs/38030779241) 6/6 全绿（Windows 156/85 前端/Rust，macOS/Linux 155/92，另跳过 1 项 Windows-only 前端测试）。[PR #44 RC 工作流](https://github.com/magic-alt/virtuallab/actions/runs/38029907168) 是 SKIPPED，不存在该 HEAD 的三平台 RC 打包验收。以下手工勾选项**仍全部待人工完成**。完整事实更新见 [Release Gate](RELEASE_GATE_V0.5.0.md) 和 [Issue #40](https://github.com/magic-alt/virtuallab/issues/40)。
+
 > **Not a release approval.** The current branch only produces unsigned QA artifacts. The automated CI jobs never sign, notarize, install into a user's system, publish a tag, or create a GitHub Release. A green job alone cannot close the manual items below.
 
 ## Source and scope
 
-- RC baseline: `main@cea4655bb1196d556a2ed88cc047c9bb41dbc27b` (PR #41 and PR #42 included).
-- Candidate implementation: PR #43, branch `release/v0.5.0-rc-qualification`.
+- **Historical PR #43 RC baseline:** `main@cea4655bb1196d556a2ed88cc047c9bb41dbc27b` (PR #41 and PR #42 included). **Current accepted review baseline:** `main@e693f4f690d10a6439377e1466e6a828cf54e7e8` (PR #44 merged).
+- **Historical candidate implementation:** PR #43, branch `release/v0.5.0-rc-qualification`. PR #44 fixes are already merged and were not built by the release/*-only PR artifact workflow; use manual workflow_dispatch on the final SHA.
 - Tracking: #40, native lifecycle #19, real build acceptance #34 and stable desktop qualification #25.
 - No relationship to any named external repository, lab, hardware board, motion controller or safety executor.
 - All hardware motion/power/flashing approvals remain fail-closed in the software control plane.

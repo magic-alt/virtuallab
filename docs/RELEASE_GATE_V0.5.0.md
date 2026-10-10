@@ -1,5 +1,7 @@
 # v0.5.0 Release Gate 修复与验收记录
 
+> **最新 Release Gate 快照（2026-10-10）**：PR #44 已合并到 `main@e693f4f690d10a6439377e1466e6a828cf54e7e8`。该 SHA 的 [CI](https://github.com/magic-alt/virtuallab/actions/runs/38030779241) 6/6 通过，但最终 SHA 的三平台安装包、真实 GUI、代码签名、公证和 main 必需检查规则尚未关闭。结论：**可进入 RC 实机验收，v0.5.0 Stable 暂不放行**。本页早期 SHA 和测试记录均为历史证据，不应当作当前 HEAD 证明。状态同步在 [Issue #40](https://github.com/magic-alt/virtuallab/issues/40)。
+
 日期：2026-10-09。源码基线：`cdcb093f6a94`。本记录包含本地修复与后续 Unix PTY 清理，远端结果以 PR 的候选 SHA CI 为准。
 
 ## 已实施的源码修复
@@ -123,3 +125,51 @@ manualDesktopAccepted: false
 | macOS acceptance / Finder/Dock | 未执行：当前主机为 Windows；Unix GUI CLI 解释器测试已加入，等待对应 runner |
 
 保留现有 Monaco chunk size 警告及 MSVC 链接器库创建提示。独立审查为源码审查；不是第三方复跑测试或真实桌面签核。取消与正常退出分别有回归，精确同时发生的竞争仍需平台压力验收。
+
+## PR #44 已合并后的 Release 审核更新（2026-10-10）
+
+本节更新前面 PR #44 开发期间的记录，**覆盖其“等待 CI”的旧状态**，但不伪造尚未执行的实机验收。
+
+### 基线及最终自动化
+
+| 项目 | 真实记录 |
+| --- | --- |
+| PR #44 | [Merged](https://github.com/magic-alt/virtuallab/pull/44)，head `83683f2c5ef2645b757fe882a517ba248c81598d` |
+| 最新合并 main | `e693f4f690d10a6439377e1466e6a828cf54e7e8` |
+| [main CI](https://github.com/magic-alt/virtuallab/actions/runs/38030779241) | **6/6 成功**：Frontend Node 22/26、Windows/Linux/macOS native、Required quality gate |
+| Windows 自动化 | 156 项前端 + 85 项 Rust 测试通过，release host 编译通过；**并非 NSIS 的安装后 GUI 验收** |
+| macOS 自动化 | 155 项前端（另 1 项 Windows-only 跳过）+ 92 项 Rust 测试通过，.app 和图标原生解码通过 |
+| Linux 自动化 | 155 项前端（另 1 项 Windows-only 跳过）+ 92 项 Rust 测试通过；未在用户 GUI 会话中运行 .deb |
+| Release Candidate 工作流 | PR #44 的 [RC Run](https://github.com/magic-alt/virtuallab/actions/runs/38029907168) **SKIPPED**：仅对 release/* PR 自动构建 |
+| 历史打包产物 | PR #43 的 [RC 构建](https://github.com/magic-alt/virtuallab/actions/runs/37956553562) 三平台成功，但 `sourceSha=cdfd68540da9f6921b3a73e25942456221f43099`，**不是 PR #44 合并后的 main** |
+| Branch protection / Rulesets | main `protected=false`；必需 CI enforcement off；未发现 Ruleset |
+| GitHub Releases | 尚未发布（当前检查时） |
+| 版本 | 0.5.0，package / Tauri / Cargo / lockfiles 一致 |
+
+### PR #44 源码复审结论
+
+- [x] Verification 通过 ManagedChild 清理进程树；取消、超时、父进程提前退出时均尝试确认子孙退出；3 秒日志读取结束检查用于 fail closed。Unix 主动脱离进程组的 daemon **不在所有权保证范围内**。
+- [x] Verification 每个 stdout/stderr 流写入最多 8 MiB，超限继续排空并返回失败；日志产物有独立哈希。
+- [x] Agent app-server / Claude / OpenCode 原生协议按记录限制 128 KiB，超长记录丢弃至下一个换行，后续记录可继续解析。
+- [x] macOS 共享 GUI CLI 发现：GitHub、Agent、Git credential helper；继承 PATH 及 Homebrew 常见安装路径，解决 `/usr/bin/env` 查找子解释器的问题。
+- [x] `manifest.json` 通过同步临时文件和同目录原子 rename 更新；Windows UNC/verbatim 别名归一化。
+- [x] 以上源码与平台相关单元测试进入 main CI。它们证明自动化用例通过，**不证明 Finder/Dock 下真实认证或安装后的 GUI 行为**。
+
+### Stable Release 必须关闭的门禁
+
+- [ ] 在**最终批准的 main SHA** 上，通过 `Release Candidate (unsigned QA bundles)` 的 `workflow_dispatch`（选择 main）重新构建 Windows NSIS、macOS .app ZIP 和 Linux .deb；逐一验证 manifest `sourceSha`、版本、SHA-256，不能沿用 PR #43 的旧包。
+- [ ] Windows/macOS/Linux 干净账户安装、首次启动、升级/卸载、设置保存与恢复、窗口尺寸、原生确认框 Cancel、Git/PR 审核与保护操作、Run 重新附着、进程树终止、Monaco CSP 等真实桌面操作记录。
+- [ ] macOS Finder、Dock、Terminal 三种入口的 `gh` / Codex / DeepSeek / Claude / OpenCode 实际安装、认证、交互和离线失败处理；Windows/Linux 相应功能；提供进程和退出码证据。
+- [ ] 使用真实项目验收 Windows npm/Tauri、Keil MDK、Qt 6/CMake，macOS Qt/Tauri 与 Linux Git/CMake/Agent（跟踪 [#34](https://github.com/magic-alt/virtuallab/issues/34)）。
+- [ ] GitHub main Ruleset/Branch protection 要求 `Required quality gate`、PR Review、禁止无审查绕过和强推。
+- [ ] 完成最终 Windows 签名策略、macOS Developer ID 签名和公证、Linux 分发校验；签名**之后**重新生成和独立验证 SHA-256。
+- [ ] 完成用户支持矩阵、Release Notes 与已知限制、维护者签核、不可变 Tag 与 GitHub Release。若采用 `v0.5.0-rc.1` 标签，必须先同步 package/Tauri/Cargo/双 Lockfile 为 `0.5.0-rc.1`。
+
+### 已知限制 / 非主线阻断项
+
+- GBK/CP936 中文工具输出仍无专用解码；GitHub PR 列表限 50 条。
+- Run 历史进程内保存，非跨崩溃恢复；Agent journal/证据 registry 在后续 Roadmap。
+- Monaco 大 chunk 警告、重负载 RSS/CPU/P95/崩溃恢复压力尚未实测；macOS 大小写不敏感 APFS 路径别名与脱离 PGID 子进程的收尾仍需真实平台资格化。
+- 软件审批和硬件物理安全联锁是不同边界，软件 UI 不能代替硬件安全机制。
+
+**当前裁决：受控内部 QA/RC 可以开展；正式公开稳定 `v0.5.0` 为 NO-GO。** 参见 [Issue #40](https://github.com/magic-alt/virtuallab/issues/40)。本次不创建发布 Tag 或 GitHub Release，不声称签名和人工实机验收已完成。
