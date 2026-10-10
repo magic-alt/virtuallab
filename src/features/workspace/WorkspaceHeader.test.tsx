@@ -11,7 +11,7 @@ describe("WorkspaceHeader", () => {
     const onFetch = vi.fn();
     const onPull = vi.fn();
     const { rerender } = render(
-      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0 }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
+      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0, stagedCount: 0, unstagedCount: 0, untrackedCount: 0, changes: [] }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
     );
 
     expect(document.querySelector("header > div")).toHaveClass("flex-wrap");

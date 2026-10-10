@@ -329,7 +329,7 @@ describe("ChangesReview", () => {
       enabled onResolveLocalChanges={recover} />);
     await user.click(screen.getByRole("button", { name: "Discard all tracked…" }));
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Stash all/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
     await act(async () => { finish(false); });
     expect(recover).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeEnabled();
