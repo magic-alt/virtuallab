@@ -86,7 +86,9 @@ export function WorkspaceHeader({
             onClick={onPull}
             variant="outline"
             size="sm"
-            title="Fast-forward the current branch from origin (no merge or reset)"
+            title={snapshot.dirtyCount > 0
+              ? "Local changes prevent Pull. Open Changes to Save to stash or separately discard tracked / delete untracked entries."
+              : "Fast-forward the current branch from origin (no merge or reset)"}
           >
             <GitBranch size={13} />
             Pull

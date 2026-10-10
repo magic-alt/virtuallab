@@ -15,6 +15,17 @@ export interface ChangeEntry {
   kind: ChangeKind;
 }
 
+/** Snapshot used for fail-closed local Git mutations. */
+export interface GitLocalChangesRequest {
+  repositoryRoot: string;
+  workspaceRoot: string;
+  expectedHeadSha: string;
+  expectedBranch: string;
+  expectedChanges: ChangeEntry[];
+  path?: string | null;
+  oldPath?: string | null;
+}
+
 export interface WorktreeSummary {
   path: string;
   head: string;

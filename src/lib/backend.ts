@@ -5,6 +5,7 @@ import type {
   BuildWorkflowSpec,
   DiffRequest,
   DiffResponse,
+  GitLocalChangesRequest,
   ProcessSpec,
   RepositorySnapshot,
   WorkspaceMutationResult,
@@ -113,6 +114,21 @@ export async function gitFetchOrigin(repositoryRoot: string): Promise<void> {
 export async function gitPullCurrent(repositoryRoot: string, workspaceRoot: string): Promise<void> {
   requireDesktop();
   return invoke("git_pull_current", { repositoryRoot, workspaceRoot });
+}
+
+export async function gitDiscardTrackedChanges(request: GitLocalChangesRequest): Promise<void> {
+  requireDesktop();
+  return invoke("git_discard_tracked_changes", { request });
+}
+
+export async function gitRemoveUntrackedChanges(request: GitLocalChangesRequest): Promise<void> {
+  requireDesktop();
+  return invoke("git_remove_untracked_changes", { request });
+}
+
+export async function gitStashLocalChanges(request: GitLocalChangesRequest): Promise<string> {
+  requireDesktop();
+  return invoke<string>("git_stash_local_changes", { request });
 }
 
 export async function gitDiff(request: DiffRequest): Promise<DiffResponse> {
@@ -228,10 +244,18 @@ export async function watchStop(id: string): Promise<void> {
 }
 
 /** Fail closed if the native dialog is unavailable or denied. */
-export async function confirmNativeAction(message: string): Promise<boolean> {
+export async function confirmNativeAction(
+  message: string,
+  options: { title?: string; okLabel?: string } = {},
+): Promise<boolean> {
   if (!isDesktopRuntime()) return false;
   try {
-    return await confirm(message, { title: "Confirm action", kind: "warning", okLabel: "Confirm", cancelLabel: "Cancel" });
+    return await confirm(message, {
+      title: options.title ?? "Confirm action",
+      kind: "warning",
+      okLabel: options.okLabel ?? "Confirm",
+      cancelLabel: "Cancel",
+    });
   } catch { return false; }
 }
 

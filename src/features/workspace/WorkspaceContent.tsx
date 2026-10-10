@@ -37,6 +37,7 @@ interface Props {
   isPreview: boolean;
   snapshotRevision?: number;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
+  onLocalChangesMutated?: (workspaceRoot: string) => Promise<void>;
   onNewReviewWorkspace?: (request: ReviewWorkspaceRequest) => void;
   onTabChange: (tab: WorkspaceTab) => void;
 }
@@ -69,6 +70,7 @@ export function WorkspaceContent({
   isPreview,
   snapshotRevision = 0,
   onRefreshForRereview,
+  onLocalChangesMutated,
   onNewReviewWorkspace,
   onTabChange,
 }: Props) {
@@ -113,6 +115,7 @@ export function WorkspaceContent({
             enabled={!isPreview && isDesktopRuntime()}
             refreshRevision={snapshotRevision}
             onRefreshForRereview={onRefreshForRereview}
+            onLocalChangesMutated={onLocalChangesMutated}
           />
         )}
         {tab === "github" && (

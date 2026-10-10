@@ -523,6 +523,7 @@ export function WorkbenchShell() {
             isPreview={isPreview}
             snapshotRevision={snapshotRevision}
             onRefreshForRereview={refreshForRereview}
+             onLocalChangesMutated={async (path) => { await loadSnapshot(path, true); }}
             onNewReviewWorkspace={(intent) => {
               if (!activeRepository || !native) return;
               setReviewIntent(intent);
