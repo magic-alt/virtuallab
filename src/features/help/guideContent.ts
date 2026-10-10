@@ -137,6 +137,15 @@ export const guidePages: GuidePage[] = [
         { type: "text", text: "Changed 文件由原生 Git 读取，Monaco 编辑器提供 Unified（上下）与 Side by side（左右）只读差异视图。文件选择、工作树和基线变化需要及时刷新；二进制或过大的文件可能只有状态提示。" },
         { type: "callout", tone: "note", title: "未跟踪文件 ≠ 完整 Diff", text: "未跟踪文件和目录会显示路径与状态，但不会被当作 Git 已跟踪文件调用差异预览，也不能据此创建行评论。" },
       ] },
+      { id: "resolve", title: "撤销更改、Stash 与 Pull", blocks: [
+        { type: "text", text: "当 Git 分支切换因 staged/unstaged 修改失败，或顶部 Pull 因本地 Changes 变灰时，进入 Changes 选择处理方式。推荐优先点击 Save to stash 保存暂存区、工作区和未跟踪文件，包括 hardware/.history/ 等 KiCad 项目备份。此操作不自动提交、推送或删除备份，成功后重新刷新工作区状态。" },
+        { type: "table", columns: ["Changes 操作", "实际作用", "风险"], rows: [
+          ["Save to stash", "将 staged、unstaged 和 untracked 文件保存到可恢复 Git Stash", "建议优先；从 Terminal 用 git stash list / git stash pop 恢复"],
+          ["Discard tracked / selected", "恢复已跟踪文件至 HEAD（含 staged + unstaged）", "不可直接撤销，但不触碰未跟踪文件"],
+          ["Delete untracked / selected", "专门删除 Git 未跟踪文件或整个目录", "不可恢复；hardware/.history/ 可能含有重要备份"],
+        ] },
+        { type: "callout", tone: "warning", title: "原生确认与防止误删", text: "所有动作需要 Tauri 原生确认；Cancel 或确认失败不执行。执行前再次核对分支、HEAD 和完整 Git 状态；如果修改已变化会提示刷新。删除未跟踪目录前请检查内容，优先 Stash。Pull 保持 --ff-only，只有完全洁净后才能点击。" },
+      ] },
       { id: "review-loop", title: "评审闭环：Review → Fix → Re-review", blocks: [
         { type: "steps", items: [
           { title: "选择目标文件", description: "在 Changes 中选取已跟踪文件，切换 Unified 或 Side by side 检查变更。" },

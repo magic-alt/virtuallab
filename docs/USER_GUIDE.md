@@ -80,6 +80,25 @@ git status --short
 
 删除 worktree 的前提是：**非 primary，工作树洁净，用户确认**。Dirty worktree 会被 Git 拒绝，不会被强制删除。
 
+### 工作区有 Changes、无法切换分支或 Pull？
+
+**推荐优先使用可恢复操作**：在 **Changes** 标签点击 **Save to stash**，阅读 Tauri 原生确认框后确认。此操作等价于在当前 Worktree 执行 `git stash push --include-untracked`，将未暂存、已暂存及未跟踪文件（包括 `hardware/.history/` 等工程备份）保存到 Git Stash；不会自动提交/推送、覆盖远端或删除 Git 忽略的文件。之后工作区若已变洁净，Pull 会自动恢复可用（仍为 `--ff-only`）；分支切换继续遵循 Git 自身的路径冲突保护。需要找回保存的改动时在 Terminal 执行：
+
+```bash
+git stash list
+git stash show --stat 'stash@{0}'
+git stash pop
+```
+
+请在正确 Worktree 与目标分支核对后再 pop；如果遇到冲突，先处理冲突再继续。
+
+如果**确认不需要**这些修改，可分两类操作：
+
+1. **Discard tracked** / **Discard selected tracked**：恢复对应所有或单个 Git 已跟踪文件至当前 HEAD，同时撤销它们的暂存区修改；不会删除未跟踪目录或项目备份。
+2. **Delete untracked** / **Delete selected untracked**：专门移除 Git 未跟踪的文件或目录。删除目录可能永久移除多个 KiCad 历史文件，不能撤销。Git 忽略的文件不主动删除；建议先 Save to stash。
+
+三个操作都必须先通过**原生确认框**。若按下 Cancel、确认框打不开、HEAD/分支/本地变更在确认期间发生变化，操作不会执行。操作成功会重新读取 Git 状态；如果仍有未跟踪文件，Pull 仍会维持不可用，直到工作区真正洁净。不要把工作区删除、分支强制切换或 `git reset --hard` 当作解决办法。
+
 ### 切换和删除分支
 
 | 操作 | 作用 | 保护 |
