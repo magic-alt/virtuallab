@@ -26,7 +26,7 @@ pub struct RepositorySnapshot {
     recent_commits: Vec<CommitSummary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeEntry {
     path: String,
@@ -1000,6 +1000,129 @@ fn truncate_lines(text: String, max_lines: usize) -> (String, bool) {
 }
 
 
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalChangesRequest {
+    repository_root: String,
+    workspace_root: String,
+    expected_head_sha: String,
+    expected_branch: String,
+    expected_changes: Vec<ChangeEntry>,
+    action: LocalChangesAction,
+    path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum LocalChangesAction {
+    StashAll,
+    DiscardTrackedAll,
+    DiscardTrackedSelected,
+    DeleteUntrackedSelected,
+}
+
+/// Recheck native Git status and HEAD *after* the native warning dialog. A
+/// stale frontend selection may not remove files from a different checkout.
+/// The workspace must also be an actual Git worktree registered to the repo.
+fn verify_local_changes_request(request: &LocalChangesRequest) -> Result<String, String> {
+    let (_, workspace) = resolve_git_workspace(&request.repository_root, &request.workspace_root)?;
+    let head = git_read(&workspace, &["rev-parse", "--short=10", "HEAD"])?;
+    let branch = git_read(&workspace, &["branch", "--show-current"])?;
+    let current_branch = if branch.trim().is_empty() { format!("detached@{}", head.trim()) }
+        else { branch.trim().to_string() };
+    if head.trim() != request.expected_head_sha || current_branch != request.expected_branch {
+        return Err("Branch/HEAD changed while confirming. Refresh Changes and retry; nothing was discarded.".into());
+    }
+    let live = local_changes_status(&workspace)?;
+    if live.is_empty() || live != request.expected_changes {
+        return Err("Local changes changed while confirming. Refresh Changes and retry; nothing was discarded.".into());
+    }
+    Ok(workspace)
+}
+
+fn local_changes_status(workspace: &str) -> Result<Vec<ChangeEntry>, String> {
+    let raw = git_read(workspace, &[
+        "status", "--porcelain=v1", "-z", "--untracked-files=normal",
+        "--ignore-submodules=dirty",
+    ])?;
+    Ok(parse_status_z(&raw)?.into_iter().map(|entry| ChangeEntry {
+        kind: change_kind(entry.index, entry.worktree).to_string(),
+        path: entry.path,
+        old_path: entry.old_path,
+        index_status: entry.index.to_string(),
+        worktree_status: entry.worktree.to_string(),
+    }).collect())
+}
+
+fn local_change_pathspec(value: &str) -> Result<String, String> {
+    let path = validate_relative_path(value)?;
+    if path.is_empty() || path == "." || path.starts_with(".git/") || path == ".git" {
+        return Err("Refusing to operate on a repository root or Git metadata".into());
+    }
+    Ok(format!(":(literal){path}"))
+}
+
+/// Only the explicit scope requested by the user is modified. Untracked files
+/// are never touched by tracked-only restore; stash uses -u to preserve them
+/// in a recoverable snapshot. DeleteUntrackedSelected intentionally targets
+/// only one entry, never a recursive clean of the entire repository.
+fn git_local_changes_blocking(request: LocalChangesRequest) -> Result<(), String> {
+    let workspace = verify_local_changes_request(&request)?;
+    let tracked = request.expected_changes.iter().filter(|entry| entry.kind != "untracked").count();
+    match request.action {
+        LocalChangesAction::StashAll => {
+            if request.path.is_some() { return Err("Stash all does not accept a file path".into()); }
+            // -u saves non-ignored untracked files, including grouped directories.
+            // No --all: ignored caches are not touched, and no reset --hard.
+            git(&workspace, &["stash", "push", "--include-untracked", "-m", "VirtualLab backup before switching/pulling"])?;
+            require_clean_workspace(&workspace)
+                .map_err(|_| "Git stash returned, but local changes remain; inspect the stash and refresh before retrying.".into())
+        }
+        LocalChangesAction::DiscardTrackedAll => {
+            if request.path.is_some() { return Err("Discard-all must not receive a file path".into()); }
+            if tracked == 0 { return Err("No tracked changes to discard".into()); }
+            git(&workspace, &["restore", "--source=HEAD", "--staged", "--worktree", "--", ":/"])?;
+            Ok(())
+        }
+        LocalChangesAction::DiscardTrackedSelected => {
+            let selected = request.path.as_deref()
+                .and_then(|path| request.expected_changes.iter().find(|entry| entry.path == path))
+                .filter(|entry| entry.kind != "untracked")
+                .ok_or("Select a currently modified tracked file")?;
+            let new_path = local_change_pathspec(&selected.path)?;
+            if let Some(old) = selected.old_path.as_deref() {
+                let old_path = local_change_pathspec(old)?;
+                git(&workspace, &["restore", "--source=HEAD", "--staged", "--worktree", "--",
+                    new_path.as_str(), old_path.as_str()])?;
+            } else {
+                git(&workspace, &["restore", "--source=HEAD", "--staged", "--worktree", "--",
+                    new_path.as_str()])?;
+            }
+            Ok(())
+        }
+        LocalChangesAction::DeleteUntrackedSelected => {
+            let selected = request.path.as_deref()
+                .and_then(|path| request.expected_changes.iter().find(|entry| entry.path == path))
+                .filter(|entry| entry.kind == "untracked")
+                .ok_or("Select an untracked file or grouped directory")?;
+            let spec = local_change_pathspec(&selected.path)?;
+            // Git handles ignored files and nested Git repositories safely;
+            // never clean with -x, -X or -ff, and never supply an all-files path.
+            if git_read(&workspace, &["clean", "-n", "-d", "--", &spec])?.trim().is_empty() {
+                return Err("Git has no removable untracked items at that path".into());
+            }
+            git(&workspace, &["clean", "-f", "-d", "--", &spec])?;
+            Ok(())
+        }
+    }
+}
+#[tauri::command]
+pub async fn git_local_changes(request: LocalChangesRequest) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || git_local_changes_blocking(request))
+        .await.map_err(|error| format!("Local changes action failed: {error}"))?
+}
+
 // Native Git mutations deliberately require registered worktrees and preserve
 // uncommitted changes. Pull is always fast-forward-only, never rebase/reset.
 fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<(String, String), String> {
@@ -1216,7 +1339,9 @@ pub async fn git_pull_current(repository_root: String, workspace_root: String) -
 
 fn git_pull_current_blocking(repository_root: String, workspace_root: String) -> Result<(), String> {
     let (_, workspace) = resolve_git_workspace(&repository_root, &workspace_root)?;
-    require_clean_workspace(&workspace)?;
+    // Untracked files are kept. Git itself refuses a fast-forward that would
+    // overwrite a conflicting untracked path; tracked edits remain blocked.
+    require_no_tracked_changes(&workspace)?;
     let branch = git_read(&workspace, &["branch", "--show-current"])?;
     let branch = branch.trim();
     if branch.is_empty() {
@@ -1413,6 +1538,140 @@ mod tests {
         assert!(status.success(), "git command failed: {args:?}");
     }
 
+
+    fn recovery_request(root: &str, action: LocalChangesAction, path: Option<&str>) -> LocalChangesRequest {
+        let snapshot = inspect_repository_blocking(root.to_string()).unwrap();
+        LocalChangesRequest {
+            repository_root: root.into(), workspace_root: root.into(),
+            expected_head_sha: snapshot.head_sha, expected_branch: snapshot.current_branch,
+            expected_changes: snapshot.changes,
+            action, path: path.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn discard_selected_tracked_change_keeps_other_modifications_and_history() {
+        let (sandbox, repo) = init_fixture_repo("discard-selected");
+        let root = repo.to_string_lossy().to_string();
+        fs::write(repo.join("README.md"), "uncommitted change").unwrap();
+        fs::write(repo.join("staged.txt"), "staged file").unwrap();
+        git_ok(&repo, &["add", "staged.txt"]);
+        fs::create_dir_all(repo.join("hardware/.history")).unwrap();
+        fs::write(repo.join("hardware/.history/backup.kicad_sch"), "important data").unwrap();
+
+        git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some("README.md"))).unwrap();
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert_eq!(fs::read_to_string(repo.join("staged.txt")).unwrap(), "staged file");
+        assert_eq!(fs::read_to_string(repo.join("hardware/.history/backup.kicad_sch")).unwrap(), "important data");
+        let now = inspect_repository_blocking(root).unwrap();
+        assert!(now.changes.iter().any(|entry| entry.path == "staged.txt"));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn discard_all_tracked_keeps_untracked_directory_and_no_force_reset() {
+        let (sandbox, repo) = init_fixture_repo("discard-all");
+        let root = repo.to_string_lossy().to_string();
+        fs::write(repo.join("README.md"), "edited").unwrap();
+        git_ok(&repo, &["add", "README.md"]);
+        fs::write(repo.join("added.txt"), "staged new content").unwrap();
+        git_ok(&repo, &["add", "added.txt"]);
+        fs::create_dir_all(repo.join("hardware/.history")).unwrap();
+        fs::write(repo.join("hardware/.history/autosave"), "must remain").unwrap();
+
+        git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None)).unwrap();
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert!(!repo.join("added.txt").exists(), "staged added files are reverted to HEAD");
+        assert_eq!(fs::read_to_string(repo.join("hardware/.history/autosave")).unwrap(), "must remain");
+        let now = inspect_repository_blocking(root).unwrap();
+        assert_eq!(now.staged_count + now.unstaged_count, 0);
+        assert_eq!(now.untracked_count, 1);
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn stash_all_preserves_dirty_tracked_and_untracked_content_for_recovery() {
+        let (sandbox, repo) = init_fixture_repo("stash-all");
+        let root = repo.to_string_lossy().to_string();
+        fs::write(repo.join("README.md"), "important modified tracked\n").unwrap();
+        fs::create_dir_all(repo.join("hardware/.history")).unwrap();
+        fs::write(repo.join("hardware/.history/autosave"), "important untracked").unwrap();
+        git_local_changes_blocking(recovery_request(&root, LocalChangesAction::StashAll, None)).unwrap();
+        assert!(inspect_repository_blocking(root.clone()).unwrap().changes.is_empty());
+        assert!(git_read(&root, &["stash", "list"]).unwrap().contains("VirtualLab backup"));
+        git_ok(&repo, &["stash", "pop"]);
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "important modified tracked\n");
+        assert_eq!(fs::read_to_string(repo.join("hardware/.history/autosave")).unwrap(), "important untracked");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn delete_selected_untracked_directory_does_not_clean_sibling_files() {
+        let (sandbox, repo) = init_fixture_repo("clean-single");
+        let root = repo.to_string_lossy().to_string();
+        fs::create_dir_all(repo.join("hardware/.history")).unwrap();
+        fs::write(repo.join("hardware/.history/autosave 中文"), "selected").unwrap();
+        fs::write(repo.join("keep me.txt"), "unrelated").unwrap();
+        let req = recovery_request(&root, LocalChangesAction::DeleteUntrackedSelected, Some("hardware/"));
+        git_local_changes_blocking(req).unwrap();
+        assert!(!repo.join("hardware/.history/autosave 中文").exists());
+        assert_eq!(fs::read_to_string(repo.join("keep me.txt")).unwrap(), "unrelated");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn stale_snapshot_and_unregistered_worktree_refuse_destructive_actions() {
+        let (sandbox, repo) = init_fixture_repo("stale-discard");
+        let root = repo.to_string_lossy().to_string();
+        fs::write(repo.join("README.md"), "edit 1").unwrap();
+        let first = recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None);
+        fs::write(repo.join("another.txt"), "late user content").unwrap();
+        assert!(git_local_changes_blocking(first).unwrap_err().contains("Refresh Changes"));
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "edit 1");
+        let mut second = recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some("README.md"));
+        second.expected_head_sha = "another-commit".into();
+        assert!(git_local_changes_blocking(second).unwrap_err().contains("HEAD changed"));
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "edit 1");
+        let mut third = recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None);
+        third.workspace_root = sandbox.to_string_lossy().into();
+        assert!(git_local_changes_blocking(third).is_err());
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "edit 1");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn discard_rename_restores_both_original_and_destination_path() {
+        let (sandbox, repo) = init_fixture_repo("discard-rename");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["mv", "README.md", "renamed README.md"]);
+        let snapshot = inspect_repository_blocking(root.clone()).unwrap();
+        assert_eq!(snapshot.changes.len(), 1);
+        let entry = &snapshot.changes[0];
+        assert_eq!(entry.old_path.as_deref(), Some("README.md"));
+        let path = entry.path.clone();
+        git_local_changes_blocking(recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some(&path))).unwrap();
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "initial\n");
+        assert!(!repo.join("renamed README.md").exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn only_untracked_files_can_be_cleaned_and_scope_is_never_implicit() {
+        let (sandbox, repo) = init_fixture_repo("discard-scope");
+        let root = repo.to_string_lossy().to_string();
+        fs::write(repo.join("README.md"), "modified").unwrap();
+        fs::write(repo.join("x.txt"), "untracked").unwrap();
+        let request = recovery_request(&root, LocalChangesAction::DeleteUntrackedSelected, Some("README.md"));
+        assert!(git_local_changes_blocking(request).is_err());
+        let request = recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some("x.txt"));
+        assert!(git_local_changes_blocking(request).is_err());
+        let request = recovery_request(&root, LocalChangesAction::DeleteUntrackedSelected, Some("../x.txt"));
+        assert!(git_local_changes_blocking(request).is_err());
+        assert_eq!(fs::read_to_string(repo.join("x.txt")).unwrap(), "untracked");
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "modified");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
     #[test]
     fn branch_inventory_and_safe_switch_pull_cover_origin_main() {
         let (sandbox, repo) = init_fixture_repo("branch-management");
@@ -1463,7 +1722,8 @@ mod tests {
             fs::read_to_string(repo.join("untracked.txt")).unwrap(),
             "local only"
         );
-        assert!(git_pull_current_blocking(repo_path.clone(), repo_path.clone()).is_err());
+        git_pull_current_blocking(repo_path.clone(), repo_path.clone()).expect("pull must preserve harmless untracked files");
+        assert_eq!(fs::read_to_string(repo.join("untracked.txt")).unwrap(), "local only");
         fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");
         let _ = fs::remove_dir_all(sandbox);
     }
