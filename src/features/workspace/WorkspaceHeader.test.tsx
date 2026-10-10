@@ -5,6 +5,18 @@ import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 
 describe("WorkspaceHeader", () => {
+
+  it("explains dirty Pull and enables it after a clean snapshot refresh", () => {
+    const base = { ...PREVIEW_SNAPSHOT, remoteUrl: "https://github.com/example/repo", currentBranch: "main" };
+    const onPull = vi.fn();
+    const props = { isPreview: false, loading: false, gitBusy: false,
+      onPull, onFetch: vi.fn(), onRefresh: vi.fn() };
+    const view = render(<WorkspaceHeader {...props} snapshot={{ ...base, dirtyCount: 2 }} />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pull" })).toHaveAttribute("title", expect.stringContaining("Open Changes"));
+    view.rerender(<WorkspaceHeader {...props} snapshot={{ ...base, dirtyCount: 0 }} />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeEnabled();
+  });
   it("runs refresh in native mode and disables it in preview", async () => {
     const user = userEvent.setup();
     const onRefresh = vi.fn();

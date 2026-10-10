@@ -1,13 +1,13 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { ChangesReview } from "./ChangesReview";
 import type { RepositorySnapshot } from "@/types/workbench";
 
-const backend = vi.hoisted(() => ({ gitDiff: vi.fn() }));
+const backend = vi.hoisted(() => ({ gitDiff: vi.fn(), confirmNativeAction: vi.fn(), gitDiscardTrackedChanges: vi.fn(), gitRemoveUntrackedChanges: vi.fn(), gitStashLocalChanges: vi.fn() }));
 
-vi.mock("@/lib/backend", () => ({ gitDiff: backend.gitDiff }));
+vi.mock("@/lib/backend", () => backend);
 vi.mock("./MonacoReviewSurface", () => ({
   MonacoReviewSurface: ({
     path,
@@ -68,7 +68,127 @@ describe("ChangesReview", () => {
   beforeEach(() => {
     backend.gitDiff.mockReset();
     backend.gitDiff.mockResolvedValue(response());
+    backend.confirmNativeAction.mockReset();
+    backend.confirmNativeAction.mockResolvedValue(true);
+    backend.gitDiscardTrackedChanges.mockReset();
+    backend.gitDiscardTrackedChanges.mockResolvedValue(undefined);
+    backend.gitRemoveUntrackedChanges.mockReset();
+    backend.gitRemoveUntrackedChanges.mockResolvedValue(undefined);
+    backend.gitStashLocalChanges.mockReset();
+    backend.gitStashLocalChanges.mockResolvedValue("stash@{0}");
     useWorkbenchStore.setState({ reviewStates: {} });
+  });
+
+
+  it("offers recoverable stash first, preserving staged and untracked paths", async () => {
+    const user = userEvent.setup();
+    const onLocalChangesMutated = vi.fn().mockResolvedValue(undefined);
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onLocalChangesMutated={onLocalChangesMutated} />);
+    await user.click(screen.getByRole("button", { name: "Save to stash" }));
+    expect(backend.confirmNativeAction).toHaveBeenCalledWith(
+      expect.stringContaining("ALL staged, unstaged and untracked"),
+      expect.objectContaining({ title: "Save Git changes to stash", okLabel: "Save to stash" }),
+    );
+    await waitFor(() => expect(backend.gitStashLocalChanges).toHaveBeenCalledWith({
+      repositoryRoot: "D:/repo", workspaceRoot: "D:/repo",
+      expectedHeadSha: snapshot.headSha, expectedBranch: snapshot.currentBranch,
+      expectedChanges: snapshot.changes, path: null, oldPath: null,
+    }));
+    expect(backend.gitRemoveUntrackedChanges).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent("stash@{0}");
+    expect(onLocalChangesMutated).toHaveBeenCalledWith("D:/repo");
+  });
+
+  it("discards one tracked file only after native confirmation and refreshes", async () => {
+    const user = userEvent.setup();
+    const onLocalChangesMutated = vi.fn().mockResolvedValue(undefined);
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onLocalChangesMutated={onLocalChangesMutated} />);
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await user.click(await screen.findByRole("button", { name: "Discard selected tracked" }));
+    await waitFor(() => expect(backend.gitDiscardTrackedChanges).toHaveBeenCalledWith(expect.objectContaining({
+      path: "src/a.ts", oldPath: null, expectedChanges: snapshot.changes,
+    })));
+    expect(backend.confirmNativeAction).toHaveBeenCalledWith(
+      expect.stringContaining("STAGED and UNSTAGED"),
+      expect.objectContaining({ okLabel: "Discard selected" }),
+    );
+    expect(backend.gitRemoveUntrackedChanges).not.toHaveBeenCalled();
+    expect(onLocalChangesMutated).toHaveBeenCalledWith("D:/repo");
+  });
+
+  it("can restore all tracked edits without calling Git clean", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Discard tracked (2)" }));
+    await waitFor(() => expect(backend.gitDiscardTrackedChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ path: null, oldPath: null }),
+    ));
+    expect(backend.gitRemoveUntrackedChanges).not.toHaveBeenCalled();
+  });
+
+  it("requires separate permanent-deletion confirmation for untracked KiCad history", async () => {
+    const user = userEvent.setup();
+    const withHistory: RepositorySnapshot = {
+      ...snapshot, untrackedCount: 1, dirtyCount: 3,
+      changes: [...snapshot.changes, {
+        path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?",
+        kind: "untracked" as const,
+      }],
+    };
+    render(<ChangesReview snapshot={withHistory} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "hardware/.history/" }));
+    await user.click(screen.getByRole("button", { name: "Delete selected untracked" }));
+    expect(backend.confirmNativeAction).toHaveBeenCalledWith(
+      expect.stringContaining("KiCad project history"),
+      expect.objectContaining({ title: "Delete selected untracked entry", okLabel: "Delete selected" }),
+    );
+    await waitFor(() => expect(backend.gitRemoveUntrackedChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "hardware/.history/", expectedChanges: withHistory.changes }),
+    ));
+    expect(backend.gitDiscardTrackedChanges).not.toHaveBeenCalled();
+  });
+
+  it("cancelled native confirmation never invokes any destructive command", async () => {
+    backend.confirmNativeAction.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Discard tracked (2)" }));
+    expect(backend.gitDiscardTrackedChanges).not.toHaveBeenCalled();
+    expect(backend.gitRemoveUntrackedChanges).not.toHaveBeenCalled();
+    expect(backend.gitStashLocalChanges).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale selection if the workspace is refreshed during the confirmation", async () => {
+    let release!: (approved: boolean) => void;
+    backend.confirmNativeAction.mockReturnValue(new Promise<boolean>((resolve) => { release = resolve; }));
+    const user = userEvent.setup();
+    const view = render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={1} />);
+    await user.click(screen.getByRole("button", { name: "Discard tracked (2)" }));
+    view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={2} />);
+    await act(async () => { release(true); });
+    expect(backend.gitDiscardTrackedChanges).not.toHaveBeenCalled();
+  });
+
+  it("does not render actionable native mutation buttons in web preview", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="preview" workspaceRoot="preview" enabled={false} />);
+    expect(screen.getByRole("button", { name: "Save to stash" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard tracked (2)" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    expect(backend.gitDiscardTrackedChanges).not.toHaveBeenCalled();
+  });
+
+  it("shows a native Git failure without claiming a successful discard", async () => {
+    backend.gitDiscardTrackedChanges.mockRejectedValueOnce(new Error("Workspace changed since it was reviewed. Refresh Changes before trying again."));
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Discard tracked (2)" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Workspace changed");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("loads a typed worktree diff and renders Monaco", async () => {
