@@ -1,6 +1,6 @@
 use crate::process::background_command;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::Read;
 use std::path::{Component, Path};
@@ -1067,6 +1067,43 @@ fn local_change_pathspec(value: &str) -> Result<String, String> {
 /// are never touched by tracked-only restore; stash uses -u to preserve them
 /// in a recoverable snapshot. DeleteUntrackedSelected intentionally targets
 /// only one entry, never a recursive clean of the entire repository.
+// Git restore may overwrite an untracked file when restoring the ORIGINAL
+// name of a staged rename/deletion. Git itself does not guarantee clean-style
+// collision protection here, so perform native, pre-command checks.
+fn ensure_restore_preserves_untracked(
+    workspace: &str,
+    changes: &[ChangeEntry],
+    selected: &[&ChangeEntry],
+) -> Result<(), String> {
+    let tracked = git_read(workspace, &["ls-files", "-z"])?;
+    let index_paths: HashSet<&str> = tracked.split('\0').filter(|path| !path.is_empty()).collect();
+    for change in selected {
+        for restored in std::iter::once(change.path.as_str()).chain(change.old_path.as_deref()) {
+            let restored_path = validate_relative_path(restored)?;
+            let overlap = changes.iter().filter(|entry| entry.kind == "untracked").any(|entry| {
+                let unknown = entry.path.trim_end_matches('/');
+                restored == unknown || restored.starts_with(&format!("{unknown}/"))
+                    || unknown.starts_with(&format!("{restored}/"))
+            });
+            if overlap {
+                return Err(format!("Refusing to overwrite untracked local files at {restored}. Stash or move the files first."));
+            }
+            // Staged rename/deletion removes a HEAD-tracked path from the index.
+            // If it has reappeared as an ignored/untracked file, restore would
+            // replace it silently. The newly renamed destination is intentionally
+            // not inspected here: unstaged worktree renames can also produce a
+            // non-index path that the user explicitly selected for discard.
+            let restored_from_head = change.old_path.as_deref() == Some(restored)
+                || (change.index_status == "D" && change.path == restored);
+            if restored_from_head && !index_paths.contains(restored)
+                && std::fs::symlink_metadata(Path::new(workspace).join(restored_path)).is_ok() {
+                return Err(format!("Refusing to replace an untracked/ignored file at {restored}. Stash or move it first."));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn git_local_changes_blocking(request: LocalChangesRequest) -> Result<(), String> {
     let workspace = verify_local_changes_request(&request)?;
     let tracked = request.expected_changes.iter().filter(|entry| entry.kind != "untracked").count();
@@ -1082,6 +1119,8 @@ fn git_local_changes_blocking(request: LocalChangesRequest) -> Result<(), String
         LocalChangesAction::DiscardTrackedAll => {
             if request.path.is_some() { return Err("Discard-all must not receive a file path".into()); }
             if tracked == 0 { return Err("No tracked changes to discard".into()); }
+            let selected: Vec<_> = request.expected_changes.iter().filter(|entry| entry.kind != "untracked").collect();
+            ensure_restore_preserves_untracked(&workspace, &request.expected_changes, &selected)?;
             git(&workspace, &["restore", "--source=HEAD", "--staged", "--worktree", "--", ":/"])?;
             Ok(())
         }
@@ -1090,6 +1129,7 @@ fn git_local_changes_blocking(request: LocalChangesRequest) -> Result<(), String
                 .and_then(|path| request.expected_changes.iter().find(|entry| entry.path == path))
                 .filter(|entry| entry.kind != "untracked")
                 .ok_or("Select a currently modified tracked file")?;
+            ensure_restore_preserves_untracked(&workspace, &request.expected_changes, &[selected])?;
             let new_path = local_change_pathspec(&selected.path)?;
             if let Some(old) = selected.old_path.as_deref() {
                 let old_path = local_change_pathspec(old)?;
@@ -1636,6 +1676,36 @@ mod tests {
         third.workspace_root = sandbox.to_string_lossy().into();
         assert!(git_local_changes_blocking(third).is_err());
         assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "edit 1");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn never_overwrites_untracked_content_when_discarding_staged_rename() {
+        let (sandbox, repo) = init_fixture_repo("restore-collision");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["mv", "README.md", "renamed.txt"]);
+        fs::write(repo.join("README.md"), "VERY IMPORTANT UNTRACKED CONTENT").unwrap();
+        let single = recovery_request(&root, LocalChangesAction::DiscardTrackedSelected, Some("renamed.txt"));
+        let all = recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None);
+        assert!(git_local_changes_blocking(single).unwrap_err().contains("untracked"));
+        assert!(git_local_changes_blocking(all).unwrap_err().contains("untracked"));
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "VERY IMPORTANT UNTRACKED CONTENT");
+        assert!(repo.join("renamed.txt").exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn never_overwrites_ignored_content_at_a_staged_deleted_path() {
+        let (sandbox, repo) = init_fixture_repo("restore-ignored-collision");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["rm", "README.md"]);
+        // Git status deliberately hides this file, but restore still must
+        // never replace it. Add the ignore rule outside the worktree.
+        fs::write(repo.join(".git/info/exclude"), "README.md\n").unwrap();
+        fs::write(repo.join("README.md"), "IMPORTANT IGNORED CONTENT").unwrap();
+        let request = recovery_request(&root, LocalChangesAction::DiscardTrackedAll, None);
+        assert!(git_local_changes_blocking(request).unwrap_err().contains("untracked/ignored"));
+        assert_eq!(fs::read_to_string(repo.join("README.md")).unwrap(), "IMPORTANT IGNORED CONTENT");
         fs::remove_dir_all(sandbox).unwrap();
     }
 
