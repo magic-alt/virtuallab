@@ -1800,6 +1800,33 @@ mod tests {
         let _ = fs::remove_dir_all(sandbox);
     }
 
+
+    #[test]
+    fn pull_rejects_incoming_collision_with_untracked_file_without_data_loss() {
+        let (sandbox, repo) = init_fixture_repo("pull-untracked-collision");
+        let origin = sandbox.join("origin.git");
+        let peer = sandbox.join("peer");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["push", "-u", "origin", "main"]);
+        git_ok(&repo, &["clone", "--branch", "main", origin.to_str().unwrap(), peer.to_str().unwrap()]);
+        git_ok(&peer, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&peer, &["config", "user.name", "VirtualLab Tests"]);
+        fs::write(peer.join("collision.txt"), "remote tracked").unwrap();
+        git_ok(&peer, &["add", "collision.txt"]);
+        git_ok(&peer, &["commit", "-m", "add incoming collision"]);
+        git_ok(&peer, &["push", "origin", "main"]);
+
+        fs::write(repo.join("collision.txt"), "important untracked user data").unwrap();
+        let err = git_pull_current_blocking(root.clone(), root.clone()).unwrap_err();
+        assert!(err.contains("untracked") || err.contains("overwritten"), "{err}");
+        assert_eq!(fs::read_to_string(repo.join("collision.txt")).unwrap(), "important untracked user data");
+        assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "main");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
     #[test]
     fn switch_codex_pr_15_main_round_trip_with_untracked_files() {
         let (sandbox, repo) = init_fixture_repo("pr15-main-roundtrip");
