@@ -11,6 +11,11 @@ pub(crate) fn key(path: &str) -> String {
     let canonical = std::fs::canonicalize(effective)
         .unwrap_or_else(|_| PathBuf::from(effective));
     let slashed = canonical.to_string_lossy().replace('\\', "/");
+    // canonicalize adds a Windows verbatim prefix; aliases using ordinary
+    // drive/UNC spelling must still identify the same workspace.
+    #[cfg(windows)]
+    let slashed = slashed.strip_prefix("//?/UNC/").map(|path| format!("//{path}"))
+        .or_else(|| slashed.strip_prefix("//?/").map(str::to_owned)).unwrap_or(slashed);
     let normalized = if slashed == "/" { slashed } else { slashed.trim_end_matches('/').to_string() };
     if cfg!(windows) { normalized.to_lowercase() } else { normalized }
 }

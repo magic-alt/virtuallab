@@ -1,10 +1,11 @@
+use crate::bounded_lines::{bounded_lines, MAX_AGENT_LINE_BYTES};
 use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{Write},
     process::{ ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -570,7 +571,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
     stdin: SharedStdin,
 ) {
     thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
+        for line in bounded_lines(stdout, MAX_AGENT_LINE_BYTES) {
             let line = match line {
                 Ok(line) => line,
                 Err(error) => {
@@ -578,6 +579,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
                         "agent://event",
                         AgentEvent::diagnostic("agent.protocol_error", &root, error.to_string()),
                     );
+                    if error.kind() == std::io::ErrorKind::InvalidData { continue; }
                     break;
                 }
             };
@@ -648,7 +650,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
 
 fn spawn_stderr<R: std::io::Read + Send + 'static>(app: AppHandle, root: String, stderr: R) {
     thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in bounded_lines(stderr, MAX_AGENT_LINE_BYTES).map(|line| line.unwrap_or_else(|error| format!("Agent stderr record rejected: {error}"))) {
             if !line.trim().is_empty() {
                 let _ = app.emit(
                     "agent://event",
