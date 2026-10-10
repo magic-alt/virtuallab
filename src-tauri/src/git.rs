@@ -1722,6 +1722,8 @@ mod tests {
             fs::read_to_string(repo.join("untracked.txt")).unwrap(),
             "local only"
         );
+        git_switch_branch_blocking(repo_path.clone(), repo_path.clone(), "main".to_string())
+            .expect("switch back to a remote-backed branch with untracked files");
         git_pull_current_blocking(repo_path.clone(), repo_path.clone()).expect("pull must preserve harmless untracked files");
         assert_eq!(fs::read_to_string(repo.join("untracked.txt")).unwrap(), "local only");
         fs::remove_file(repo.join("untracked.txt")).expect("cleanup dirty fixture");

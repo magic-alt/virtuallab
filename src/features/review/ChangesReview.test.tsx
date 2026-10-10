@@ -282,4 +282,67 @@ describe("ChangesReview", () => {
   });
 
 
+  it("exposes a reversible Stash all action for tracked and grouped untracked changes", async () => {
+    const user = userEvent.setup();
+    const recover = vi.fn().mockResolvedValue(true);
+    const source = { ...snapshot, dirtyCount: 3, untrackedCount: 1, changes: [
+      ...snapshot.changes,
+      { path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const },
+    ] };
+    render(<ChangesReview snapshot={source} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onResolveLocalChanges={recover} />);
+    expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Stash all (safe)" }));
+    expect(recover).toHaveBeenCalledWith("stashAll", undefined);
+  });
+
+  it("discards only the selected tracked change even when Staged mode is active", async () => {
+    const user = userEvent.setup();
+    const recover = vi.fn().mockResolvedValue(true);
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Staged" }));
+    await user.click(screen.getByRole("button", { name: "src/b.ts" }));
+    await user.click(screen.getByRole("button", { name: "Discard selected tracked…" }));
+    expect(recover).toHaveBeenCalledWith("discardTrackedSelected", "src/b.ts");
+  });
+
+  it("cleans selected untracked directories only after explicit selection", async () => {
+    const user = userEvent.setup();
+    const recover = vi.fn().mockResolvedValue(true);
+    const source = { ...snapshot, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
+      changes: [{ path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const }] };
+    render(<ChangesReview snapshot={source} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onResolveLocalChanges={recover} />);
+    expect(screen.queryByRole("button", { name: "Delete selected untracked…" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "hardware/.history/" }));
+    await user.click(screen.getByRole("button", { name: "Delete selected untracked…" }));
+    expect(recover).toHaveBeenCalledWith("deleteUntrackedSelected", "hardware/.history/");
+  });
+
+  it("blocks repeat recovery while native confirmation is still pending", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: boolean) => void;
+    const recover = vi.fn().mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Discard all tracked…" }));
+    expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Stash all/ })).toBeDisabled();
+    await act(async () => { finish(false); });
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeEnabled();
+  });
+
+  it("disables recovery when Git is busy or the native callback is unavailable", () => {
+    const recover = vi.fn();
+    const view = render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled gitMutationPending onResolveLocalChanges={recover} />);
+    expect(screen.getByRole("button", { name: "Stash all (safe)" })).toBeDisabled();
+    view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled={false} onResolveLocalChanges={recover} />);
+    expect(screen.getByRole("button", { name: "Stash all (safe)" })).toBeDisabled();
+  });
+
 });

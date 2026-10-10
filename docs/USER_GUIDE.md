@@ -101,6 +101,18 @@ git remote -v
 
 如果 `gh` 没有安装或授权，VirtualLab 会拒绝删除并提示修复步骤，不会在后台反复弹出密码窗口。确认 GitHub 账号对 origin 仓库有删除分支权限；默认分支和受保护分支依然不能删除。**Delete origin 是服务端删除，区别于仅删除本地远端跟踪引用的 Fetch + prune。** 该配置只影响 VirtualLab 发起的 GitHub HTTPS 后台操作，不修改全局 Git 配置，不会把令牌写入仓库或命令行参数。SSH 等其他 origin 继续使用 Git 原有认证方式。
 
+### 本地修改：撤销、Stash 与安全 Pull
+
+打开 **Changes** 页面，顶部 **Local change recovery** 区域提供三类操作，所有修改都仅作用于当前 Git worktree：
+
+- **Stash all (safe)**：优先推荐。将暂存、未暂存以及非忽略的 untracked 文件（包括 KiCad `hardware/.history/` 等目录）保存到本地 Git stash，便于切换分支或 Pull。可在 Terminal 使用 `git stash list` 查看、`git stash pop` 恢复。忽略文件不会被删除；恢复暂存区状态可按需要使用 `git stash apply --index`。
+- **Discard all tracked… / Discard selected tracked…**：将全部或选定**已跟踪**文件的暂存及未暂存修改恢复到当前 HEAD；新增到暂存区、但 HEAD 中不存在的文件可能被删除。**不可撤销**。默认不会清理任何 untracked 文件。
+- **Delete selected untracked…**：先从 Worktree 文件列表选择一个未跟踪文件或目录，再点击此按钮；包含目录内非忽略文件的永久删除必须通过 Tauri 原生确认。不会对整个仓库执行无范围限制的 `git clean`，更不会使用 `git clean -x`。
+
+所有操作先显示当前 worktree 路径和风险说明。用户取消或原生确认不可用时不执行；Rust 后端重新核对仓库注册 worktree、分支、HEAD、Git status 和选中项，发现页面已过时会拒绝并提示 Refresh。建议在撤销 KiCad 原理图改动前优先 Stash 或提交，避免丢失未同步的绘图内容。
+
+**Pull 规则**：已跟踪文件存在 staged/unstaged 修改时仍禁用快进 Pull；仅有未跟踪文件（例如 `hardware/.history/`）时允许尝试快进，Git 在远端文件与未跟踪文件发生冲突时会安全拒绝并保留本地内容。分支切换同样不会强制覆盖未跟踪文件。
+
 ## 04 · Changes、Review、History
 
 Monaco 提供 **Unified（上下）** 和 **Side by side（左右）** 两种只读差异布局。

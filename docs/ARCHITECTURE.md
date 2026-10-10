@@ -236,3 +236,10 @@ All macOS background commands share native executable lookup: inherited PATH dir
 Codex/DeepSeek, Claude and OpenCode native streams consume bounded records (128 KiB of content, plus optional CR terminator). Oversized or invalid UTF-8 protocol records are rejected with diagnostics, drained to the next newline and never parsed as partial JSON; subsequent records remain usable. stderr uses the same input bound. These native allocation bounds complement the frontend 16 KiB event and 300-event history budgets.
 
 Windows canonical workspace identity removes the filesystem verbatim prefix and normalizes UNC spelling before case folding, keeping existing-path and ordinary-path aliases consistent.
+
+## Safe local changes recovery (branch switch / Pull)
+
+The Changes workspace provides `StashAll`, `DiscardTrackedAll`, `DiscardTrackedSelected` and `DeleteUntrackedSelected` typed scopes. The frontend gates them with a fail-closed Tauri native confirmation. The Rust `git_local_changes` backend rechecks registered worktree identity, selected branch, abbreviated HEAD and the entire parsed porcelain-z Git status **after** user confirmation. It rejects stale status/selection, never force-resets HEAD, and isolates explicit path operations using Git literal pathspecs after path traversal checks.
+
+`stash push --include-untracked` is the preferred reversible route for dirty user workspaces, including KiCad untracked history. `restore --source=HEAD --staged --worktree` changes only tracked scopes; `git clean -f -d` is reserved for one explicitly selected untracked path, with an immediate dry-run guard, never repository-wide `clean -fdx`. Tracked-only restore preserves untracked content by default. Pull continues to use `--ff-only` and rejects tracked modifications, but lets Git preserve non-conflicting untracked files; Git refuses checkout collisions itself. No arbitrary shell string is executed. A GUI background refresh invalidates previous review content and opens the Pull button when the tracked dirty count clears.
+
