@@ -1,6 +1,7 @@
 #[cfg(unix)]
 mod terminal_process;
 mod managed_process;
+mod workspace_identity;
 mod run_registry;
 use tauri::Manager;
 use run_registry::{RunRegistry, list_runs};

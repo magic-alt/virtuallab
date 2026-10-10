@@ -146,3 +146,8 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 | [Control acceptance](docs/CONTROL_ACCEPTANCE.md) | Automated coverage and manual desktop checks |
 | [Roadmap](docs/ROADMAP.md) | Planned capabilities and project direction |
 | [Versioning](docs/VERSIONING.md) | Version bump procedure, release tags, and About metadata |
+
+
+### Release Candidate qualification
+
+Unsigned, checksummed Windows/macOS/Linux **QA-only** bundles are produced by [Release Candidate Bundles](.github/workflows/release-candidate.yml) on the `release/*` PR. Review [the release qualification checklist](docs/RELEASE_CANDIDATE_CHECKLIST.md) before any tag or public GitHub Release. A green CI is not proof of interactive GUI, authenticated-provider or installation acceptance.

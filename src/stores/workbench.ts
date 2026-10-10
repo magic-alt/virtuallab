@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { workspaceKey } from "@/lib/workspaceKey";
 import type {
   ProcessProfile,
   RepositoryRecord,
@@ -31,7 +32,7 @@ interface WorkbenchState {
 }
 
 export function reviewWorkspaceKey(path: string) {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return workspaceKey(path);
 }
 
 function isScopedProfile(value: unknown): value is ProcessProfile {

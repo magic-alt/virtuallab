@@ -91,7 +91,7 @@ pub struct CliAgentManager {
     sessions: Arc<Mutex<HashMap<String, Arc<CliSession>>>>,
 }
 fn key(root: &str) -> String {
-    root.replace('\\', "/").trim_end_matches('/').to_ascii_lowercase()
+    crate::workspace_identity::key(root)
 }
 fn now() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()

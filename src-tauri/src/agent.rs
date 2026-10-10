@@ -723,9 +723,7 @@ fn lock_error<T>(_: std::sync::PoisonError<T>) -> String {
 }
 
 fn workspace_key(path: &str) -> String {
-    path.replace('\\', "/")
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
+    crate::workspace_identity::key(path)
 }
 
 fn now_ms() -> u128 {
@@ -781,6 +779,9 @@ mod tests {
 
     #[test]
     fn normalizes_workspace_key() {
+        #[cfg(windows)]
         assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "d:/project/virtuallab");
+        #[cfg(unix)]
+        assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "D:/Project/VirtualLab");
     }
 }

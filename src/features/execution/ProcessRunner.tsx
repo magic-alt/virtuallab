@@ -26,6 +26,7 @@ import {
 } from "@/lib/backend";
 import { formatStep, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
 import { BuildLogSanitizer } from "@/lib/buildLogSanitizer";
+import { workspaceKey } from "@/lib/workspaceKey";
 import { processCheckResult } from "@/lib/checks";
 import { useWorkbenchStore } from "@/stores/workbench";
 import type {
@@ -732,5 +733,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function normalizePath(path: string) {
-  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  return workspaceKey(path);
 }
