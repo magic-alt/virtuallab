@@ -2040,7 +2040,13 @@ mod tests {
         fs::write(repo.join("README.md"), b"important tracked edits").unwrap();
         fs::write(repo.join("glob*.txt"), b"remove exact literal").unwrap();
         fs::write(repo.join("globX.txt"), b"preserve neighbor").unwrap();
+        // Match the user's KiCad layout: hardware/ is tracked, .history/ is
+        // separately untracked. Without a tracked parent file, Git correctly
+        // groups the whole "hardware/" directory as one status entry.
         fs::create_dir_all(repo.join("hardware/.history")).unwrap();
+        fs::write(repo.join("hardware/board.kicad_sch"), b"committed KiCad schematic").unwrap();
+        git_ok(&repo, &["add", "hardware/board.kicad_sch"]);
+        git_ok(&repo, &["commit", "-m", "tracked KiCad fixture"]);
         fs::write(repo.join("hardware/.history/backup"), b"remove with explicit confirmation").unwrap();
         let request = changes_request(&repo, Some("glob*.txt"), None);
         remove_untracked_blocking(request).unwrap();
