@@ -25,6 +25,7 @@ import { isDesktopRuntime } from "@/lib/backend";
 import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
+  LocalChangesAction,
   RepositorySnapshot,
   ReviewWorkspaceRequest,
   WorkspaceTab,
@@ -37,6 +38,8 @@ interface Props {
   isPreview: boolean;
   snapshotRevision?: number;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
+  onResolveLocalChanges?: (action: LocalChangesAction, path?: string) => Promise<boolean>;
+  gitMutationPending?: boolean;
   onNewReviewWorkspace?: (request: ReviewWorkspaceRequest) => void;
   onTabChange: (tab: WorkspaceTab) => void;
 }
@@ -69,6 +72,8 @@ export function WorkspaceContent({
   isPreview,
   snapshotRevision = 0,
   onRefreshForRereview,
+  onResolveLocalChanges,
+  gitMutationPending = false,
   onNewReviewWorkspace,
   onTabChange,
 }: Props) {
@@ -113,6 +118,8 @@ export function WorkspaceContent({
             enabled={!isPreview && isDesktopRuntime()}
             refreshRevision={snapshotRevision}
             onRefreshForRereview={onRefreshForRereview}
+            onResolveLocalChanges={onResolveLocalChanges}
+            gitMutationPending={gitMutationPending}
           />
         )}
         {tab === "github" && (

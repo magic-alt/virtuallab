@@ -11,7 +11,7 @@ describe("WorkspaceHeader", () => {
     const onFetch = vi.fn();
     const onPull = vi.fn();
     const { rerender } = render(
-      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0 }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
+      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0, stagedCount: 0, unstagedCount: 0, untrackedCount: 0, changes: [] }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} />,
     );
 
     expect(document.querySelector("header > div")).toHaveClass("flex-wrap");
@@ -29,4 +29,21 @@ describe("WorkspaceHeader", () => {
     expect(screen.getByRole("button", { name: /^fetch \+ prune$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^pull$/i })).toBeDisabled();
   });
+  it("allows a safe Pull when only untracked files remain", async () => {
+    const user = userEvent.setup();
+    const onPull = vi.fn();
+    const onlyUntracked = {
+      ...PREVIEW_SNAPSHOT, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
+      changes: [{ path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const }],
+    };
+    const view = render(<WorkspaceHeader snapshot={onlyUntracked} isPreview={false}
+      loading={false} gitBusy={false} onRefresh={vi.fn()} onFetch={vi.fn()} onPull={onPull} />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Pull" }));
+    expect(onPull).toHaveBeenCalledTimes(1);
+    view.rerender(<WorkspaceHeader snapshot={{ ...onlyUntracked, stagedCount: 1 }} isPreview={false}
+      loading={false} gitBusy={false} onRefresh={vi.fn()} onFetch={vi.fn()} onPull={onPull} />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeDisabled();
+  });
+
 });

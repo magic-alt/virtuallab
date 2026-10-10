@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import type {
   ChangeEntry,
+  LocalChangesAction,
   DiffFileSummary,
   DiffMode,
   DiffResponse,
@@ -37,9 +38,13 @@ export function ChangesReview({
   enabled,
   refreshRevision = 0,
   onRefreshForRereview,
+  onResolveLocalChanges,
+  gitMutationPending = false,
 }: {
   refreshRevision?: number;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
+  onResolveLocalChanges?: (action: LocalChangesAction, path?: string) => Promise<boolean>;
+  gitMutationPending?: boolean;
   snapshot: RepositorySnapshot;
   repositoryRoot: string;
   workspaceRoot: string;
@@ -64,6 +69,8 @@ export function ChangesReview({
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const recoveryInFlight = useRef(false);
   const [diffOutdated, setDiffOutdated] = useState(false);
   const revisionRef = useRef({workspaceRoot, refreshRevision});
   const requestRevisionRef = useRef(0);
@@ -99,6 +106,36 @@ export function ChangesReview({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const trackedChanges = snapshot.changes.filter((change) => change.kind !== "untracked");
+  const selectedLocalChange = mode !== "base"
+    ? snapshot.changes.find((change) => change.path === selectedPath)
+    : undefined;
+  const canRecover = enabled && Boolean(onResolveLocalChanges) && !recovering && !gitMutationPending;
+
+  const recoverLocalChanges = async (action: LocalChangesAction, path?: string) => {
+    if (!canRecover || recoveryInFlight.current || !onResolveLocalChanges) return;
+    recoveryInFlight.current = true;
+    setRecovering(true);
+    setError(null);
+    try {
+      const changed = await onResolveLocalChanges(action, path);
+      if (changed) {
+        requestRevisionRef.current += 1;
+        setLoading(false);
+        setSelectedPath(null);
+        setSelectedReviewLine(null);
+        setDraftBody("");
+        setResult(null);
+        setDiffOutdated(true);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      recoveryInFlight.current = false;
+      setRecovering(false);
     }
   };
 
@@ -294,6 +331,36 @@ export function ChangesReview({
         Local changes: {snapshot.unstagedCount} unstaged · {snapshot.stagedCount} staged · {snapshot.untrackedCount} untracked.
         {" "}Untracked directories count as one entry.
       </div>
+
+      {onResolveLocalChanges && (
+        <div aria-label="Local change recovery" className="flex shrink-0 flex-wrap items-center gap-2 border border-amber-400/20 bg-[#15100c]/95 px-3 py-2 text-xs">
+          <div className="min-w-[190px] flex-1 text-slate-400">
+            Need to switch branches or Pull? Back up with Git stash (including untracked files),
+            or explicitly discard changes. Deleting untracked files is permanent.
+          </div>
+          <Button size="sm" variant="outline"
+            disabled={!canRecover || snapshot.dirtyCount === 0}
+            onClick={() => void recoverLocalChanges("stashAll")}>
+            {recovering ? "Working…" : "Stash all (safe)"}
+          </Button>
+          <Button size="sm" variant="ghost"
+            disabled={!canRecover || trackedChanges.length === 0}
+            onClick={() => void recoverLocalChanges("discardTrackedAll")}>
+            Discard all tracked…
+          </Button>
+          {selectedLocalChange && (
+            <Button size="sm" variant="ghost" disabled={!canRecover}
+              onClick={() => void recoverLocalChanges(
+                selectedLocalChange.kind === "untracked" ? "deleteUntrackedSelected" : "discardTrackedSelected",
+                selectedLocalChange.path,
+              )}>
+              {selectedLocalChange.kind === "untracked"
+                ? "Delete selected untracked…"
+                : "Discard selected tracked…"}
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
         <span className="text-slate-300">Review → Fix → Refresh → Re-review</span>

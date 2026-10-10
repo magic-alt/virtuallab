@@ -29,6 +29,7 @@ import {
   inspectRepository,
   isDesktopRuntime,
   removeWorktree,
+  resolveLocalChangesAfterConfirmation,
   watchStart,
   watchStop,
 } from "@/lib/backend";
@@ -38,6 +39,7 @@ import { useAgentTimeline } from "@/stores/agentTimeline";
 import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
+  LocalChangesAction,
   RepositorySnapshot,
   ReviewWorkspaceRequest,
   WorkbenchEvent,
@@ -335,23 +337,39 @@ export function WorkbenchShell() {
     }
   };
 
-  const runGitMutation = async (action: () => Promise<void | boolean>) => {
-    if (!activeRepository || gitMutationInFlightRef.current || loading) return;
+  const runGitMutation = async (action: () => Promise<void | boolean>): Promise<boolean> => {
+    if (!activeRepository || gitMutationInFlightRef.current || loading) return false;
     gitMutationInFlightRef.current = true;
     setGitBusy(true);
     setError(null);
     try {
-      // A cancelled confirmation returns false: do not execute further
-      // mutations or refresh the repository as though deletion succeeded.
+      // A cancelled native confirmation must not mutate or refresh.
       if (await action() !== false) {
         await loadSnapshot(activePathRef.current ?? activeRepository.path, true);
+        return true;
       }
+      return false;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       gitMutationInFlightRef.current = false;
       setGitBusy(false);
     }
+  };
+
+  const resolveLocalChanges = async (action: LocalChangesAction, path?: string): Promise<boolean> => {
+    if (!activeRepository || !isDesktopRuntime() ||
+        normalizePath(activePathRef.current ?? "") !== normalizePath(snapshot.root)) return false;
+    return runGitMutation(() => resolveLocalChangesAfterConfirmation({
+      repositoryRoot: activeRepository.path,
+      workspaceRoot: snapshot.root,
+      expectedBranch: snapshot.currentBranch,
+      expectedHeadSha: snapshot.headSha,
+      expectedChanges: snapshot.changes,
+      action,
+      path: path ?? null,
+    }));
   };
 
   const selectBranch = async (name: string) => {
@@ -523,6 +541,8 @@ export function WorkbenchShell() {
             isPreview={isPreview}
             snapshotRevision={snapshotRevision}
             onRefreshForRereview={refreshForRereview}
+            onResolveLocalChanges={resolveLocalChanges}
+            gitMutationPending={gitBusy || loading}
             onNewReviewWorkspace={(intent) => {
               if (!activeRepository || !native) return;
               setReviewIntent(intent);
