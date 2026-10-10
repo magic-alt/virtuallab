@@ -92,3 +92,34 @@ manualDesktopAccepted: false
 核验时该候选的 [CI run 37951834204](https://github.com/magic-alt/virtuallab/actions/runs/37951834204) 和 [RC run 37951834391](https://github.com/magic-alt/virtuallab/actions/runs/37951834391) 均成功，两者 `headSha` 均为上述完整候选 SHA。该本地 ZIP 的摘要不用于替代 CI 产物或签名后产物的摘要。
 
 尚未验证：候选安装后的 GUI、原生确认框、真实 Agent 认证、交互式 Monaco/CSP、安装/升级/卸载、资源压力、签名与公证。未替换或中断已运行的 VirtualLab 实例；本记录不是正式发布放行。
+
+
+## PR #43 合并后可靠性修复（2026-10-10）
+
+源码基线：main@32238ffeb63556c9f35080e84054f16d4108258c。修复分支：fix/release-audit-reliability。本次不变更 0.5.0 版本，不创建 Tag 或 Release。
+
+- Verification 使用 ManagedChild，正常退出、取消、超时及等待失败均清理并确认进程树；日志读取收尾有独立三秒期限，失败不放行。
+- Verification 每个 stdout/stderr 日志最多 8 MiB；超量继续排空但不落盘，明确标记 gate fail，并保存截断日志摘要。
+- Agent 原生协议/诊断流有 128 KiB 单记录输入上限；超长记录丢弃至换行，发出诊断并恢复下一条消息。
+- macOS 共享原生 CLI 查找及子进程解释器 PATH，覆盖 GitHub 面板、Git 认证和各 Agent。不运行登录 shell，不缓存缺失结果。用户使用自定义版本管理器或非标准安装路径时仍应提供可用 PATH。
+- manifest.json 使用独占临时文件、sync、同目录原子替换；Unix 同步父目录。增加旧 inode 不被原地修改的回归。
+- 修复 Windows 已存在目录 canonicalize 的 verbatim 前缀与普通路径不一致的问题；全量测试中已有路径归一化用例曾因此失败。
+
+验证结果将在本节记录；不得沿用上方旧候选的测试或安装包摘要作为本次证据。
+
+仍需维护者关闭：最终修复 SHA 的三平台 CI/候选包；macOS Finder、Dock、Terminal 下真实 gh 和各 Agent 的检测/认证/启动；APFS 大小写别名；三平台安装/升级/卸载与真实 Qt/CMake/Keil 项目；签名、公证、签名后 SHA-256；main Required quality gate 保护；Issue #19/#34/#40 和最终签核。GBK/CP936、Monaco 内存/卡顿基准、PR 列表 50 项及 Run 历史不跨重启仍为已知限制。
+
+本次 Windows 自动化结果（2026-10-10，当前修复工作树）：
+
+| 检查 | 结果 |
+| --- | --- |
+| locked npm ci | 通过，184 个包，audit 0 vulnerabilities；锁文件无改动 |
+| acceptance:local | 通过：typecheck、38 个前端测试文件/156 项测试、production build、85 项 Rust 测试及 doc tests |
+| Windows cargo check --locked | 通过 |
+| version:check | 通过，维持 0.5.0 |
+| git diff --check | 通过 |
+| 独立源码审查 | 无 Critical/Important；相对 PATH 边界已按失败回归修复，补充磁盘写入失败与 Windows 原子替换失败保留旧文件测试 |
+| Linux cargo check / acceptance | 未执行：WSL Ubuntu-24.04 未找到 Linux Rust 工具链 |
+| macOS acceptance / Finder/Dock | 未执行：当前主机为 Windows；Unix GUI CLI 解释器测试已加入，等待对应 runner |
+
+保留现有 Monaco chunk size 警告及 MSVC 链接器库创建提示。独立审查为源码审查；不是第三方复跑测试或真实桌面签核。取消与正常退出分别有回归，精确同时发生的竞争仍需平台压力验收。

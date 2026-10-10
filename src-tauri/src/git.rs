@@ -381,6 +381,7 @@ fn git_read_optional(repo: &str, args: &[&str]) -> Option<String> {
  * Compare only the authority: a malicious github.com.example host must never
  * be handed GitHub credentials.
  */
+#[cfg(any(target_os = "macos", test))]
 fn is_github_https_remote(remote_url: &str) -> bool {
     let Some(remainder) = remote_url.trim().strip_prefix("https://") else {
         return false;
@@ -393,6 +394,7 @@ fn is_github_https_remote(remote_url: &str) -> bool {
 /// Per-child Git config. An empty helper resets inherited osxkeychain/GCM
 /// helpers; the authenticated GitHub CLI is then the *only* credential helper.
 /// This never modifies ~/.gitconfig, persists a token, or puts a token in argv.
+#[cfg(any(target_os = "macos", test))]
 fn configure_github_https_git(command: &mut std::process::Command, gh_cli: Option<&str>) {
     command
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -407,7 +409,7 @@ fn configure_github_https_git(command: &mut std::process::Command, gh_cli: Optio
             .env("GIT_CONFIG_KEY_1", "credential.helper")
             .env(
                 "GIT_CONFIG_VALUE_1",
-                format!("!{executable} auth git-credential"),
+                format!("!{} auth git-credential", quote_git_helper_program(executable)),
             );
     }
 }
@@ -416,27 +418,12 @@ fn configure_github_https_git(command: &mut std::process::Command, gh_cli: Optio
 // Use the same installed gh binary as the developer's normal terminal without
 // globally changing Git credentials or the app's process environment.
 #[cfg(target_os = "macos")]
-fn macos_gh_cli() -> Option<&'static str> {
-    // Cache successful probes, but not absence: installing gh while VirtualLab
-    // is open must make the next remote operation usable without a restart.
-    static GH: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-    if let Some(executable) = GH.get() {
-        return Some(*executable);
-    }
-    let discovered = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/opt/local/bin/gh"]
-        .into_iter()
-        .find(|executable| {
-            background_command(executable)
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-        });
-    if let Some(executable) = discovered {
-        let _ = GH.set(executable);
-    }
-    discovered
+fn macos_gh_cli() -> Option<String> {
+    let path = crate::process::macos_cli_path("gh")?;
+    background_command(&path).arg("--version")
+        .stdout(Stdio::null()).stderr(Stdio::null()).status()
+        .is_ok_and(|status| status.success())
+        .then(|| path.to_string_lossy().into_owned())
 }
 
 /// Only operations that contact origin pass through this path. On macOS,
@@ -468,7 +455,7 @@ fn git_origin_network(repo: &str, args: &[&str], pushing: bool) -> Result<String
         }
 
         let mut command = background_command("git");
-        configure_github_https_git(&mut command, gh_cli);
+        configure_github_https_git(&mut command, gh_cli.as_deref());
         let output = command
             .arg("-C")
             .arg(repo)
@@ -2024,4 +2011,10 @@ mod tests {
 
         let _ = fs::remove_dir_all(sandbox);
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn quote_git_helper_program(program: &str) -> String {
+    if program.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"/_-+.".contains(&byte)) { return program.into(); }
+    format!("'{}'", program.replace('\'', "'\"'\"'"))
 }

@@ -20,7 +20,9 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub(crate) fn background_command(program: impl AsRef<OsStr>) -> Command {
     #[allow(unused_mut)] // Windows creation_flags mutates the command.
-    let mut command = Command::new(program);
+    let mut command = Command::new(program.as_ref());
+    #[cfg(target_os = "macos")]
+    { command = command_in_gui_paths(program.as_ref(), &macos_cli_directories()); }
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
@@ -179,4 +181,49 @@ fn group_snapshot_counts_live_members_but_not_zombies() {
     assert!(live_group_in_snapshot("42 Z\n42 S+", 42).unwrap());
     assert!(!live_group_in_snapshot("99 R", 42).unwrap());
     assert!(live_group_in_snapshot("invalid S", 42).is_err());
+}
+
+#[cfg(target_os = "macos")]
+fn macos_cli_directories() -> Vec<std::path::PathBuf> {
+    let mut directories: Vec<_> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).filter(|p| !p.as_os_str().is_empty()).collect())
+        .unwrap_or_default();
+    directories.extend(["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"].map(std::path::PathBuf::from));
+    if let Some(home) = std::env::var_os("HOME") {
+        directories.extend([".cargo/bin", ".local/bin", ".npm-global/bin", ".volta/bin"]
+            .map(|suffix| std::path::PathBuf::from(&home).join(suffix)));
+    }
+    directories
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_cli_path(program: &str) -> Option<std::path::PathBuf> {
+    crate::cli_path::find_executable(std::path::Path::new(program), &macos_cli_directories())
+}
+
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn command_in_gui_paths(program: &OsStr, directories: &[std::path::PathBuf]) -> Command {
+    // Freeze relative inherited search entries before callers change child cwd.
+    let directories: Vec<_> = directories.iter().filter_map(|directory| std::path::absolute(directory).ok()).collect();
+    let resolved = crate::cli_path::find_executable(std::path::Path::new(program), &directories);
+    let mut command = Command::new(resolved.as_deref().map(|p| p.as_os_str()).unwrap_or(program));
+    // CLI scripts commonly use /usr/bin/env node. Supply the same search path
+    // to interpreters, without mutating the application's process environment.
+    if let Ok(path) = std::env::join_paths(&directories) { command.env("PATH", path); }
+    command
+}
+#[cfg(all(test, unix))]
+#[test]
+fn gui_fallback_launches_env_interpreter_with_space_and_unicode_paths() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("virtuallab GUI 中文 {}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy("/bin/sh", root.join("fixture-interpreter")).unwrap();
+    let script = root.join("fixture-cli");
+    std::fs::write(&script, "#!/usr/bin/env fixture-interpreter\nprintf 'gui-cli-ok'\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let directories = [std::path::PathBuf::from("/usr/bin"), root.clone()];
+    let output = command_in_gui_paths(OsStr::new("fixture-cli"), &directories).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"gui-cli-ok");
+    std::fs::remove_dir_all(root).unwrap();
 }

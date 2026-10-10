@@ -1,13 +1,13 @@
 //! Local CLI harness bridge. Structured NDJSON, no shell/PTY scraping.
 //! CLI sessions are ephemeral; provider session IDs are fed back as binding events.
 //! This is NOT a hardware authorization or sandbox boundary.
+use crate::bounded_lines::{bounded_lines, MAX_AGENT_LINE_BYTES};
 use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader},
     process::{ Command, Stdio},
     sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex},
     thread,
@@ -205,8 +205,17 @@ fn provider_session_id(value: &Value) -> Option<&str> {
 }
 fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, stdout: impl std::io::Read + Send + 'static) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if line.len() > 128 * 1024 { continue; }
+        for line in bounded_lines(stdout, MAX_AGENT_LINE_BYTES) {
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => {
+                    if let Ok(binding) = session.binding.lock() {
+                        emit(&app, "agent.protocol_error", &binding, Some(&turn_id), Some(json!({"detail": error.to_string()})));
+                    }
+                    if error.kind() == std::io::ErrorKind::InvalidData { continue; }
+                    break;
+                }
+            };
             if let Ok(value) = serde_json::from_str::<Value>(&line) {
                 if let Some(id) = provider_session_id(&value) {
                     let updated = {
@@ -235,7 +244,7 @@ fn process_stdout(app: AppHandle, session: Arc<CliSession>, turn_id: String, std
 }
 fn process_stderr(app: AppHandle, session: Arc<CliSession>, turn_id: String, stderr: impl std::io::Read + Send + 'static) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        for line in bounded_lines(stderr, MAX_AGENT_LINE_BYTES).map(|line| line.unwrap_or_else(|error| format!("Agent stderr record rejected: {error}"))) {
             if let Ok(binding) = session.binding.lock() {
                 if !line.trim().is_empty() {
                     emit(&app, "agent.stderr", &binding, Some(&turn_id),

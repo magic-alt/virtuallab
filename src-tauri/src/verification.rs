@@ -15,6 +15,9 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, State};
 
+const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
+const READER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
+
 const MAX_TIMEOUT_MS: u64 = 600_000;
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 
@@ -283,14 +286,13 @@ fn run_gate(
         return ("blocked".into(), "Unknown process cwd scope.".into(), None);
     };
     let timeout = Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
-    let mut child = match background_command(program)
-        .args(args)
+    let mut command = crate::execution::process_command(program);
+    command.args(args)
         .current_dir(working)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+        .stderr(Stdio::piped());
+    let mut child = match crate::managed_process::spawn(&mut command) {
         Ok(child) => child,
         Err(e) => return ("fail".into(), format!("Cannot start process: {e}"), None),
     };
@@ -299,25 +301,15 @@ fn run_gate(
     let err_path = dir.join(format!("{}.stderr.log",gate.id));
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let output = thread::spawn(move || -> io::Result<()> {
-        let mut file = File::create(out_path)?;
-        if let Some(mut output) = stdout { io::copy(&mut output,&mut file)?; }
-        file.sync_all()
-    });
-    let error = thread::spawn(move || -> io::Result<()> {
-        let mut file = File::create(err_path)?;
-        if let Some(mut output) = stderr { io::copy(&mut output,&mut file)?; }
-        file.sync_all()
-    });
+    let output = thread::spawn(move || persist_stream(stdout, &out_path));
+    let error = thread::spawn(move || persist_stream(stderr, &err_path));
 
     let begin = Instant::now();
     let (status, detail, exit) = loop {
         if cancelled.load(Ordering::Acquire) {
-            let _ = child.kill();
             break ("cancelled".into(), "Verification cancelled.".into(), None);
         }
         if begin.elapsed() >= timeout {
-            let _ = child.kill();
             break ("fail".into(), "Verification gate timed out.".into(), None);
         }
         match child.try_wait() {
@@ -333,12 +325,20 @@ fn run_gate(
             Err(e) => break ("fail".into(), format!("Cannot wait for gate process: {e}"), None),
         }
     };
-    let _ = child.wait();
-    let out_ok = output.join().is_ok_and(|r| r.is_ok());
-    let err_ok = error.join().is_ok_and(|r| r.is_ok());
-    if !out_ok || !err_ok {
-        return ("fail".into(), "Could not persist output stream evidence.".into(), exit);
+    // Includes the successful leader-exit path: descendants can still own pipes.
+    if let Err(error) = crate::process::terminate_tree(&mut child) {
+        return ("fail".into(), format!("Process tree cleanup not confirmed: {error}"), exit);
     }
+    let deadline = Instant::now() + READER_CLEANUP_TIMEOUT;
+    while !output.is_finished() || !error.is_finished() {
+        if Instant::now() >= deadline {
+            return ("fail".into(), "Output stream cleanup not confirmed within 3 seconds.".into(), exit);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let (Ok(Ok(out_truncated)), Ok(Ok(err_truncated))) = (output.join(), error.join()) else {
+        return ("fail".into(), "Could not persist output stream evidence.".into(), exit);
+    };
     for (suffix,stream) in [("stdout","stdout"),("stderr","stderr")] {
         let path = dir.join(format!("{}.{}.log",gate.id,suffix));
         if let Ok(artifact) = artifact_from_file(
@@ -348,7 +348,38 @@ fn run_gate(
             artifacts.push(artifact);
         }
     }
+    if out_truncated || err_truncated {
+        return ("fail".into(), format!("{detail} Output exceeded the 8 MiB per-stream evidence limit; logs were truncated."), exit);
+    }
     (status,detail,exit)
+}
+
+fn persist_stream(reader: Option<impl Read>, path: &Path) -> io::Result<bool> {
+    let mut file = File::create(path)?;
+    let truncated = if let Some(mut reader) = reader {
+        copy_capped(&mut reader, &mut file, MAX_LOG_BYTES)?
+    } else { false };
+    file.sync_all()?;
+    Ok(truncated)
+}
+
+// Drain excess bytes to keep the child from blocking, but never grow the file
+// or allocate in proportion to output volume.
+fn copy_capped(reader: &mut impl Read, writer: &mut impl Write, limit: u64) -> io::Result<bool> {
+    let mut remaining = limit;
+    let mut truncated = false;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
+        if count == 0 { return Ok(truncated); }
+        let keep = count.min(remaining as usize);
+        writer.write_all(&buffer[..keep])?;
+        remaining -= keep as u64;
+        truncated |= keep < count;
+    }
 }
 
 fn import_artifact(
@@ -481,9 +512,23 @@ fn artifact_from_file(path:&Path,id:String,kind:String,relative:String)->Result<
 
 fn persist_manifest(dir:&Path,manifest:&EvidenceManifest)->Result<(),String> {
     let content=serde_json::to_vec_pretty(manifest).map_err(|e|e.to_string())?;
-    let path=dir.join("manifest.json");
-    let mut file=File::create(path).map_err(|e|format!("Cannot persist evidence manifest: {e}"))?;
-    file.write_all(&content).and_then(|_|file.sync_all()).map_err(|e|e.to_string())
+    static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let temporary = dir.join(format!(".manifest-{}-{}-{}.tmp", std::process::id(), now_ms(),
+        NEXT_TEMP.fetch_add(1, Ordering::Relaxed)));
+    let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary)
+        .map_err(|error| format!("Cannot create evidence manifest temporary file: {error}"))?;
+    let result = (|| -> io::Result<()> {
+        file.write_all(&content)?;
+        file.sync_all()?;
+        drop(file);
+        // Both paths are siblings: rename atomically replaces the destination
+        // on Unix and Windows. Never delete the previous manifest first.
+        fs::rename(&temporary, dir.join("manifest.json"))?;
+        #[cfg(unix)] File::open(dir)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temporary); }
+    result.map_err(|error| format!("Cannot persist evidence manifest: {error}"))
 }
 
 fn read_manifest(dir:&Path)->Result<EvidenceManifest,String> {
@@ -500,6 +545,104 @@ fn lock_err<T>(_:std::sync::PoisonError<T>)->String{"Verification manager lock p
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn node_gate(script: &str, timeout: u64) -> Gate {
+        Gate { id: "fixture".into(), label: "Fixture".into(), kind: "unit".into(),
+            required: true, approval: "none".into(), executor: Executor::Process {
+                program: "node".into(), args: vec!["-e".into(), script.into()],
+                cwd: "workspace".into(), timeout_ms: Some(timeout) } }
+    }
+    fn fixture_dir(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("virtuallab-verification-{label}-{}", std::process::id()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+    #[test]
+    fn exited_parent_with_inherited_pipes_finishes_promptly() {
+        let dir = fixture_dir("parent-exit");
+        // Finite descendant ensures a broken runner fails rather than hanging the suite.
+        let gate = node_gate("const {spawn}=require('child_process'); spawn(process.execPath,['-e','setTimeout(()=>{},3500)'],{stdio:['ignore',1,2]}); process.exit(0)", 10000);
+        let begin = Instant::now();
+        let result = run_gate(&dir, &dir, &gate, &AtomicBool::new(false), &mut vec![]);
+        assert_eq!(result.0, "pass");
+        assert!(begin.elapsed() < Duration::from_secs(2), "Inherited pipes delayed gate completion");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn timeout_cleans_descendants_before_joining_readers() {
+        let dir = fixture_dir("timeout");
+        let gate = node_gate("const {spawn}=require('child_process'); spawn(process.execPath,['-e','setTimeout(()=>{},3500)'],{stdio:['ignore',1,2]}); setTimeout(()=>{},3500)", 500);
+        let begin = Instant::now();
+        let result = run_gate(&dir, &dir, &gate, &AtomicBool::new(false), &mut vec![]);
+        assert_eq!(result.0, "fail");
+        assert!(result.1.contains("timed out"));
+        assert!(begin.elapsed() < Duration::from_secs(2));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn cancellation_cleans_descendants_before_joining_readers() {
+        let dir = fixture_dir("cancel");
+        let gate = node_gate("const {spawn}=require('child_process'); spawn(process.execPath,['-e','setTimeout(()=>{},3500)'],{stdio:['ignore',1,2]}); setTimeout(()=>{},3500)", 10000);
+        let cancelled = AtomicBool::new(false);
+        let begin = Instant::now();
+        let result = thread::scope(|scope| {
+            scope.spawn(|| { thread::sleep(Duration::from_millis(500)); cancelled.store(true, Ordering::Release); });
+            run_gate(&dir, &dir, &gate, &cancelled, &mut vec![])
+        });
+        assert_eq!(result.0, "cancelled");
+        assert!(begin.elapsed() < Duration::from_secs(2));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn excessive_output_has_bounded_evidence_and_cannot_pass() {
+        let dir = fixture_dir("flood");
+        let gate = node_gate("require('fs').writeSync(1,Buffer.alloc(9*1024*1024,65)); require('fs').writeSync(2,Buffer.alloc(9*1024*1024,66))", 10000);
+        let mut artifacts = vec![];
+        let result = run_gate(&dir, &dir, &gate, &AtomicBool::new(false), &mut artifacts);
+        assert_eq!(result.0, "fail");
+        assert!(result.1.contains("limit"));
+        assert_eq!(artifacts.len(), 2);
+        for artifact in artifacts { assert!(artifact.size_bytes.unwrap() <= 8 * 1024 * 1024); }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn capped_copy_propagates_disk_write_failure() {
+        struct Broken;
+        impl Write for Broken {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> { Err(io::Error::other("disk fixture")) }
+            fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        }
+        assert!(copy_capped(&mut &b"data"[..], &mut Broken, 4).is_err());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn failed_manifest_replacement_preserves_previous_manifest_and_cleans_temporary() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = fixture_dir("manifest-locked");
+        fs::write(dir.join("manifest.json"), b"previous manifest").unwrap();
+        // Permit reads/writes, but prevent deletion/replacement of this file.
+        let guard = fs::OpenOptions::new().read(true).share_mode(3).open(dir.join("manifest.json")).unwrap();
+        let manifest = EvidenceManifest { schema_version: 1, run_id: "test".into(), profile_id: "test".into(),
+            workspace_root: "fixture".into(), repository_head_sha: "a".repeat(40), started_at_ms: 0,
+            finished_at_ms: Some(1), status: "pass".into(), checks: vec![], artifacts: vec![], metadata: serde_json::json!({}) };
+        assert!(persist_manifest(&dir, &manifest).is_err());
+        assert_eq!(fs::read(dir.join("manifest.json")).unwrap(), b"previous manifest");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        drop(guard);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn manifest_replacement_does_not_modify_previous_file() {
+        let dir = fixture_dir("manifest");
+        fs::write(dir.join("manifest.json"), b"previous manifest").unwrap();
+        fs::hard_link(dir.join("manifest.json"), dir.join("previous.json")).unwrap();
+        let manifest = EvidenceManifest { schema_version: 1, run_id: "test".into(), profile_id: "test".into(),
+            workspace_root: "fixture".into(), repository_head_sha: "a".repeat(40), started_at_ms: 0,
+            finished_at_ms: Some(1), status: "pass".into(), checks: vec![], artifacts: vec![], metadata: serde_json::json!({}) };
+        persist_manifest(&dir, &manifest).unwrap();
+        assert_eq!(read_manifest(&dir).unwrap().status, "pass");
+        assert_eq!(fs::read(dir.join("previous.json")).unwrap(), b"previous manifest");
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn rejects_traversal_run_identifiers() {
         assert!(validate_id("../other").is_err());

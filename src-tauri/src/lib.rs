@@ -1,3 +1,6 @@
+mod bounded_lines;
+#[cfg(any(target_os = "macos", test))]
+mod cli_path;
 #[cfg(unix)]
 mod terminal_process;
 mod managed_process;

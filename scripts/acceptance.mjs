@@ -93,6 +93,8 @@ console.log("[ ] Run reattachment after tab/workspace switches restores output, 
 console.log("[ ] Rapid start/stop and application exit leave no child/grandchild processes or late terminal sessions.");
 console.log("[ ] Unix terminal: HUP/TERM-ignoring foreground/background jobs stop across job groups; shell exit cleans inherited PTY holders; other sessions survive.");
 console.log("[ ] Windows launcher paths with spaces/Unicode and .cmd/.bat arguments work without shell reinterpretation.");
+console.log("[ ] Verification: Stop/timeout/leader exit close inherited pipes; excessive output fails with logs capped at 8 MiB per stream.");
+console.log("[ ] macOS Finder/Dock/Terminal: GitHub and each installed Agent detect, authenticate and start with Homebrew CLI interpreters.");
 console.log("[ ] Watcher rapid workspace switching never reinstalls a stopped/obsolete watch.");
 console.log("[ ] Monaco local workers and native IPC work under production CSP in the packaged WebView.");
 console.log("[ ] Signed installer first launch, upgrade, uninstall and SHA-256 recorded per platform.");
