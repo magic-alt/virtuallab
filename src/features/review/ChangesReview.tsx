@@ -2,7 +2,13 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { gitDiff } from "@/lib/backend";
+import {
+  confirmNativeAction,
+  gitDiff,
+  gitDiscardTrackedChanges,
+  gitRemoveUntrackedChanges,
+  gitStashLocalChanges,
+} from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import type {
@@ -10,6 +16,7 @@ import type {
   DiffFileSummary,
   DiffMode,
   DiffResponse,
+  GitLocalChangesRequest,
   RepositorySnapshot,
   ReviewDraft,
   ReviewLineSelection,
@@ -37,8 +44,10 @@ export function ChangesReview({
   enabled,
   refreshRevision = 0,
   onRefreshForRereview,
+  onLocalChangesMutated,
 }: {
   refreshRevision?: number;
+  onLocalChangesMutated?: (workspaceRoot: string) => Promise<void>;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
   snapshot: RepositorySnapshot;
   repositoryRoot: string;
@@ -68,6 +77,16 @@ export function ChangesReview({
   const revisionRef = useRef({workspaceRoot, refreshRevision});
   const requestRevisionRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
+  const [mutationPending, setMutationPending] = useState(false);
+  const [mutationNotice, setMutationNotice] = useState<string | null>(null);
+  const mutationPendingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const workspaceRef = useRef(workspaceRoot);
+  workspaceRef.current = workspaceRoot;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     markReviewDraftsStale(workspaceRoot, snapshot.headSha);
@@ -225,6 +244,109 @@ export function ChangesReview({
     setDraftBody("");
   };
 
+
+  const trackedCount = snapshot.changes.filter((change) => change.kind !== "untracked").length;
+  const selectedChange = mode === "base"
+    ? undefined : snapshot.changes.find((change) => change.path === selectedPath);
+
+  const makeMutationRequest = (selected?: ChangeEntry): GitLocalChangesRequest => ({
+    repositoryRoot,
+    workspaceRoot,
+    expectedHeadSha: snapshot.headSha,
+    expectedBranch: snapshot.currentBranch,
+    expectedChanges: snapshot.changes,
+    path: selected?.path ?? null,
+    oldPath: selected?.oldPath ?? null,
+  });
+
+  const runChangeMutation = async (
+    title: string,
+    message: string,
+    okLabel: string,
+    operation: (request: GitLocalChangesRequest) => Promise<string | void>,
+    successMessage: (value: string | void) => string,
+    selected?: ChangeEntry,
+  ) => {
+    if (!enabled || mutationPendingRef.current) return;
+    mutationPendingRef.current = true;
+    setMutationPending(true);
+    setError(null);
+    setMutationNotice(null);
+    const originalWorkspace = workspaceRoot;
+    const originalRevision = requestRevisionRef.current;
+    const request = makeMutationRequest(selected);
+    try {
+      const approved = await confirmNativeAction(message, { title, okLabel });
+      // A dialog may remain open while the user navigates or the watcher
+      // refreshes. Never execute an operation whose source view is stale.
+      if (!approved || !mountedRef.current || workspaceRef.current !== originalWorkspace
+        || requestRevisionRef.current !== originalRevision) return;
+      const result = await operation(request);
+      if (!mountedRef.current || workspaceRef.current !== originalWorkspace) return;
+      requestRevisionRef.current += 1;
+      setSelectedPath(null);
+      setSelectedReviewLine(null);
+      setResult(null);
+      setDiffOutdated(true);
+      setMutationNotice(successMessage(result));
+      await onLocalChangesMutated?.(originalWorkspace);
+    } catch (error) {
+      if (mountedRef.current && workspaceRef.current === originalWorkspace) {
+        setError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      mutationPendingRef.current = false;
+      if (mountedRef.current) setMutationPending(false);
+    }
+  };
+
+  const stashAll = () => runChangeMutation(
+    "Save Git changes to stash",
+    "Save ALL staged, unstaged and untracked changes to a recoverable Git stash?\n\n" +
+      workspaceRoot + "\n\n" +
+      "Untracked directories (including project backup history) are included. " +
+      "Ignored files remain untouched. No changes are pushed or committed. " +
+      "To restore later, use git stash list / git stash pop in Terminal.",
+    "Save to stash",
+    gitStashLocalChanges,
+    (ref) => "Saved local changes in " + (ref ?? "a Git stash") +
+      ". To restore them, run git stash list / git stash pop from Terminal.",
+  );
+
+  const discardTracked = (selected?: ChangeEntry) => runChangeMutation(
+    selected ? "Discard selected tracked change" : "Discard ALL tracked changes",
+    "PERMANENTLY restore " +
+      (selected ? 'the tracked change "' +
+        (selected.oldPath ? selected.oldPath + " → " : "") + selected.path + '"'
+        : "ALL " + trackedCount + " tracked changes") +
+      " to HEAD?\n\n" + workspaceRoot + "\n\n" +
+      "This discards both STAGED and UNSTAGED edits and may remove files added to the index. " +
+      "UNTRACKED entries (including KiCad .history backups) are PRESERVED. " +
+      "Recovery is only possible if you already saved a commit or stash.",
+    selected ? "Discard selected" : "Discard tracked",
+    gitDiscardTrackedChanges,
+    () => selected ? "Restored tracked change: " + selected.path :
+      "All tracked changes restored to HEAD. Untracked files were preserved.",
+    selected,
+  );
+
+  const removeUntracked = (selected?: ChangeEntry) => runChangeMutation(
+    selected ? "Delete selected untracked entry" : "Delete ALL untracked entries",
+    "PERMANENTLY DELETE " +
+      (selected ? '"' + selected.path + '"' :
+        "ALL " + snapshot.untrackedCount + " untracked entries") +
+      "?\n\n" + workspaceRoot + "\n\n" +
+      "WARNING: An untracked directory may contain an entire KiCad project history. " +
+      "Deleting a directory removes its untracked contents permanently. " +
+      "This cannot be undone. Save to stash first if unsure. " +
+      "Tracked and Git-ignored files will not be explicitly deleted.",
+    selected ? "Delete selected" : "Delete untracked",
+    gitRemoveUntrackedChanges,
+    () => selected ? "Removed untracked entry: " + selected.path :
+      "Untracked entries removed. All tracked edits were preserved.",
+    selected,
+  );
+
   const textualResult =
     result &&
     !result.binary &&
@@ -240,6 +362,7 @@ export function ChangesReview({
               key={item}
               size="sm"
               variant={mode === item ? "primary" : "ghost"}
+              disabled={mutationPending}
               onClick={() => changeMode(item)}
             >
               {item === "index" ? "Staged" : item === "base" ? "Base" : "Worktree"}
@@ -292,8 +415,23 @@ export function ChangesReview({
 
       <div aria-label="Local change summary" className="text-[11px] text-slate-400">
         Local changes: {snapshot.unstagedCount} unstaged · {snapshot.stagedCount} staged · {snapshot.untrackedCount} untracked.
-        {" "}Untracked directories count as one entry.
+        {" "}Untracked directories count as one entry. Resolve or stash changes before Pull.
       </div>
+
+      {(snapshot.dirtyCount > 0 || mutationNotice || error) && (
+        <div aria-label="Local Git change actions"
+          className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2">
+          <Button size="sm" variant="primary" disabled={!enabled || mutationPending || !snapshot.dirtyCount}
+            onClick={() => void stashAll()}>Save to stash</Button>
+          <Button size="sm" variant="outline" disabled={!enabled || mutationPending || !trackedCount}
+            onClick={() => void discardTracked()}>Discard tracked ({trackedCount})</Button>
+          <Button size="sm" variant="outline" disabled={!enabled || mutationPending || !snapshot.untrackedCount}
+            onClick={() => void removeUntracked()}>Delete untracked ({snapshot.untrackedCount})</Button>
+          {mutationPending && <span className="text-xs text-amber-300">Confirming or updating Git…</span>}
+          {mutationNotice && <span role="status" className="text-xs text-emerald-300">{mutationNotice}</span>}
+          {error && <span role="alert" className="text-xs text-rose-300">{error}</span>}
+        </div>
+      )}
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
         <span className="text-slate-300">Review → Fix → Refresh → Re-review</span>
@@ -351,7 +489,7 @@ export function ChangesReview({
                   key={`${file.oldPath ?? ""}->${file.path}`}
                   file={file}
                   active={file.path === selectedPath}
-                  disabled={!enabled}
+                  disabled={!enabled || mutationPending}
                   onSelect={() => void loadFile(file)}
                 />
               ))
@@ -420,13 +558,20 @@ export function ChangesReview({
               <Badge tone="orange">truncated</Badge>
             )}
             {result && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
+            {selectedChange && (
+              <Button size="sm" variant="outline" disabled={!enabled || mutationPending}
+                onClick={() => void (selectedChange.kind === "untracked"
+                  ? removeUntracked(selectedChange) : discardTracked(selectedChange))}>
+                {selectedChange.kind === "untracked" ? "Delete selected untracked" : "Discard selected tracked"}
+              </Button>
+            )
           </div>
 
           <div className="min-h-0 flex-1 overflow-hidden" data-testid="changes-review-editor-body">
             {loading ? (
               <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
-              <ReviewMessage icon="error" title="Diff load failed" detail={error} />
+              <ReviewMessage icon="error" title="Git operation failed" detail={error} />
             ) : selectedUntracked ? (
               <ReviewMessage
                 title={selectedUntracked.path.endsWith("/") ? "Untracked directory" : "Untracked file"}
