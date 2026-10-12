@@ -2,6 +2,8 @@
 //! Cargo must not link over a running .exe. A separate target directory holds
 //! the newly built binary; that binary acts as a short-lived restart helper
 //! after the old process has exited. Other repositories are never restarted.
+//! Installed/debug builds relaunch from alternating runtime copies so the
+//! staged Cargo executable is unlocked for subsequent self-builds.
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -154,8 +156,7 @@ fn run_helper(pid: u32, target: &Path, root: &Path) -> Result<PathBuf, String> {
     wait_for_parent_exit(pid)?;
 
     // In-place replacement is only safe for this worktree's *release* build.
-    // Installed copies and tauri-dev/debug EXEs are deliberately left intact;
-    // in those cases the newly staged binary is launched directly.
+    // Installed copies and tauri-dev/debug EXEs are deliberately left intact.
     let release_dir = root.join("src-tauri/target/release");
     if target.starts_with(&release_dir) && target.is_file() {
         if replace_release_executable(&staged, target).is_ok() {
@@ -164,8 +165,27 @@ fn run_helper(pid: u32, target: &Path, root: &Path) -> Result<PathBuf, String> {
             }
         }
     }
-    launch_gui(&staged, &root)?;
-    Ok(staged)
+
+    // Do NOT run the staged Cargo output as the next GUI: it would lock that
+    // output during the very next build. Rotate two small runtime EXE copies
+    // instead of keeping duplicate Cargo build caches.
+    let runtime = next_runtime_executable(&root, target, name);
+    if let Some(directory) = runtime.parent() {
+        fs::create_dir_all(directory).map_err(|e| format!("Cannot create runtime slot: {e}"))?;
+    }
+    fs::copy(&staged, &runtime).map_err(|e|
+        format!("Cannot copy the built app to its restart slot: {e}"))?;
+    launch_gui(&runtime, &root)?;
+    Ok(runtime)
+}
+
+/// A runtime copy is outside CARGO_TARGET_DIR. Rotating the two slots allows
+/// the previous EXE to close before its path is reused on the next build.
+#[cfg(windows)]
+fn next_runtime_executable(root: &Path, previous: &Path, binary_name: &std::ffi::OsStr) -> PathBuf {
+    let runtimes = root.join("src-tauri/target/self-build-runtimes");
+    let slot = if previous.starts_with(runtimes.join("a")) { "b" } else { "a" };
+    runtimes.join(slot).join(binary_name)
 }
 
 #[cfg(windows)]
@@ -249,6 +269,17 @@ fn launch_gui(executable: &Path, root: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn runtime_slots_alternate_without_locking_cargo_output() {
+        let root = PathBuf::from("C:/project");
+        let first = next_runtime_executable(&root, &root.join("installed/app.exe"), std::ffi::OsStr::new("app.exe"));
+        assert_eq!(first, root.join("src-tauri/target/self-build-runtimes/a/app.exe"));
+        let next = next_runtime_executable(&root, &first, std::ffi::OsStr::new("app.exe"));
+        assert_eq!(next, root.join("src-tauri/target/self-build-runtimes/b/app.exe"));
+        let again = next_runtime_executable(&root, &next, std::ffi::OsStr::new("app.exe"));
+        assert_eq!(again, first);
+    }
 
     #[test]
     fn replace_release_executable_stages_new_bytes_and_keeps_rollback_copy() {
