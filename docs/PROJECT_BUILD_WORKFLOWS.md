@@ -34,7 +34,17 @@ The project manifests and npm scripts are user-controlled: npm itself may invoke
 
 ### Example: JavaScript / Tauri
 
-For a desktop executable or installer, choose **Tauri · Desktop build → Build desktop app** (`npm run tauri:build`). This invokes its configured frontend build and compiles the native Rust application. Choose **npm · Frontend only → Build frontend** (`npm run build`) only when you want Vite/React `dist/` assets; a PASS exit code for that command does not mean a desktop installer was produced. Typical Tauri bundle output is under `src-tauri/target/release/bundle/`, but the actual path depends on the project/target configuration. Neither recipe automatically runs npm ci or installs, updates or uploads any artifacts. If dependencies are missing, add a deliberate npm ci step to a saved profile.
+For a desktop executable or installer, choose **Tauri · Desktop build → Build desktop app** (`npm run tauri:build`). This invokes its configured frontend build and compiles the native Rust application. Choose **npm · Frontend only → Build frontend** (`npm run build`) only when you want Vite/React `dist/` assets; a PASS exit code for that command does not mean a desktop installer was produced. Typical Tauri bundle output is under `src-tauri/target/release/bundle/`, but the actual path depends on the project/target configuration. Neither recipe automatically runs npm ci or uploads any artifacts. The Windows current-app self-build exception below relaunches the freshly built executable after explicit confirmation; it is not a general software installer or updater. If dependencies are missing, add a deliberate npm ci step to a saved profile.
+
+#### Windows: build and relaunch the running application
+
+If the selected worktree is **the application currently running VirtualLab**, choose **Build desktop app** and accept the native **Build and restart** confirmation. The Rust backend verifies the worktree's Tauri identifier matches the running app and requires the exact one-step `npm run tauri:build` recipe. No other repository, multi-step command or CMake/Keil build can close VirtualLab. Declining the confirmation starts nothing.
+
+1. The same npm recipe runs with `CARGO_TARGET_DIR=<worktree>/src-tauri/target/self-build-stage` (a release build); this avoids `os error 5` when the original `src-tauri/target/release/*.exe` is still in use. Rust/Tauri dependencies in the isolated directory compile the first time, so this build may take longer and use additional disk space.
+2. If the build fails or is cancelled, the running app remains open and displays the diagnostics. If compilation succeeds but no staged release EXE exists or the helper cannot be spawned, it also remains open and displays a restart error.
+3. Only after a successful build, the newly compiled EXE starts a headless handoff, waits for the existing process to exit, and launches the new build. If VirtualLab is running from **this worktree's `src-tauri/target/release/`**, the helper replaces that EXE using a staged adjacent file, retaining `.self-build-previous` as a rollback copy. If VirtualLab is installed elsewhere or launched from a debug build, the installed/debug EXE is **not modified**; the new staged release is launched directly. Shortcut installations therefore remain at their installed version.
+
+This is a local developer workflow, **not** a Windows installer upgrade. To update an installed copy persistently, use the generated NSIS/MSI installer separately. The new helper supports the special handoff argument from within `main.rs`, before any Tauri window is initialized. If the version of VirtualLab *currently in memory* predates this feature, first upgrade it once from an externally built binary/installer; changes to source code alone cannot retroactively fix the already-running process.
 
 ### Example: Keil MDK firmware
 
@@ -80,7 +90,8 @@ Configure/build run sequentially, with the active worktree as cwd. The compiler 
                  │ typed BuildSuggestion[]
                  ▼
       React ProcessRunner / editable ProcessProfile
-         ├─ legacy one-step → process_spawn (V0.2)
+         ├─ ordinary one-step → process_spawn (V0.2)
+         ├─ confirmed Windows self-build → build_workflow_start
          └─ multi-step → build_workflow_start
                             └─ Rust BuildWorkflowManager
                                sequential Command(program,args)
@@ -101,6 +112,10 @@ The on-screen output ring is bounded and session-local. It is not an immutable l
 | Existing one-step Build/Test | Executes through legacy typed process path; Run/Stop preserved |
 | npm package.json build | Build frontend → npm run build, stdout/stderr and exit status shown; no installer implied |
 | Tauri packaging script | Build desktop app → npm run tauri:build, preset appears before npm frontend, no install/publish |
+| Running Windows Tauri app + approved restart | Isolated Cargo output; only successful build exits current app; staged EXE launches |
+| Running Windows Tauri app + cancelled/failed build | No restart; existing GUI stays alive, error visible |
+| Packaging a different Tauri app | No self-build restart, normal build action |
+| Running installed/debug copy | Fresh staged EXE opens after successful build, installed/debug binary left unchanged |
 | ANSI / Unicode output | Compiler color codes and OSC controls are removed in the Run log; valid UTF-8 split across native pipe reads survives intact; final output is drained before status |
 | Qt CMake presets | Detect worktree-owned configure/build pairs; host filter and hidden presets respected; Configure must succeed before Compile |
 | Generic CMake fallback | Only uses current worktree's build/auto; no product-named paths or shared outputs |
