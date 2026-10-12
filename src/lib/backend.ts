@@ -294,6 +294,31 @@ export async function buildWorkflowDiscover(workspaceRoot: string): Promise<Buil
   return invoke<BuildSuggestion[]>("build_workflow_discover", { workspaceRoot });
 }
 
+export async function buildWorkflowSelfUpdateAvailable(workspaceRoot: string): Promise<boolean> {
+  requireDesktop();
+  return invoke<boolean>("build_workflow_self_update_available", { workspaceRoot });
+}
+
+/** Explicit opt-in before closing the currently running desktop window. */
+export async function confirmSelfBuildRestart(): Promise<boolean> {
+  requireDesktop();
+  try {
+    return await confirm(
+      "This project is the currently running desktop application. VirtualLab will build it into an isolated Cargo directory, then close this window and launch the newly compiled version ONLY if the build succeeds.\n\n" +
+        "For a running release EXE inside this worktree, the EXE is replaced after exit. Installed copies and development/debug EXEs are left intact; the new staged version opens instead.\n\n" +
+        "Unsaved UI state may be lost. Continue?",
+      {
+        title: "Build and restart the current application",
+        kind: "warning",
+        okLabel: "Build and restart",
+        cancelLabel: "Cancel",
+      },
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function buildWorkflowStart(spec: BuildWorkflowSpec): Promise<void> {
   requireDesktop();
   return invoke("build_workflow_start", { spec });
