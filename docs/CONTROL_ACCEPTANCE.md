@@ -12,7 +12,7 @@ Every visible interactive control must have an automated test and/or an explicit
 | Sidebar | Repository remove | `ProjectSidebar.test.tsx` | remove from local inventory |
 | Sidebar | New workspace | `ProjectSidebar.test.tsx`, `NewWorkspaceDialog.test.tsx`, Rust Git round-trip | create branch/worktree |
 | Sidebar | Workspace select | `ProjectSidebar.test.tsx` | switch worktree |
-| Sidebar | Workspace remove | `ProjectSidebar.test.tsx`, Rust Git round-trip | clean remove; dirty/primary refusal |
+| Sidebar | Workspace remove | `WorkbenchShell.branchSwitch.test.tsx`, `backend.worktreeRemoval.test.ts`, Rust `git.rs` force-removal fixtures | clean removal; dirty requires second native confirmation; cancel preserves selection/files; stale HEAD/status, primary, unknown and locked worktrees refused |
 | Header | Refresh | `WorkspaceHeader.test.tsx` | update repository state |
 | Navigation | Overview/Changes/Terminal/Run/Checks/History | `WorkspaceContent.test.tsx` | switch each tab |
 | Workspace dialog | Create / Cancel / close | `NewWorkspaceDialog.test.tsx` | create real worktree |
