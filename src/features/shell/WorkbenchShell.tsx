@@ -1,4 +1,3 @@
-import { confirmNativeAction } from "@/lib/backend";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import appManifest from "../../../package.json";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -28,7 +27,7 @@ import {
   gitSwitchBranch,
   inspectRepository,
   isDesktopRuntime,
-  removeWorktree,
+  removeWorktreeAfterConfirmation,
   resolveLocalChangesAfterConfirmation,
   watchStart,
   watchStop,
@@ -313,27 +312,36 @@ export function WorkbenchShell() {
   };
 
   const deleteWorkspace = async (path: string) => {
-    if (!activeRepository) return;
-    const confirmed = await confirmNativeAction(
-      `Remove this clean Git worktree?\n\n${path}\n\nDirty worktrees are refused by Git and are never force-removed.`,
-    );
-    if (!confirmed) return;
+    if (!activeRepository || loading || gitMutationInFlightRef.current ||
+        !snapshot.worktrees.some((item) => normalizePath(item.path) === normalizePath(path))) return;
 
+    // Keep the mutation lock through BOTH native dialogs and the Git command.
+    // A cancelled force confirmation leaves the selected worktree unchanged.
+    gitMutationInFlightRef.current = true;
+    setGitBusy(true);
+    setError(null);
     try {
-      if (snapshot.root === path) {
-        await loadSnapshot(activeRepository.path);
-      }
-      await removeWorktree(activeRepository.path, path);
-      const next = await loadSnapshot(activeRepository.path);
+      const removed = await removeWorktreeAfterConfirmation(activeRepository.path, path);
+      if (!removed) return;
+
+      snapshotCacheRef.current.delete(normalizePath(path));
+      const wasActive = normalizePath(activePathRef.current ?? snapshot.root) === normalizePath(path);
+      const remainingPath = wasActive
+        ? activeRepository.path
+        : (activePathRef.current ?? activeRepository.path);
+      const next = await loadSnapshot(remainingPath, true);
       saveWorkspaceState({
         repositoryId: activeRepository.id,
         activeWorktreePath: next.root,
-        activeTab: "overview",
+        activeTab: wasActive ? "overview" : tab,
         updatedAt: Date.now(),
       });
-      setTab("overview");
+      if (wasActive) setTab("overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      gitMutationInFlightRef.current = false;
+      setGitBusy(false);
     }
   };
 
@@ -495,7 +503,7 @@ export function WorkbenchShell() {
           onRemove={removeRepository}
           onNewWorkspace={() => { setReviewIntent(null); setWorkspaceDialog(true); }}
           onSelectWorkspace={(path) => {
-            if (!activeRepository) return;
+            if (!activeRepository || gitMutationInFlightRef.current || loading) return;
             void loadSnapshot(path)
               .then((next) => {
                 saveWorkspaceState({
@@ -508,7 +516,7 @@ export function WorkbenchShell() {
               .catch(() => undefined);
           }}
           onRemoveWorkspace={(path) => void deleteWorkspace(path)}
-          workspaceActionsEnabled={native && Boolean(activeRepository)}
+          workspaceActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
           branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
