@@ -304,7 +304,7 @@ export async function confirmSelfBuildRestart(): Promise<boolean> {
   requireDesktop();
   try {
     return await confirm(
-      "This project is the currently running desktop application. VirtualLab will build it into an isolated Cargo directory, then close this window and launch the newly compiled version ONLY if the build succeeds.\n\n" +
+      "This project is the currently running desktop application. VirtualLab will build a standalone EXE in an isolated Cargo directory (--no-bundle; no MSI/NSIS installer), then close this window and launch the newly compiled version ONLY if the build succeeds.\n\n" +
         "For a running release EXE inside this worktree, the EXE is replaced after exit. Installed copies and development/debug EXEs are left intact; a separate new runtime copy opens instead.\n\n" +
         "Unsaved UI state may be lost. Continue?",
       {
