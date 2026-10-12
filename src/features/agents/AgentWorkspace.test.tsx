@@ -16,7 +16,7 @@ describe("AgentWorkspace desktop control surface", () => {
     const select = screen.getByRole("combobox", { name: "Harness" }) as HTMLSelectElement;
     expect(select.options).toHaveLength(4);
     expect(screen.getByRole("button", { name: /Attach \/ resume/i })).toBeDisabled();
-    expect(screen.getByRole("log", { name: /Agent event timeline/i })).toBeInTheDocument();
+    expect(screen.getByRole("log", { name: /Agent event timeline/i })).toHaveClass("max-h-80", "overflow-y-auto");
     expect(screen.getByText(/Default decision: DENY/)).toBeInTheDocument();
   });
   it("saves a generic custom role and opt-in skill", async () => {
