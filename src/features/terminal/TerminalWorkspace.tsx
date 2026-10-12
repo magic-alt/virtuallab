@@ -18,6 +18,7 @@ import {
   terminalWrite,
 } from "@/lib/backend";
 import { cn } from "@/lib/utils";
+import { workspaceKey } from "@/lib/workspaceKey";
 import type { TerminalOutput, WorkbenchEvent } from "@/types/workbench";
 
 interface Session {
@@ -34,76 +35,98 @@ interface TerminalHandle {
 export function TerminalWorkspace({
   cwd,
   enabled,
+  visible = true,
 }: {
   cwd: string;
   enabled: boolean;
+  visible?: boolean;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [listenersReady, setListenersReady] = useState(false);
+  const scope = workspaceKey(cwd);
   const handles = useRef(new Map<string, TerminalHandle>());
   const pending = useRef(new Map<string, number[][]>());
   const sessionsRef = useRef<Session[]>([]);
   sessionsRef.current = sessions;
 
+  // Install both event subscriptions before enabling shell creation. Otherwise
+  // a fast Windows ConPTY prompt can disappear before anyone is listening.
   useEffect(() => {
+    if (!enabled) return;
+    let disposed = false;
     let outputUnlisten: UnlistenFn | undefined;
     let eventUnlisten: UnlistenFn | undefined;
-    let disposed = false;
 
-    void Promise.resolve(listen<TerminalOutput>("terminal://output", ({ payload }) => {
-      if (!sessionsRef.current.some((session) => session.id === payload.id)) return;
-      const handle = handles.current.get(payload.id);
-      if (handle) {
-        handle.terminal.write(new Uint8Array(payload.data));
-      } else {
-        const chunks = pending.current.get(payload.id) ?? [];
-        chunks.push(payload.data);
-        if (chunks.length > 256) chunks.shift();
-        pending.current.set(payload.id, chunks);
-      }
-    })).then((unlisten) => {
-      if (typeof unlisten !== "function") return;
-      if (disposed) unlisten();
-      else outputUnlisten = unlisten;
-    });
+    const connect = async () => {
+      try {
+        const stopOutput = await listen<TerminalOutput>("terminal://output", ({ payload }) => {
+          if (!sessionsRef.current.some((session) => session.id === payload.id)) return;
+          const handle = handles.current.get(payload.id);
+          if (handle) {
+            handle.terminal.write(new Uint8Array(payload.data));
+          } else {
+            const chunks = pending.current.get(payload.id) ?? [];
+            chunks.push(payload.data);
+            if (chunks.length > 256) chunks.shift();
+            pending.current.set(payload.id, chunks);
+          }
+        });
+        if (disposed) { stopOutput(); return; }
+        outputUnlisten = stopOutput;
 
-    void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
-      if (!payload.eventType.startsWith("terminal.")) return;
-      if (payload.eventType === "terminal.started") {
-        setSessions((items) =>
-          items.map((item) =>
-            item.id === payload.id ? { ...item, status: "running" } : item,
-          ),
-        );
+        const stopEvents = await listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
+          if (!payload.eventType.startsWith("terminal.")) return;
+          if (!sessionsRef.current.some((session) => session.id === payload.id)) return;
+          if (payload.eventType === "terminal.started") {
+            setSessions((items) =>
+              items.map((item) =>
+                item.id === payload.id && item.status === "starting"
+                  ? { ...item, status: "running" } : item,
+              ),
+            );
+          } else if (
+            payload.eventType === "terminal.exited" ||
+            payload.eventType === "terminal.stopped"
+          ) {
+            setSessions((items) =>
+              items.map((item) =>
+                item.id === payload.id ? { ...item, status: "stopped" } : item,
+              ),
+            );
+          } else if (payload.eventType === "terminal.cleanup_failed") {
+            setError(payload.data ?? "Failed to clean up terminal process.");
+          }
+        });
+        if (disposed) { stopEvents(); return; }
+        eventUnlisten = stopEvents;
+        setListenersReady(true);
+      } catch (cause) {
+        outputUnlisten?.();
+        outputUnlisten = undefined;
+        if (!disposed) {
+          setListenersReady(false);
+          setError(`Cannot subscribe to terminal events: ${String(cause)}`);
+        }
       }
-      if (
-        payload.eventType === "terminal.exited" ||
-        payload.eventType === "terminal.stopped"
-      ) {
-        setSessions((items) =>
-          items.map((item) =>
-            item.id === payload.id ? { ...item, status: "stopped" } : item,
-          ),
-        );
-      }
-    })).then((unlisten) => {
-      if (typeof unlisten !== "function") return;
-      if (disposed) unlisten();
-      else eventUnlisten = unlisten;
-    });
+    };
+    setListenersReady(false);
+    void connect();
 
     return () => {
       disposed = true;
       outputUnlisten?.();
       eventUnlisten?.();
+      // This cleanup is only for teardown/real workspace changes, not tab
+      // navigation: WorkspaceContent keeps the terminal mounted.
       for (const item of sessionsRef.current) {
         if (item.status === "running" || item.status === "starting") {
-          void Promise.resolve(terminalStop(item.id)).catch(() => undefined);
+          void terminalStop(item.id).catch(() => undefined);
         }
       }
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     for (const item of sessionsRef.current) {
@@ -116,10 +139,10 @@ export function TerminalWorkspace({
     setSessions([]);
     setActiveId(null);
     setError(null);
-  }, [cwd]);
+  }, [scope]);
 
   const start = async () => {
-    if (!enabled || sessionsRef.current.length >= 8) return;
+    if (!enabled || !listenersReady || sessionsRef.current.length >= 8) return;
 
     const id =
       globalThis.crypto?.randomUUID?.() ??
@@ -135,10 +158,20 @@ export function TerminalWorkspace({
 
     try {
       await terminalSpawn(id, cwd, 120, 32);
-    } catch (err) {
+      // Invoke success is an additional acknowledgement; a late reply must
+      // never revive a session already stopped by a native exit event.
       setSessions((items) =>
         items.map((item) =>
-          item.id === id ? { ...item, status: "error" } : item,
+          item.id === id && item.status === "starting"
+            ? { ...item, status: "running" } : item,
+        ),
+      );
+    } catch (err) {
+      if (!sessionsRef.current.some((item) => item.id === id)) return;
+      setSessions((items) =>
+        items.map((item) =>
+          item.id === id && item.status === "starting"
+            ? { ...item, status: "error" } : item,
         ),
       );
       setError(err instanceof Error ? err.message : String(err));
@@ -175,6 +208,10 @@ export function TerminalWorkspace({
     handles.current.delete(id);
   }, []);
 
+  const reportInputError = useCallback((cause: unknown) => {
+    setError(cause instanceof Error ? cause.message : String(cause));
+  }, []);
+
   return (
     <div className="vl-editor-surface mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] shadow-[4px_4px_0_rgba(58,16,0,0.55)]">
       <div className="flex h-11 shrink-0 items-center border-b border-orange-400/10 bg-[#120b06] px-2">
@@ -209,7 +246,7 @@ export function TerminalWorkspace({
           ))}
         </div>
 
-        <Button disabled={!enabled || sessions.length >= 8} onClick={start} size="sm" variant="ghost">
+        <Button disabled={!enabled || !listenersReady || sessions.length >= 8} onClick={start} size="sm" variant="ghost">
           <Plus size={14} />
           New terminal
         </Button>
@@ -238,11 +275,13 @@ export function TerminalWorkspace({
             </div>
             <div className="mt-1 max-w-md text-xs leading-5 text-slate-600">
               {enabled
-                ? "Start a real PowerShell/bash PTY. Each tab is isolated and supports resize, Ctrl+C and direct interactive input."
+                ? listenersReady
+                  ? "Start a real PowerShell/bash PTY. Each tab is isolated and supports resize, Ctrl+C and direct interactive input."
+                  : "Connecting native terminal events…"
                 : "Native PTY execution is available in the Tauri desktop runtime. The web build remains a safe UI preview."}
             </div>
             {enabled && (
-              <Button className="mt-5" onClick={start}>
+              <Button className="mt-5" disabled={!listenersReady} onClick={start}>
                 <TerminalSquare size={14} />
                 Start terminal
               </Button>
@@ -254,9 +293,11 @@ export function TerminalWorkspace({
               key={session.id}
               id={session.id}
               active={session.id === activeId}
-              enabled={enabled && session.status !== "stopped"}
+              visible={visible}
+              enabled={enabled && session.status === "running"}
               onAttach={handleAttach}
               onDetach={handleDetach}
+              onInputError={reportInputError}
             />
           ))
         )}
@@ -281,18 +322,27 @@ export function TerminalWorkspace({
 function TerminalSurface({
   id,
   active,
+  visible,
   enabled,
   onAttach,
   onDetach,
+  onInputError,
 }: {
   id: string;
   active: boolean;
+  visible: boolean;
   enabled: boolean;
   onAttach: (id: string, handle: TerminalHandle) => void;
   onDetach: (id: string) => void;
+  onInputError: (cause: unknown) => void;
 }) {
   const host = useRef<HTMLDivElement | null>(null);
+  const terminalHandle = useRef<TerminalHandle | null>(null);
   const enabledRef = useRef(enabled);
+  const activeRef = useRef(active);
+  const visibleRef = useRef(visible);
+  activeRef.current = active;
+  visibleRef.current = visible;
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -329,25 +379,28 @@ function TerminalSurface({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host.current);
-    fit.fit();
-    onAttach(id, { terminal, fit });
+    terminalHandle.current = { terminal, fit };
+    onAttach(id, terminalHandle.current);
 
     const input = terminal.onData((data) => {
       if (!enabledRef.current) return;
-      void terminalWrite(id, new TextEncoder().encode(data)).catch(() => undefined);
+      void terminalWrite(id, new TextEncoder().encode(data)).catch(onInputError);
     });
 
     let resizeTimer: number | undefined;
     const resize = new ResizeObserver(() => {
+      // Fitting display:none panes can collapse ConPTY to a 2-column terminal.
+      if (!activeRef.current || !visibleRef.current) return;
       window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
+        if (!activeRef.current || !visibleRef.current) return;
         try {
           fit.fit();
           if (enabledRef.current) {
             void terminalResize(id, terminal.cols, terminal.rows).catch(() => undefined);
           }
         } catch {
-          // Hidden terminals may briefly have no measurable geometry.
+          // Ignore geometry changes during transitions.
         }
       }, 80);
     });
@@ -358,9 +411,30 @@ function TerminalSurface({
       resize.disconnect();
       input.dispose();
       onDetach(id);
+      terminalHandle.current = null;
       terminal.dispose();
     };
-  }, [id, onAttach, onDetach]);
+  }, [id, onAttach, onDetach, onInputError]);
+
+  useEffect(() => {
+    if (!active || !visible) return;
+    // Re-fit and focus after a hidden tab becomes measurable again.
+    const timer = window.setTimeout(() => {
+      const handle = terminalHandle.current;
+      if (!handle) return;
+      try {
+        handle.fit.fit();
+        if (enabled) {
+          void terminalResize(id, handle.terminal.cols, handle.terminal.rows)
+            .catch(() => undefined);
+        }
+        handle.terminal.focus();
+      } catch {
+        // The host may briefly have no measurable geometry on teardown.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [id, active, visible, enabled]);
 
   return (
     <div

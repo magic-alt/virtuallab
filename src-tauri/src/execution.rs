@@ -565,11 +565,11 @@ fn default_shell() -> (String, Vec<String>) {
     #[cfg(target_os = "windows")]
     {
         if command_available("pwsh.exe") {
-            return ("pwsh.exe".to_string(), vec!["-NoLogo".to_string()]);
+            return ("pwsh.exe".to_string(), vec!["-NoLogo".to_string(), "-NoProfile".to_string()]);
         }
         return (
             "powershell.exe".to_string(),
-            vec!["-NoLogo".to_string()],
+            vec!["-NoLogo".to_string(), "-NoProfile".to_string()],
         );
     }
 
@@ -684,6 +684,13 @@ mod tests {
     fn default_shell_is_defined() {
         let (shell, _) = default_shell();
         assert!(!shell.trim().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_interactive_shell_skips_user_profiles() {
+        let (_, args) = default_shell();
+        assert_eq!(args, vec!["-NoLogo".to_string(), "-NoProfile".to_string()]);
     }
 }
 
