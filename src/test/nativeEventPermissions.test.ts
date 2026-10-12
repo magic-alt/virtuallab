@@ -13,11 +13,8 @@ describe("native desktop event ACL", () => {
   });
 
   it("inherits Tauri's event listen/unlisten permissions from core:default", () => {
-    // Tauri 2's core:default includes core:event:default (listen/unlisten).
-    // Don't add redundant core:event:allow-* entries: when the running app
-    // invokes a fresh, isolated self-build they can fail ACL resolution with
-    // 'Permission core:event:allow-listen not found'. A frontend-only test
-    // cannot prove generated Rust ACL; the Windows CI builds the isolated EXE.
+    // This is only a configuration check. The native generated-context test
+    // also runs with production custom-protocol features in the isolated build.
     expect(capabilities.permissions).toContain("core:default");
     expect(capabilities.permissions.filter((permission) =>
       permission.startsWith("core:event:"))).toEqual([]);

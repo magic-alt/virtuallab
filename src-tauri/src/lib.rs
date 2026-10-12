@@ -14,6 +14,7 @@ mod agent_cli;
 mod execution;
 mod build_workflows;
 mod self_restart;
+mod cargo_path;
 mod hardware;
 mod verification;
 mod git;
@@ -110,4 +111,19 @@ pub fn run() {
                 app.state::<CliAgentManager>().shutdown();
             }
         });
+}
+
+#[cfg(test)]
+mod desktop_acl_tests {
+    #[test]
+    fn generated_context_allows_main_window_event_subscriptions() {
+        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let authority = context.runtime_authority_mut();
+        for command in ["plugin:event|listen", "plugin:event|unlisten"] {
+            assert!(authority.resolve_access(command, "main", "main", &tauri::ipc::Origin::Local).is_some(),
+                "generated desktop ACL must allow {command} for the local main window");
+            assert!(authority.resolve_access(command, "untrusted", "untrusted", &tauri::ipc::Origin::Local).is_none(),
+                "event access must remain scoped to the main window");
+        }
+    }
 }

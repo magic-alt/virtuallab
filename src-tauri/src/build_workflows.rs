@@ -591,7 +591,7 @@ fn execute_workflow(
             .current_dir(&root)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(plan) = &restart_plan {
-            command.env("CARGO_TARGET_DIR", &plan.target_dir);
+            command.env("CARGO_TARGET_DIR", crate::cargo_path::cargo_target_dir(&plan.target_dir));
         }
         #[cfg(unix)]
         {

@@ -80,12 +80,14 @@ jobs:
       # latter, so it missed a capability-resolution failure in real self-builds.
       - name: Build standalone Windows self-update release host
         env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/self-build-stage
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/self-build-stage-v2
         run: |
           npm run tauri:build -- --no-bundle
-          if (!(Test-Path "src-tauri/target/self-build-stage/release/virtuallab.exe")) {
+          if (!(Test-Path "src-tauri/target/self-build-stage-v2/release/virtuallab.exe")) {
             throw "Isolated self-build did not produce virtuallab.exe"
           }
+          # cargo test without custom-protocol uses a different Tauri ACL cache.
+          cargo test --locked --release --features tauri/custom-protocol --manifest-path src-tauri/Cargo.toml generated_context_allows_main_window_event_subscriptions -- --nocapture
 
   macos-native:
     name: macOS desktop acceptance (Node 26)
