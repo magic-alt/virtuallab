@@ -78,7 +78,14 @@ git worktree list
 git status --short
 ~~~
 
-删除 worktree 的前提是：**非 primary，工作树洁净，用户确认**。Dirty worktree 会被 Git 拒绝，不会被强制删除。
+删除 Worktree 必须由用户主动操作，并且**不能删除主 Worktree**。点击侧边栏的移除按钮后，VirtualLab 先弹出原生确认框：
+
+1. **干净的 Worktree**：确认后使用 `git worktree remove -- <path>`，不使用强制参数；原有的本地分支不会被删除。
+2. **有修改的 Worktree**（已暂存、未暂存或未跟踪文件）：先展示 Git 状态（修改和未跟踪数量）及目标路径，弹出第二个原生风险确认框。仅点击 **Force remove** 后才执行 `git worktree remove --force -- <path>`；取消不会强制删除，也不会切走当前工作区。
+3. **状态发生变化**（例如弹窗期间又新增文件、修改 HEAD 或切换分支）：Rust 会拒绝使用旧快照执行强制删除，必须重新检查并确认。
+4. **受锁定 / 非注册 / 主 Worktree**：仍由 Git 与 Rust 拒绝；不会绕过锁定或清理其他仓库的目录。
+
+**数据丢失警告**：Force remove 会永久删除目标 Worktree 目录的未提交修改、未跟踪文件，也可能删除忽略的构建产物。即使是干净的 Worktree，忽略文件也可能随目录被删除。建议先 Commit、Stash 或手动备份。删除 Worktree **不等于**删除 local/origin 分支，且不会自动清理终端中仍在运行的任务。
 
 ### 切换和删除分支
 
