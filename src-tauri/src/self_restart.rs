@@ -138,7 +138,8 @@ fn run_helper(pid: u32, target: &Path, root: &Path) -> Result<PathBuf, String> {
     let staged = fs::canonicalize(env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let name = staged.file_name().ok_or("Staged executable has no file name")?;
-    let expected = root.join("src-tauri/target").join(STAGING_DIR).join("release").join(name);
+    let expected = fs::canonicalize(root.join("src-tauri/target").join(STAGING_DIR).join("release").join(name))
+        .map_err(|e| format!("Cannot resolve staged executable: {e}"))?;
     if staged != expected {
         return Err("Restart helper is not running from this project's staged output".into());
     }
@@ -242,4 +243,24 @@ fn launch_gui(executable: &Path, root: &Path) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Cannot relaunch {}: {e}", executable.display()))?;
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn replace_release_executable_stages_new_bytes_and_keeps_rollback_copy() {
+        let root = std::env::temp_dir().join(format!("vl-self-build-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let staged = root.join("stage.exe");
+        let original = root.join("app.exe");
+        fs::write(&staged, b"new-release").unwrap();
+        fs::write(&original, b"previous-release").unwrap();
+        replace_release_executable(&staged, &original).unwrap();
+        assert_eq!(fs::read(&original).unwrap(), b"new-release");
+        assert_eq!(fs::read(adjacent_file(&original, ".self-build-previous")).unwrap(), b"previous-release");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
