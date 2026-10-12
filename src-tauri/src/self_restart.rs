@@ -79,13 +79,24 @@ pub(crate) fn schedule(plan: &SelfBuildPlan) -> Result<(), String> {
     }
     #[cfg(windows)]
     {
-        use std::process::Stdio;
+        use std::{fs, process::Stdio};
         if !plan.staged_exe.is_file() {
             return Err(format!(
                 "Build finished, but the staged executable was not found at {}.                  Check CARGO_TARGET_DIR and the Tauri build output; current app remains open.",
                 plan.staged_exe.display()
             ));
         }
+        // Prepare the fallback/runtime copy while the old GUI is still
+        // running. If the disk is full or the destination is unwritable, do
+        // not shut down the only working application.
+        let name = plan.staged_exe.file_name().ok_or("Invalid staged executable name")?;
+        let runtime = next_runtime_executable(&plan.root, &plan.running_exe, name);
+        if let Some(directory) = runtime.parent() {
+            fs::create_dir_all(directory).map_err(|e| format!("Cannot prepare restart slot: {e}"))?;
+        }
+        fs::copy(&plan.staged_exe, &runtime)
+            .map_err(|e| format!("Cannot prepare new runtime binary; current app remains open: {e}"))?;
+
         crate::process::background_command(&plan.staged_exe)
             .arg(HELPER_FLAG)
             .arg(std::process::id().to_string())
@@ -166,15 +177,13 @@ fn run_helper(pid: u32, target: &Path, root: &Path) -> Result<PathBuf, String> {
         }
     }
 
-    // Do NOT run the staged Cargo output as the next GUI: it would lock that
-    // output during the very next build. Rotate two small runtime EXE copies
-    // instead of keeping duplicate Cargo build caches.
+    // The runtime copy was validated and written *before* the old app was
+    // asked to exit. In particular, do not launch the staged Cargo output as
+    // a GUI: that would recreate the original EXE-lock problem on next build.
     let runtime = next_runtime_executable(&root, target, name);
-    if let Some(directory) = runtime.parent() {
-        fs::create_dir_all(directory).map_err(|e| format!("Cannot create runtime slot: {e}"))?;
+    if !runtime.is_file() {
+        return Err("Prepared runtime copy disappeared before restart".into());
     }
-    fs::copy(&staged, &runtime).map_err(|e|
-        format!("Cannot copy the built app to its restart slot: {e}"))?;
     launch_gui(&runtime, &root)?;
     Ok(runtime)
 }
