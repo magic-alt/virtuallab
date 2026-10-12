@@ -189,12 +189,70 @@ export async function createWorktree(
   });
 }
 
-export async function removeWorktree(
+interface WorktreeRemovalState {
+  headSha: string;
+  branch: string;
+  statusHash: string;
+}
+
+type WorktreeRemovalResult =
+  | { status: "removed" }
+  | { status: "needsForce"; state: WorktreeRemovalState; trackedCount: number; untrackedCount: number };
+
+/**
+ * Never expose a bare force-delete action in the UI: Rust first validates
+ * the registered non-primary worktree and returns a snapshot of its dirty
+ * status. Only an explicit second native confirmation passes that snapshot
+ * back to Rust for a single --force. Any intervening status/HEAD change or
+ * native-dialog failure leaves the directory alone.
+ */
+export async function removeWorktreeAfterConfirmation(
   repositoryRoot: string,
   worktreePath: string,
-): Promise<void> {
+): Promise<boolean> {
   requireDesktop();
-  return invoke("remove_worktree", { repositoryRoot, worktreePath });
+  const confirmed = await confirm(
+    `Remove this Git worktree?\n\n${worktreePath}\n\n` +
+      "Its local Git branch is kept. If the worktree contains uncommitted changes, " +
+      "a separate force-removal confirmation will be required. " +
+      "Ignored/build files may also be deleted even from an otherwise clean worktree.",
+    {
+      title: "Remove Git worktree",
+      kind: "warning",
+      okLabel: "Remove worktree",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!confirmed) return false;
+
+  const initial = await invoke<WorktreeRemovalResult>("remove_worktree", {
+    repositoryRoot, worktreePath, force: false, expectedState: null,
+  });
+  if (initial.status === "removed") return true;
+  if (initial.status !== "needsForce") throw new Error("Unexpected worktree removal response.");
+
+  const forceConfirmed = await confirm(
+    `This worktree contains ${initial.trackedCount} tracked change(s) and ${initial.untrackedCount} untracked file(s):\n\n` +
+      `${worktreePath}\n\n` +
+      "FORCE REMOVE will permanently delete this worktree directory, including uncommitted tracked changes, " +
+      "untracked files and any ignored/generated files in it. This cannot be undone. " +
+      "Commit, back up or stash important files first. The local Git branch is retained.",
+    {
+      title: "Force remove dirty worktree",
+      kind: "warning",
+      okLabel: "Force remove",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!forceConfirmed) return false;
+
+  const removed = await invoke<WorktreeRemovalResult>("remove_worktree", {
+    repositoryRoot, worktreePath, force: true, expectedState: initial.state,
+  });
+  if (removed.status !== "removed") {
+    throw new Error("Worktree changed before force removal. Retry and review its latest contents.");
+  }
+  return true;
 }
 
 export async function terminalSpawn(
