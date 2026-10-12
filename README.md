@@ -6,7 +6,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 ## Features
 
-- **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections.
+- **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; identify untracked files and directories; save local line comments and track review state.
 - **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
 - **GitHub PR and CI dashboard** — browse open pull requests from any workspace, inspect all GitHub CI checks and failed jobs, review merge readiness, and explicitly confirm a SHA-pinned remote merge (Squash/Merge/Rebase). Existing issue context and review drafts remain supported.
