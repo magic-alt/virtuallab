@@ -1,5 +1,6 @@
 use crate::process::background_command;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::Read;
@@ -1475,16 +1476,70 @@ fn create_worktree_blocking(
     })
 }
 
+/// A force-removal confirmation is bound to the checked-out HEAD, branch and
+/// porcelain status seen by the user. A new/removed file or changed index/HEAD
+/// requires another preflight; callers cannot force-remove arbitrary paths.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRemovalState {
+    head_sha: String,
+    branch: String,
+    status_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum WorktreeRemovalResult {
+    Removed,
+    NeedsForce {
+        state: WorktreeRemovalState,
+        tracked_count: usize,
+        untracked_count: usize,
+    },
+}
+
+fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize, usize), String> {
+    // -z keeps spaces, Unicode and newlines in paths unambiguous; -uall
+    // includes files inside untracked directories, not just directory names.
+    let status = git_read(worktree, &[
+        "status", "--porcelain=v1", "-z", "--untracked-files=all",
+        "--ignore-submodules=none",
+    ])?;
+    let entries = parse_status_z(&status)?;
+    let untracked_count = entries.iter()
+        .filter(|entry| entry.index == '?' && entry.worktree == '?')
+        .count();
+    let head_sha = git_read(worktree, &["rev-parse", "HEAD"])?.trim().to_string();
+    let branch = git_read_optional(worktree, &["symbolic-ref", "--quiet", "HEAD"])
+        .unwrap_or_default().trim().to_string();
+    let state = WorktreeRemovalState {
+        head_sha,
+        branch,
+        status_hash: format!("{:x}", Sha256::digest(status.as_bytes())),
+    };
+    Ok((state, entries.len() - untracked_count, untracked_count))
+}
+
 #[tauri::command]
-pub async fn remove_worktree(repository_root: String, worktree_path: String) -> Result<(), String> {
+pub async fn remove_worktree(
+    repository_root: String,
+    worktree_path: String,
+    force: bool,
+    expected_state: Option<WorktreeRemovalState>,
+) -> Result<WorktreeRemovalResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        remove_worktree_blocking(repository_root, worktree_path)
+        remove_worktree_blocking(repository_root, worktree_path, force, expected_state)
     })
     .await
     .map_err(|error| format!("Worktree removal task failed: {error}"))?
 }
 
-fn remove_worktree_blocking(repository_root: String, worktree_path: String) -> Result<(), String> {
+fn remove_worktree_blocking(
+    repository_root: String,
+    worktree_path: String,
+    force: bool,
+    expected_state: Option<WorktreeRemovalState>,
+) -> Result<WorktreeRemovalResult, String> {
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -1512,11 +1567,37 @@ fn remove_worktree_blocking(repository_root: String, worktree_path: String) -> R
     }
 
     let worktree_string = requested.to_string_lossy().to_string();
-    git(
-        &repository_root,
-        &["worktree", "remove", worktree_string.as_str()],
-    )?;
-    Ok(())
+    let (actual_state, tracked_count, untracked_count) =
+        worktree_removal_state(&worktree_string)?;
+    let dirty = tracked_count + untracked_count > 0;
+
+    if force {
+        if !dirty {
+            return Err("Worktree is no longer dirty; retry normal removal.".to_string());
+        }
+        if expected_state.as_ref() != Some(&actual_state) {
+            return Err(
+                "Worktree changed since force-removal confirmation. Retry removal to review its latest state."
+                    .to_string(),
+            );
+        }
+        // Exactly one --force: Git still refuses locked worktrees, which need
+        // two --force flags. Never unlock worktrees or prune repository refs.
+        git(&repository_root, &["worktree", "remove", "--force", "--", &worktree_string])?;
+    } else {
+        if expected_state.is_some() {
+            return Err("Unexpected force-removal snapshot on a normal removal.".to_string());
+        }
+        if dirty {
+            return Ok(WorktreeRemovalResult::NeedsForce {
+                state: actual_state,
+                tracked_count,
+                untracked_count,
+            });
+        }
+        git(&repository_root, &["worktree", "remove", "--", &worktree_string])?;
+    }
+    Ok(WorktreeRemovalResult::Removed)
 }
 
 fn default_worktree_path(repository_root: &str, branch: &str) -> Result<std::path::PathBuf, String> {
@@ -2333,6 +2414,109 @@ mod tests {
         let _ = fs::remove_dir_all(sandbox);
     }
 
+    fn removal_fixture(name: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let (sandbox, repo) = init_fixture_repo(name);
+        let worktree = sandbox.join("space 中文");
+        git_ok(&repo, &["worktree", "add", "-b", "feat/removal-test", worktree.to_str().unwrap()]);
+        (sandbox, repo, worktree)
+    }
+
+    fn request_removal(
+        repo: &std::path::Path,
+        worktree: &std::path::Path,
+        force: bool,
+        state: Option<WorktreeRemovalState>,
+    ) -> Result<WorktreeRemovalResult, String> {
+        remove_worktree_blocking(
+            repo.to_string_lossy().into_owned(),
+            worktree.to_string_lossy().into_owned(),
+            force,
+            state,
+        )
+    }
+
+    #[test]
+    fn dirty_worktree_requires_explicit_force_snapshot_and_keeps_branch() {
+        let (sandbox, repo, worktree) = removal_fixture("remove-dirty");
+        fs::write(worktree.join("README.md"), "important edit").unwrap();
+        fs::write(worktree.join("new file 中文.txt"), "important untracked").unwrap();
+        let preview = request_removal(&repo, &worktree, false, None).unwrap();
+        let state = match preview {
+            WorktreeRemovalResult::NeedsForce { state, tracked_count, untracked_count } => {
+                assert_eq!(tracked_count, 1);
+                assert_eq!(untracked_count, 1);
+                state
+            }
+            _ => panic!("dirty worktree should require force confirmation"),
+        };
+        assert_eq!(fs::read_to_string(worktree.join("README.md")).unwrap(), "important edit");
+        assert!(worktree.join("new file 中文.txt").exists());
+        assert!(request_removal(&repo, &worktree, true, None).is_err());
+
+        assert!(matches!(
+            request_removal(&repo, &worktree, true, Some(state)).unwrap(),
+            WorktreeRemovalResult::Removed
+        ));
+        assert!(!worktree.exists());
+        assert!(repo.join("README.md").exists(), "primary worktree must survive");
+        assert!(git_read(repo.to_str().unwrap(), &[
+            "show-ref", "--verify", "refs/heads/feat/removal-test",
+        ]).is_ok(), "removing the worktree must not delete its branch");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn force_removal_refuses_stale_confirmation_when_new_files_appear() {
+        let (sandbox, repo, worktree) = removal_fixture("remove-stale");
+        fs::write(worktree.join("pending.txt"), "first file").unwrap();
+        let original = match request_removal(&repo, &worktree, false, None).unwrap() {
+            WorktreeRemovalResult::NeedsForce { state, .. } => state,
+            _ => panic!("expected force preview"),
+        };
+        fs::write(worktree.join("late.txt"), "created while dialog was open").unwrap();
+        let error = request_removal(&repo, &worktree, true, Some(original)).unwrap_err();
+        assert!(error.contains("changed since force-removal"), "{error}");
+        assert!(worktree.join("pending.txt").exists());
+        assert!(worktree.join("late.txt").exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn force_removal_cannot_target_primary_unregistered_or_locked_worktrees() {
+        let (sandbox, repo, worktree) = removal_fixture("remove-guards");
+        fs::write(worktree.join("pending.txt"), "keep").unwrap();
+        let preview = request_removal(&repo, &worktree, false, None).unwrap();
+        let state = match preview {
+            WorktreeRemovalResult::NeedsForce { state, .. } => state,
+            _ => panic!("expected force preview"),
+        };
+        assert!(request_removal(&repo, &repo, true, Some(state.clone()))
+            .unwrap_err().contains("primary worktree"));
+        let foreign = sandbox.join("not-registered");
+        fs::create_dir_all(&foreign).unwrap();
+        assert!(request_removal(&repo, &foreign, true, Some(state.clone()))
+            .unwrap_err().contains("not a registered worktree"));
+        git_ok(&repo, &["worktree", "lock", worktree.to_str().unwrap()]);
+        assert!(request_removal(&repo, &worktree, true, Some(state)).is_err());
+        assert!(worktree.join("pending.txt").exists(), "one --force must not bypass a lock");
+        git_ok(&repo, &["worktree", "unlock", worktree.to_str().unwrap()]);
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn force_removal_refuses_clean_worktree_without_force_reason() {
+        let (sandbox, repo, worktree) = removal_fixture("remove-clean-guard");
+        let clean_state = worktree_removal_state(worktree.to_str().unwrap()).unwrap().0;
+        assert!(request_removal(&repo, &worktree, true, Some(clean_state))
+            .unwrap_err().contains("no longer dirty"));
+        assert!(worktree.is_dir());
+        assert!(matches!(
+            request_removal(&repo, &worktree, false, None).unwrap(),
+            WorktreeRemovalResult::Removed
+        ));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
     #[test]
     fn create_and_remove_worktree_round_trip() {
         let sandbox = unique_root("worktree");
@@ -2361,11 +2545,15 @@ mod tests {
             .expect("branch lookup");
         assert_eq!(branch.trim(), "feat/control-test");
 
-        remove_worktree_blocking(
-            repo.to_string_lossy().to_string(),
-            target.to_string_lossy().to_string(),
-        )
-        .expect("remove worktree");
+        assert!(matches!(
+            remove_worktree_blocking(
+                repo.to_string_lossy().to_string(),
+                target.to_string_lossy().to_string(),
+                false,
+                None,
+            ).expect("remove worktree"),
+            WorktreeRemovalResult::Removed
+        ));
         assert!(!target.exists());
 
         let _ = fs::remove_dir_all(sandbox);
