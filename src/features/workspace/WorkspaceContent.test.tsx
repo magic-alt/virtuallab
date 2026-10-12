@@ -32,6 +32,30 @@ describe("WorkspaceContent navigation", () => {
     expect(screen.getByText("Workspace topology").closest(".grid")).toHaveClass("xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]");
   });
 
+  it("gives the Run view a bounded desktop scroll region without trapping other tabs", () => {
+    const props = {
+      snapshot: PREVIEW_SNAPSHOT,
+      profileRepositoryRoot: "D:/Project/virtuallab",
+      isPreview: true,
+      onTabChange: vi.fn(),
+    };
+    const view = render(<WorkspaceContent {...props} tab="run" />);
+    const main = screen.getByTestId("workspace-main");
+    expect(main).toHaveClass("min-h-0", "overflow-x-hidden", "overflow-y-auto", "xl:overflow-hidden");
+    expect(screen.getByTestId("runner-mock")).toBeInTheDocument();
+
+    // Overview, GitHub and other document-like pages still scroll normally.
+    view.rerender(<WorkspaceContent {...props} tab="github" />);
+    expect(main).toHaveClass("overflow-x-auto", "overflow-y-auto");
+    expect(main).not.toHaveClass("xl:overflow-hidden");
+
+    // Xterm uses its own scrollback, but on a short viewport the workspace
+    // still needs to be scrollable rather than clipping the toolbar.
+    view.rerender(<WorkspaceContent {...props} tab="terminal" />);
+    expect(main).toHaveClass("overflow-y-auto");
+    expect(screen.getByTestId("terminal-mock")).toBeInTheDocument();
+  });
+
   it("wires every workspace tab", async () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
