@@ -6,7 +6,9 @@ import { useWorkbenchStore } from "@/stores/workbench";
 
 const backend = vi.hoisted(() => ({
   buildWorkflowDiscover: vi.fn().mockResolvedValue([]),
+  buildWorkflowSelfUpdateAvailable: vi.fn().mockResolvedValue(false),
   buildWorkflowStart: vi.fn().mockResolvedValue(undefined),
+  confirmSelfBuildRestart: vi.fn().mockResolvedValue(true),
   buildWorkflowCancel: vi.fn().mockResolvedValue(undefined),
   confirmDeploymentWorkflow: vi.fn().mockResolvedValue(true),
   listRuns: vi.fn().mockResolvedValue([]),
@@ -16,7 +18,9 @@ const backend = vi.hoisted(() => ({
 
 vi.mock("@/lib/backend", () => ({
   buildWorkflowDiscover: backend.buildWorkflowDiscover,
+  buildWorkflowSelfUpdateAvailable: backend.buildWorkflowSelfUpdateAvailable,
   buildWorkflowStart: backend.buildWorkflowStart,
+  confirmSelfBuildRestart: backend.confirmSelfBuildRestart,
   buildWorkflowCancel: backend.buildWorkflowCancel,
   confirmDeploymentWorkflow: backend.confirmDeploymentWorkflow,
   listRuns: backend.listRuns,
@@ -31,7 +35,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 describe("ProcessRunner controls", () => {
   beforeEach(() => {
     backend.buildWorkflowDiscover.mockReset().mockResolvedValue([]);
+    backend.buildWorkflowSelfUpdateAvailable.mockReset().mockResolvedValue(false);
     backend.buildWorkflowStart.mockReset().mockResolvedValue(undefined);
+    backend.confirmSelfBuildRestart.mockReset().mockResolvedValue(true);
     backend.buildWorkflowCancel.mockReset().mockResolvedValue(undefined);
     backend.confirmDeploymentWorkflow.mockReset().mockResolvedValue(true);
     backend.listRuns.mockReset().mockResolvedValue([]);
@@ -153,6 +159,59 @@ describe("ProcessRunner controls", () => {
     await user.click(screen.getByRole("button", { name: "Build desktop app" }));
     expect(backend.processSpawn).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "D:/repo", program: "npm", args: ["run", "tauri:build"],
+    }));
+  });
+
+  it("builds the running desktop app in isolation and restarts only after confirmation", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce([{
+      id: "npm-tauri-package", name: "Tauri · Desktop build", kind: "package",
+      tool: "Node.js / Tauri", supported: true, description: "Full package",
+      steps: [{ name: "Build desktop app", program: "npm", args: ["run", "tauri:build"] }],
+    }]);
+    backend.buildWorkflowSelfUpdateAvailable.mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/repo" repositoryRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Build desktop app" }));
+    expect(backend.buildWorkflowSelfUpdateAvailable).toHaveBeenCalledWith("D:/repo");
+    expect(backend.confirmSelfBuildRestart).toHaveBeenCalledTimes(1);
+    expect(backend.buildWorkflowStart).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "D:/repo", restartAfterBuild: true,
+      steps: [{ name: "Build desktop app", program: "npm", args: ["run", "tauri:build"] }],
+    }));
+    expect(backend.processSpawn).not.toHaveBeenCalled();
+  });
+
+  it("does not begin a self-restart build when the user declines", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce([{
+      id: "npm-tauri-package", name: "Tauri · Desktop build", kind: "package",
+      tool: "Node.js / Tauri", supported: true, description: "Full package",
+      steps: [{ name: "Build desktop app", program: "npm", args: ["run", "tauri:build"] }],
+    }]);
+    backend.buildWorkflowSelfUpdateAvailable.mockResolvedValueOnce(true);
+    backend.confirmSelfBuildRestart.mockResolvedValueOnce(false);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/repo" repositoryRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Build desktop app" }));
+    expect(backend.buildWorkflowStart).not.toHaveBeenCalled();
+    expect(backend.processSpawn).not.toHaveBeenCalled();
+  });
+
+  it("does not restart VirtualLab when packaging a different Tauri repository", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce([{
+      id: "npm-tauri-package", name: "Tauri · Desktop build", kind: "package",
+      tool: "Node.js / Tauri", supported: true, description: "Full package",
+      steps: [{ name: "Build desktop app", program: "npm", args: ["run", "tauri:build"] }],
+    }]);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/other" repositoryRoot="D:/other" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Build desktop app" }));
+    expect(backend.buildWorkflowSelfUpdateAvailable).toHaveBeenCalledWith("D:/other");
+    expect(backend.confirmSelfBuildRestart).not.toHaveBeenCalled();
+    expect(backend.processSpawn).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: "D:/other", program: "npm", args: ["run", "tauri:build"],
     }));
   });
 
