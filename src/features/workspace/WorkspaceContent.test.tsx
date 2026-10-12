@@ -1,9 +1,17 @@
 import { render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+const terminalLifecycle = vi.hoisted(() => ({ mounts: vi.fn(), unmounts: vi.fn() }));
 vi.mock("@/features/terminal/TerminalWorkspace", () => ({
-  TerminalWorkspace: () => <div data-testid="terminal-mock" />,
+  TerminalWorkspace: ({ cwd, visible }: { cwd: string; visible: boolean }) => {
+    useEffect(() => {
+      terminalLifecycle.mounts();
+      return () => terminalLifecycle.unmounts();
+    }, []);
+    return <div data-testid="terminal-mock" data-cwd={cwd} data-visible={String(visible)} />;
+  },
 }));
 vi.mock("@/features/execution/ProcessRunner", () => ({
   ProcessRunner: () => <div data-testid="runner-mock" />,
@@ -84,4 +92,36 @@ describe("WorkspaceContent navigation", () => {
       "history",
     ]);
   });
+  it("retains terminal mounts across navigation and resets only for a new worktree", () => {
+    const props = {
+      snapshot: PREVIEW_SNAPSHOT,
+      profileRepositoryRoot: "D:/Project/virtuallab",
+      isPreview: true,
+      onTabChange: vi.fn(),
+    };
+    const view = render(<WorkspaceContent {...props} tab="terminal" />);
+    expect(screen.getByTestId("terminal-mock")).toHaveAttribute("data-visible", "true");
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(1);
+
+    for (const tab of ["overview", "github", "run", "terminal"] as const) {
+      view.rerender(<WorkspaceContent {...props} tab={tab} />);
+      expect(screen.getByTestId("terminal-mock")).toHaveAttribute(
+        "data-visible", String(tab === "terminal"),
+      );
+    }
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(1);
+    expect(terminalLifecycle.unmounts).not.toHaveBeenCalled();
+
+    // Equivalent Windows spellings are one identity; changing worktrees
+    // disposes the old native PTY and establishes the new worktree context.
+    const slash = { ...PREVIEW_SNAPSHOT, root: "D:/Project/repo" };
+    view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={slash} />);
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(2);
+    view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={{ ...slash, root: "d:\\Project\\repo\\" }} />);
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(2);
+    view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={{ ...slash, root: "D:/Project/another" }} />);
+    expect(terminalLifecycle.unmounts).toHaveBeenCalledTimes(2);
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(3);
+  });
+
 });
