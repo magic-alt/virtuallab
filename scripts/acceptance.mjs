@@ -78,6 +78,10 @@ console.log("[ ] Remove Workspace refuses the primary worktree; clean worktrees 
 console.log("[ ] Refresh reloads Git state.");
 console.log("[ ] Terminal: Start/New tab, tab switch, typing, Ctrl+C, resize and Stop all work.");
 console.log("[ ] Run: repository-scoped Build/Test profile Run streams output; Stop terminates; add/remove profile works.");
+console.log("[ ] Run layout: stream 2000+ short/very long compiler lines at desktop >=1280px; only the log scrollbar moves, output panel and outer workbench stay fixed.");
+console.log("[ ] Run layout: scroll the left workflow column separately; resizing the window below 1280px stacks cards and keeps the log height bounded with its own scrollbar.");
+console.log("[ ] Run scrollback: manually scroll the log upward while compilation continues; position stays stable; Latest output restores follow-tail.");
+console.log("[ ] Other scroll boundaries: Terminal scrollback, Changes file list/diff, GitHub CI lists and Agents timeline do not stretch the whole workbench.");
 console.log("[ ] Changes/Checks/History/Overview tabs render and switch correctly.");
 console.log("[ ] Filesystem edits update repository status without manual refresh.");
 console.log("\nV0.3 Phase A diff acceptance:");
