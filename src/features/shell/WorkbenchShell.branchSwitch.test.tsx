@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => ({
   inspect: vi.fn(),
   switchBranch: vi.fn(),
   deleteOriginBranch: vi.fn(),
+  removeWorktree: vi.fn(),
   watchStart: vi.fn(),
   watchStop: vi.fn(),
 }));
@@ -29,7 +30,7 @@ vi.mock("@/lib/backend", () => ({
   deleteOriginBranchAfterConfirmation: harness.deleteOriginBranch,
   chooseRepositoryDirectory: vi.fn(),
   createWorktree: vi.fn(),
-  removeWorktree: vi.fn(),
+  removeWorktreeAfterConfirmation: harness.removeWorktree,
   watchStart: harness.watchStart,
   watchStop: harness.watchStop,
 }));
@@ -74,12 +75,36 @@ function snapshot(): RepositorySnapshot {
   };
 }
 
+const linkedPath = "/fixtures/virtuallab/.worktrees/joint17-brake";
+
+function linkedSnapshot(path: string, hasLinkedWorktree = true): RepositorySnapshot {
+  const next = snapshot();
+  if (hasLinkedWorktree) {
+    next.worktrees.push({
+      path: linkedPath,
+      head: "3333333333",
+      branch: "feat/joint17-brake",
+      detached: false,
+    });
+    next.branches.push({
+      name: "feat/joint17-brake", local: true, remote: false, worktreePath: linkedPath,
+    });
+  }
+  if (path === linkedPath) {
+    next.root = linkedPath;
+    next.currentBranch = "feat/joint17-brake";
+    next.headSha = "3333333333";
+  }
+  return next;
+}
+
 describe("workbench branch switching with untracked artifacts", () => {
   beforeEach(() => {
     harness.currentBranch = "codex/pr-15";
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
     harness.deleteOriginBranch.mockReset();
+    harness.removeWorktree.mockReset();
     harness.watchStart.mockReset();
     harness.watchStop.mockReset();
     harness.inspect.mockImplementation(async () => snapshot());
@@ -263,4 +288,86 @@ describe("workbench branch switching with untracked artifacts", () => {
     expect(await screen.findByText(/Cannot switch branches with staged or modified tracked files/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
   });
+  it("keeps the active dirty worktree selected when the force dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    let finishConfirmation!: (removed: boolean) => void;
+    harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path));
+    harness.removeWorktree.mockReturnValue(new Promise<boolean>((resolve) => {
+      finishConfirmation = resolve;
+    }));
+    useWorkbenchStore.setState({
+      workspaceStates: {
+        "repo-1": {
+          repositoryId: "repo-1", activeWorktreePath: linkedPath,
+          activeTab: "changes", updatedAt: 1,
+        },
+      },
+    });
+    render(<WorkbenchShell />);
+    const remove = await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await user.click(remove);
+    expect(harness.removeWorktree).toHaveBeenCalledWith(repoRoot, linkedPath);
+    await waitFor(() => expect(remove).toBeDisabled());
+    await user.click(remove);
+    expect(harness.removeWorktree).toHaveBeenCalledTimes(1);
+    finishConfirmation(false);
+    await waitFor(() => expect(remove).toBeEnabled());
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linkedPath);
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "changes");
+    expect(harness.inspect).toHaveBeenCalledTimes(1);
+  });
+
+  it("switches to the primary worktree only after a successful active removal", async () => {
+    const user = userEvent.setup();
+    let hasLinkedWorktree = true;
+    harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path, hasLinkedWorktree));
+    harness.removeWorktree.mockImplementation(async () => {
+      hasLinkedWorktree = false;
+      return true;
+    });
+    useWorkbenchStore.setState({
+      workspaceStates: {
+        "repo-1": {
+          repositoryId: "repo-1", activeWorktreePath: linkedPath,
+          activeTab: "changes", updatedAt: 1,
+        },
+      },
+    });
+    render(<WorkbenchShell />);
+    const remove = await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await user.click(remove);
+    await waitFor(() => {
+      expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
+      expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "overview");
+  });
+
+  it("keeps the current tab and path when removing a non-active worktree", async () => {
+    const user = userEvent.setup();
+    let hasLinkedWorktree = true;
+    harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path, hasLinkedWorktree));
+    harness.removeWorktree.mockImplementation(async () => {
+      hasLinkedWorktree = false;
+      return true;
+    });
+    useWorkbenchStore.setState({
+      workspaceStates: {
+        "repo-1": {
+          repositoryId: "repo-1", activeWorktreePath: repoRoot,
+          activeTab: "history", updatedAt: 1,
+        },
+      },
+    });
+    render(<WorkbenchShell />);
+    const remove = await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(remove).toBeEnabled());
+    await user.click(remove);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument());
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
+  });
+
 });
