@@ -158,7 +158,7 @@ export function ProjectSidebar({
                 key={`${worktree.path}-${index}`}
                 className="group flex items-center gap-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
               >
-                <button className="min-w-0 flex-1 text-left" onClick={() => onSelectWorkspace(worktree.path)} type="button">
+                <button className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={!workspaceActionsEnabled} onClick={() => onSelectWorkspace(worktree.path)} type="button">
                   <div className="flex items-center gap-2 text-xs text-slate-300">
                     <GitBranch size={12} className="text-slate-600" />
                     <span className="truncate">
@@ -172,7 +172,8 @@ export function ProjectSidebar({
                 {index > 0 && (
                   <button
                     aria-label="Remove workspace"
-                    className="rounded-md p-1 text-slate-700 opacity-0 transition hover:bg-rose-400/10 hover:text-rose-300 group-hover:opacity-100"
+                    disabled={!workspaceActionsEnabled}
+                    className="rounded-md p-1 text-slate-700 opacity-0 transition hover:bg-rose-400/10 hover:text-rose-300 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-20"
                     onClick={() => onRemoveWorkspace(worktree.path)}
                     type="button"
                   >
