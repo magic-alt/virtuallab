@@ -75,8 +75,17 @@ jobs:
       - run: npm ci
       - run: npm run icons:check
       - run: npm run acceptance:local
-      - name: Build standalone Windows release host
-        run: npm run tauri:build -- --no-bundle
+      # The application's Windows self-update compiles into a separate Cargo
+      # directory, not the default target/release. PR #53 only tested the
+      # latter, so it missed a capability-resolution failure in real self-builds.
+      - name: Build standalone Windows self-update release host
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target/self-build-stage
+        run: |
+          npm run tauri:build -- --no-bundle
+          if (!(Test-Path "src-tauri/target/self-build-stage/release/virtuallab.exe")) {
+            throw "Isolated self-build did not produce virtuallab.exe"
+          }
 
   macos-native:
     name: macOS desktop acceptance (Node 26)

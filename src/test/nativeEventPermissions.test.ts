@@ -12,12 +12,15 @@ describe("native desktop event ACL", () => {
     expect(capabilities.windows).toContain("main");
   });
 
-  it("permits both terminal/event subscriptions and their cleanup", () => {
-    // core:default normally includes these, but explicitly requiring them
-    // catches packaging/config regressions that strand Start Terminal disabled.
-    expect(capabilities.permissions).toContain("core:event:allow-listen");
-    expect(capabilities.permissions).toContain("core:event:allow-unlisten");
+  it("inherits Tauri's event listen/unlisten permissions from core:default", () => {
+    // Tauri 2's core:default includes core:event:default (listen/unlisten).
+    // Don't add redundant core:event:allow-* entries: when the running app
+    // invokes a fresh, isolated self-build they can fail ACL resolution with
+    // 'Permission core:event:allow-listen not found'. A frontend-only test
+    // cannot prove generated Rust ACL; the Windows CI builds the isolated EXE.
     expect(capabilities.permissions).toContain("core:default");
+    expect(capabilities.permissions.filter((permission) =>
+      permission.startsWith("core:event:"))).toEqual([]);
     expect(capabilities.permissions).not.toContain("core:event:deny-listen");
     expect(capabilities.permissions).not.toContain("core:event:deny-unlisten");
   });
