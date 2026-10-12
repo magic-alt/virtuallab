@@ -132,6 +132,21 @@ fn is_tauri_desktop_build(steps: &[BuildStep]) -> bool {
         && steps[0].args[1] == "tauri:build"
 }
 
+/// Self-rebuild needs the new release EXE, not an installer. On Windows the
+/// default Tauri bundle targets include MSI, which requires WiX candle.exe and
+/// can fail *after* Cargo successfully produced the executable. Passing
+/// "--no-bundle" through npm's "--" separator prevents that unrelated failure.
+/// The Rust caller permits this only for a verified self-build of the running
+/// app; other repositories retain their ordinary Tauri packaging behavior.
+fn workflow_step_args(step: &BuildStep, self_restart: bool) -> Vec<String> {
+    let mut args = step.args.clone();
+    if self_restart {
+        args.push("--".into());
+        args.push("--no-bundle".into());
+    }
+    args
+}
+
 #[tauri::command]
 pub fn build_workflow_self_update_available(app: AppHandle, workspace_root: String) -> bool {
     let Ok(root) = fs::canonicalize(workspace_root) else { return false };
@@ -550,6 +565,7 @@ fn execute_workflow(
         notice.stream = Some("system");
         notice.data = Some(format!(
             "[VirtualLab] Building the running app in isolated Cargo output: {}\n\
+             [VirtualLab] Self-build uses --no-bundle: EXE only, skipping WiX/MSI installer creation.\n\
              [VirtualLab] The current window will close only after the build succeeds and the restart helper starts.\n",
             plan.target_dir.display()
         ));
@@ -571,7 +587,8 @@ fn execute_workflow(
         emit(&app, event);
 
         let mut command = process_command(step.program.trim());
-        command.args(&step.args).current_dir(&root)
+        command.args(workflow_step_args(step, restart_plan.is_some()))
+            .current_dir(&root)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(plan) = &restart_plan {
             command.env("CARGO_TARGET_DIR", &plan.target_dir);
@@ -905,6 +922,20 @@ mod tests {
             step("Package", "npm", &["run", "tauri:build"]),
             step("Run", "npm", &["run", "dev"]),
         ]));
+    }
+
+    #[test]
+    fn self_build_skips_wix_without_changing_normal_tauri_packaging() {
+        let tauri = step("Build desktop app", "npm", &["run", "tauri:build"]);
+        assert!(is_tauri_desktop_build(std::slice::from_ref(&tauri)));
+        assert_eq!(workflow_step_args(&tauri, true),
+            vec!["run", "tauri:build", "--", "--no-bundle"]);
+        assert_eq!(workflow_step_args(&tauri, false), vec!["run", "tauri:build"]);
+
+        // In particular, ordinary builds of other repositories (Tauri,
+        // frontend, CMake, Keil) do not silently change their arguments.
+        let other = step("Build frontend", "npm", &["run", "build"]);
+        assert_eq!(workflow_step_args(&other, false), vec!["run", "build"]);
     }
 
     #[test]
