@@ -69,10 +69,11 @@ beforeEach(() => {
 });
 
 async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
+  const previousStarts = backend.terminalSpawn.mock.calls.length;
   await waitFor(() => expect(screen.getByRole("button", { name: /start terminal/i })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: /start terminal/i }));
-  await waitFor(() => expect(backend.terminalSpawn).toHaveBeenCalled());
-  return backend.terminalSpawn.mock.calls[0][0] as string;
+  await waitFor(() => expect(backend.terminalSpawn).toHaveBeenCalledTimes(previousStarts + 1));
+  return backend.terminalSpawn.mock.calls[previousStarts][0] as string;
 }
 
 describe("TerminalWorkspace native PTY lifecycle", () => {
