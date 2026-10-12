@@ -58,7 +58,7 @@ describe("ProcessRunner controls", () => {
   });
 
   it("keeps long build logs within the pane and does not move the whole workspace", async () => {
-    const outputText = Array.from({ length: 1200 }, (_, i) => `compiler diagnostic line ${i}`).join("\\n");
+    const outputText = Array.from({ length: 1200 }, (_, i) => `compiler diagnostic line ${i}`).join("\n");
     backend.listRuns.mockResolvedValueOnce([{
       id: "long-build", cwd: "D:/workspace", label: "Large build",
       isWorkflow: false, status: "running", output: outputText,
