@@ -304,15 +304,15 @@ describe("workbench branch switching with untracked artifacts", () => {
       },
     });
     render(<WorkbenchShell />);
-    const remove = await screen.findByRole("button", { name: "Remove workspace" });
-    await waitFor(() => expect(remove).toBeEnabled());
-    await user.click(remove);
+    await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
     expect(harness.removeWorktree).toHaveBeenCalledWith(repoRoot, linkedPath);
-    await waitFor(() => expect(remove).toBeDisabled());
-    await user.click(remove);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeDisabled());
+    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
     expect(harness.removeWorktree).toHaveBeenCalledTimes(1);
     finishConfirmation(false);
-    await waitFor(() => expect(remove).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linkedPath);
     expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "changes");
     expect(harness.inspect).toHaveBeenCalledTimes(1);
@@ -335,9 +335,9 @@ describe("workbench branch switching with untracked artifacts", () => {
       },
     });
     render(<WorkbenchShell />);
-    const remove = await screen.findByRole("button", { name: "Remove workspace" });
-    await waitFor(() => expect(remove).toBeEnabled());
-    await user.click(remove);
+    await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
     await waitFor(() => {
       expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
       expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument();
@@ -362,9 +362,9 @@ describe("workbench branch switching with untracked artifacts", () => {
       },
     });
     render(<WorkbenchShell />);
-    const remove = await screen.findByRole("button", { name: "Remove workspace" });
-    await waitFor(() => expect(remove).toBeEnabled());
-    await user.click(remove);
+    await screen.findByRole("button", { name: "Remove workspace" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument());
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
     expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
