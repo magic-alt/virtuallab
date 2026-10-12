@@ -43,7 +43,8 @@ describe("worktree removal native confirmation", () => {
       expect.stringContaining(worktreePath),
       expect.objectContaining({ title: "Remove Git worktree", kind: "warning" }),
     );
-    expect(native.invoke).toHaveBeenCalledExactlyOnceWith("remove_worktree", {
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(native.invoke).toHaveBeenCalledWith("remove_worktree", {
       repositoryRoot, worktreePath, force: false, expectedState: null,
     });
   });
@@ -90,7 +91,8 @@ describe("worktree removal native confirmation", () => {
     native.confirm.mockReset().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
     native.invoke.mockResolvedValueOnce(dirty);
     await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).resolves.toBe(false);
-    expect(native.invoke).toHaveBeenCalledExactlyOnceWith("remove_worktree", {
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(native.invoke).toHaveBeenCalledWith("remove_worktree", {
       repositoryRoot, worktreePath, force: false, expectedState: null,
     });
   });
