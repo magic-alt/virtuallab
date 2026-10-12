@@ -276,7 +276,7 @@ export function TerminalWorkspace({
             <div className="mt-1 max-w-md text-xs leading-5 text-slate-600">
               {enabled
                 ? listenersReady
-                  ? "Start a real PowerShell/bash PTY. Each tab is isolated and supports resize, Ctrl+C and direct interactive input."
+                  ? "Start your system's interactive shell in VirtualLab (PowerShell/CMD on Windows, your configured shell on macOS/Linux). Supports resize, Ctrl+C and direct input."
                   : "Connecting native terminal events…"
                 : "Native PTY execution is available in the Tauri desktop runtime. The web build remains a safe UI preview."}
             </div>
@@ -294,7 +294,10 @@ export function TerminalWorkspace({
               id={session.id}
               active={session.id === activeId}
               visible={visible}
-              enabled={enabled && session.status === "running"}
+              // ConPTY can request cursor position (CSI 6n) before the spawn
+              // acknowledgement. xterm must be able to answer CSI 1;1R while
+              // the session is still 'starting', or PowerShell stalls.
+              enabled={enabled && (session.status === "starting" || session.status === "running")}
               onAttach={handleAttach}
               onDetach={handleDetach}
               onInputError={reportInputError}
@@ -344,9 +347,9 @@ function TerminalSurface({
   activeRef.current = active;
   visibleRef.current = visible;
 
-  useEffect(() => {
-    enabledRef.current = enabled;
-  }, [enabled]);
+  // Update synchronously with render: a native DSR request may arrive
+  // before an effect would run when the shell enters "starting".
+  enabledRef.current = enabled;
 
   useEffect(() => {
     if (!host.current) return;
