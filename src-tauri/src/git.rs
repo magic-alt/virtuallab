@@ -1493,7 +1493,9 @@ pub enum WorktreeRemovalResult {
     Removed,
     NeedsForce {
         state: WorktreeRemovalState,
+        #[serde(rename = "trackedCount")]
         tracked_count: usize,
+        #[serde(rename = "untrackedCount")]
         untracked_count: usize,
     },
 }
