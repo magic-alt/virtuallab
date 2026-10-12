@@ -31,6 +31,15 @@ export function formatStep(step: BuildStep): string {
   return [step.program, ...step.args].join(" ");
 }
 
+/** The native updater accepts only this structured, single-step recipe. */
+export function isTauriDesktopBuild(steps: BuildStep[]): boolean {
+  return steps.length === 1
+    && ["npm", "npm.cmd"].includes(steps[0].program.trim().toLowerCase())
+    && steps[0].args.length === 2
+    && steps[0].args[0] === "run"
+    && steps[0].args[1] === "tauri:build";
+}
+
 /** Explicitly distinguish a Tauri desktop build from a frontend-only npm build. */
 export function suggestionActionLabel(suggestion: BuildSuggestion): string {
   if (suggestion.id === "npm-tauri-package") return "Build desktop app";
