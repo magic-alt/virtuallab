@@ -109,6 +109,7 @@ describe("GithubPanel", () => {
 
     expect(await screen.findByText(/#7 Review lane/)).toBeInTheDocument();
     expect(screen.getByText("src/a.ts")).toBeInTheDocument();
+    expect(screen.getByLabelText("PR CI checks")).toHaveClass("max-h-64", "overflow-y-auto");
     expect(screen.getByText("HEAD match")).toBeInTheDocument();
     expect(
       useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey("D:/repo")]

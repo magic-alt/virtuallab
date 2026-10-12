@@ -136,6 +136,8 @@ One-step recipes normally retain the existing `process_spawn` route. Multi-step 
 
 **Packaging is not deployment:** inferred Tauri package recipes build files but do not install/publish. Deployment is a *manually authored* profile and requires a Tauri-native confirmation every time. Because user scripts and executables can perform arbitrary writes, confirmation is only an explicit interaction gate, not a sandbox or hardware authority. Build suggestions do not trigger SDK installation, firmware flashing, motion, power or publication. No other repository is referenced by this feature.
 
+**Desktop scroll ownership:** The shell and workspace stage use a shrinkable `min-height: 0` flex chain. The Run tab's `WorkspaceContent` viewport prevents outer overflow at `xl` widths, while `ProcessRunner` uses an explicitly bounded `minmax(0,1fr)` grid row. Its workflow card column and log `pre` own independent vertical scrolling; the output remains bounded as events append. Below `xl`, cards stack inside a naturally scrolling workspace but the output panel has a separate fixed viewport-height cap. Manual scrolling away from the log tail disables auto-follow until the operator selects `Latest output` or a different run. Other tabs preserve their existing scroll contracts (terminal scrollback, review editor, GitHub lists and agent timeline) rather than being globally clipped.
+
 The workflow UI output ring and process lifetime are ephemeral; worktree/profile settings are persisted locally, not in Git. Restart reconciliation, durable run/evidence history and full process-tree cleanup remain separate V0.6–V0.8 acceptance items. See [project build workflows](PROJECT_BUILD_WORKFLOWS.md).
 
 ## V0.2 persisted workspace context

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProcessRunner } from "./ProcessRunner";
@@ -55,6 +55,44 @@ describe("ProcessRunner controls", () => {
         },
       ],
     });
+  });
+
+  it("keeps long build logs within the pane and does not move the whole workspace", async () => {
+    const outputText = Array.from({ length: 1200 }, (_, i) => `compiler diagnostic line ${i}`).join("\n");
+    backend.listRuns.mockResolvedValueOnce([{
+      id: "long-build", cwd: "D:/workspace", label: "Large build",
+      isWorkflow: false, status: "running", output: outputText,
+      exitCode: null, stepName: null, revision: 1,
+    }]);
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+
+    expect(screen.getByTestId("run-layout")).toHaveClass(
+      "xl:h-full", "xl:min-h-0", "xl:grid-rows-[minmax(0,1fr)]",
+    );
+    expect(screen.getByTestId("run-workflows-scroll")).toHaveClass(
+      "xl:overflow-y-auto", "xl:min-h-0",
+    );
+    expect(screen.getByTestId("run-output-panel")).toHaveClass(
+      "overflow-hidden", "xl:h-full", "xl:min-h-0",
+    );
+
+    const log = screen.getByRole("log", { name: "Build / package output" }) as HTMLPreElement;
+    expect(log).toHaveClass("min-h-0", "flex-1", "overflow-y-auto", "overscroll-contain");
+    expect(log).toHaveAttribute("tabindex", "0");
+    await waitFor(() => expect(log.textContent).toContain("compiler diagnostic line 1199"));
+
+    // Scrolling up pauses follow-tail instead of snapping back to the bottom.
+    Object.defineProperty(log, "scrollHeight", { configurable: true, value: 10_000 });
+    Object.defineProperty(log, "clientHeight", { configurable: true, value: 400 });
+    log.scrollTop = 100;
+    fireEvent.scroll(log);
+    expect(screen.getByRole("button", { name: "Latest output" })).toBeInTheDocument();
+    expect(log.scrollTop).toBe(100);
+
+    await user.click(screen.getByRole("button", { name: "Latest output" }));
+    expect(log.scrollTop).toBe(10_000);
+    expect(screen.queryByRole("button", { name: "Latest output" })).not.toBeInTheDocument();
   });
 
   it("runs and stops a structured profile", async () => {

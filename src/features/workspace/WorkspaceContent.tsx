@@ -108,7 +108,18 @@ export function WorkspaceContent({
         })}
       </nav>
 
-      <main className="vl-main scrollbar-thin min-h-0 min-w-0 flex-1 surface-grid overflow-x-auto overflow-y-auto p-3 sm:p-5">
+      <main
+        data-testid="workspace-main"
+        className={cn(
+          "vl-main scrollbar-thin min-h-0 min-w-0 flex-1 surface-grid p-3 sm:p-5",
+          // The Run page owns its live-log and workflow-list scrollbars on
+          // desktop. On narrower screens, the stacked cards can scroll here,
+          // but the log panel itself must still have a fixed height.
+          tab === "run"
+            ? "overflow-x-hidden overflow-y-auto xl:overflow-hidden"
+            : "overflow-x-auto overflow-y-auto",
+        )}
+      >
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && (
           <ChangesReview
