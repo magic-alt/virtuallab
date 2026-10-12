@@ -120,7 +120,7 @@ Interactive terminals and build/test processes are separate execution paths:
 
 - **Terminal:** true PTY, interactive input, resize and Ctrl+C. Intended for human-driven shells and future agent harnesses.
 - **Process profile:** structured executable + argument vector + working directory. Intended for repeatable build/test/check commands; it does not accept a shell command string.
-- **Worktree mutation:** branch validation plus clean-only worktree removal. Primary worktree removal is refused.
+- **Worktree mutation:** branch validation and explicit native confirmation precede ordinary worktree removal. A dirty registered non-primary worktree returns a typed `needsForce` preflight instead of being deleted. A separate irreversible-loss native confirmation is required before a single `git worktree remove --force`; Rust revalidates registered path, primary exclusion, full HEAD, checked-out branch and a SHA-256 digest of NUL-delimited status entries against the preflight snapshot. Stale previews and direct force calls without a matching snapshot fail closed; a locked worktree is not bypassed (never supply a second `--force`). Removing a worktree never deletes its Git branch. Ignored/generated files inside the directory can also be lost.
 - **Filesystem watcher:** emits debounced UI refresh signals while ignoring generated-heavy directories such as `.git`, `node_modules`, `target` and `dist`.
 
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
