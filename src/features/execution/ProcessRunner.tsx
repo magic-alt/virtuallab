@@ -416,7 +416,7 @@ export function ProcessRunner({
                 <p className="mb-0 mt-2 text-[11px] leading-5 text-slate-500">{suggestion.description}</p>
                 {suggestion.id === "npm-tauri-package" && (
                   <p className="mb-0 mt-1 text-[11px] leading-5 text-orange-200/80">
-                    When building the running app on Windows, an isolated build and a confirmed restart prevent EXE file locking.
+                    When rebuilding the running app on Windows, only the EXE is built (--no-bundle; no WiX/MSI); a confirmed restart prevents file locking.
                   </p>
                 )}
                 <div className="mono mt-2 break-all text-[10px] text-slate-600">
