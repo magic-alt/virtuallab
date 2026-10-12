@@ -101,6 +101,8 @@ export interface BuildSuggestion {
 
 export interface BuildWorkflowSpec {
   presentation?: { profileId: string; profileName: string; profileKind: ProcessProfileKind };
+  /** Native-validated, opt-in Windows self-build handoff. Never used by other projects. */
+  restartAfterBuild?: boolean;
   id: string;
   cwd: string;
   steps: BuildStep[];
