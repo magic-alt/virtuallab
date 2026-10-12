@@ -102,6 +102,8 @@ export function ProcessRunner({
   // undefined closes the editor, null opens a new empty profile.
   const [editorProfile, setEditorProfile] = useState<ProcessProfile | null | undefined>(undefined);
   const outputRef = useRef<HTMLPreElement | null>(null);
+  const followOutputRef = useRef(true);
+  const [followOutput, setFollowOutput] = useState(true);
   const pendingOutputRef = useRef(new Map<string, string>());
   const sanitizerRef = useRef(new Map<string, BuildLogSanitizer>());
   const outputFlushTimerRef = useRef<number | undefined>(undefined);
@@ -297,8 +299,32 @@ export function ProcessRunner({
   }, [cwd, enabled]);
 
   useEffect(() => {
-    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    // Do not jump away from previous diagnostics if the operator scrolled up.
+    // Live updates follow the tail only while the log is already near it.
+    if (followOutputRef.current && outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
   }, [runs, activeRunId]);
+
+  const jumpToLatest = () => {
+    followOutputRef.current = true;
+    setFollowOutput(true);
+    if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
+  };
+
+  const selectRun = (id: string) => {
+    // Different run history entries start at their latest output.
+    jumpToLatest();
+    setActiveRunId(id);
+  };
+
+  const onOutputScroll = (element: HTMLPreElement) => {
+    const atEnd = element.scrollHeight - element.scrollTop - element.clientHeight <= 48;
+    if (followOutputRef.current !== atEnd) {
+      followOutputRef.current = atEnd;
+      setFollowOutput(atEnd);
+    }
+  };
 
   const activeRun = useMemo(
     () => runs.find((item) => item.id === activeRunId) ?? runs.at(-1) ?? null,
@@ -340,7 +366,7 @@ export function ProcessRunner({
           }),
         },
       ]);
-      setActiveRunId(id);
+      selectRun(id);
       try {
         if (isWorkflow) {
           await buildWorkflowStart({ id, cwd, steps, restartAfterBuild, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
@@ -380,8 +406,11 @@ export function ProcessRunner({
   };
 
   return (
-    <div className="mx-auto grid min-w-0 max-w-[1320px] grid-cols-1 gap-4 xl:grid-cols-[minmax(290px,380px)_minmax(0,1fr)]">
-      <div className="min-w-0 space-y-4">
+    <div
+      data-testid="run-layout"
+      className="mx-auto grid w-full min-w-0 max-w-[1320px] grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[minmax(290px,380px)_minmax(0,1fr)]"
+    >
+      <div data-testid="run-workflows-scroll" className="scrollbar-thin min-w-0 space-y-4 xl:min-h-0 xl:overflow-y-auto xl:overscroll-contain xl:pr-2">
         <section className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[#0d0b08]/95">
           <div className="flex items-start justify-between gap-2 border-b border-white/[0.06] px-4 py-3">
             <div>
@@ -524,18 +553,26 @@ export function ProcessRunner({
         </section>
       </div>
 
-      <section className="vl-editor-surface flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07]">
+      <section
+        data-testid="run-output-panel"
+        className="vl-editor-surface flex h-[min(65dvh,640px)] min-h-[320px] min-w-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] xl:h-full xl:min-h-0"
+      >
         <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2">
           <div className="text-xs font-medium text-slate-300">Build / package output</div>
           <div className="flex min-w-0 items-center gap-2">
             {runs.length > 1 && (
               <select aria-label="Run history" className="field max-w-40 py-1 text-xs"
                 value={activeRunId ?? activeRun?.id ?? ""}
-                onChange={(event) => setActiveRunId(event.target.value)}>
+                onChange={(event) => selectRun(event.target.value)}>
                 {runs.map((run) => <option key={run.id} value={run.id}>{run.profileName}</option>)}
               </select>
             )}
             {activeRun && <RunStatus run={activeRun} />}
+            {!followOutput && (
+              <Button size="sm" variant="ghost" onClick={jumpToLatest}>
+                Latest output
+              </Button>
+            )}
             {activeRun && (activeRun.status === "running" || activeRun.status === "stopping")
               && !scopedProfiles.some((profile) => profile.id === activeRun.profileId) && (
                 <Button size="sm" variant="outline" onClick={() => void stopRun(activeRun)}>
@@ -544,19 +581,26 @@ export function ProcessRunner({
               )}
           </div>
         </div>
-        {actionError && <div role="alert" className="border-b border-rose-400/15 px-4 py-2 text-xs text-rose-300">{actionError}</div>}
+        {actionError && <div role="alert" className="shrink-0 border-b border-rose-400/15 px-4 py-2 text-xs text-rose-300">{actionError}</div>}
         {activeRun?.stepName && (activeRun.status === "running" || activeRun.status === "stopping") && (
-          <div className="border-b border-white/[0.05] px-4 py-1.5 text-[11px] text-orange-300">
+          <div className="shrink-0 border-b border-white/[0.05] px-4 py-1.5 text-[11px] text-orange-300">
             Current step: {activeRun.stepName}
           </div>
         )}
-        <pre className="mono scrollbar-thin min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-[11px] leading-5 text-slate-400"
-          ref={outputRef}>
+        <pre
+          role="log"
+          aria-label="Build / package output"
+          aria-live="off"
+          tabIndex={0}
+          className="mono scrollbar-thin min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain whitespace-pre-wrap break-words p-4 text-[11px] leading-5 text-slate-400"
+          ref={outputRef}
+          onScroll={(event) => onOutputScroll(event.currentTarget)}
+        >
           {activeRun?.output ?? (enabled
             ? "Choose an auto-detected build or a saved workflow. Output, exit code and stop controls appear here."
             : "Process execution is available in the Tauri desktop runtime.")}
         </pre>
-        <div className="mono truncate border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600" title={cwd}>
+        <div className="mono shrink-0 truncate border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600" title={cwd}>
           worktree cwd: {cwd}
         </div>
       </section>
