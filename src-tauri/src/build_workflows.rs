@@ -127,7 +127,9 @@ fn is_tauri_desktop_build(steps: &[BuildStep]) -> bool {
     steps.len() == 1
         && (steps[0].program.trim().eq_ignore_ascii_case("npm")
             || steps[0].program.trim().eq_ignore_ascii_case("npm.cmd"))
-        && steps[0].args == ["run", "tauri:build"]
+        && steps[0].args.len() == 2
+        && steps[0].args[0] == "run"
+        && steps[0].args[1] == "tauri:build"
 }
 
 #[tauri::command]
