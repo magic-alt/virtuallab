@@ -523,7 +523,7 @@ export function WorkbenchShell() {
           onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
         />
 
-        <section className="vl-stage flex min-w-0 flex-1 flex-col">
+        <section className="vl-stage flex min-h-0 min-w-0 flex-1 flex-col">
           <WorkspaceHeader
             snapshot={snapshot}
             isPreview={isPreview}
