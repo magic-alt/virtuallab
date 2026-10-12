@@ -159,7 +159,7 @@ History 只展示近期 commit，Overview 展示 workspace 拓扑与 readiness�
 
 运行方式包括 Build now / Package now，或者保存为自定义 Build/Test/Package/Deploy profile。多步骤 workflow 按顺序运行，**任何一步失败即停止**；通过结构化 program、args 和 cwd 执行，不拼接任意 Shell 字符串。自定义 profile 绑定仓库，保存在本机而不是 Git 中。
 
-**Windows 下在 VirtualLab 内编译 VirtualLab 自身：** 选择 VirtualLab 的 worktree，执行 **Tauri · Desktop build → Build desktop app**。程序会识别当前运行的应用，弹出 **Build and restart** 确认。确认后使用独立的 `src-tauri/target/self-build-stage/` 目录编译，避免运行中的 EXE 被 Windows 锁定而报 `os error 5`。构建成功才会关闭当前窗口，并在旧进程退出后启动新版；构建失败、取消或重启辅助程序启动失败均不关闭现有窗口。仅当旧 EXE 就在当前 worktree 的 `src-tauri/target/release/` 内时才替换该文件并保留旧版备份；通过安装器安装的程序或调试版不会被原地覆盖，只会启动临时构建产物，安装版本需要另外运行 NSIS/MSI 安装器升级。这一流程只针对当前应用，不会因为编译其他 Tauri 仓库而关闭 VirtualLab。首次使用前需先安装/启动包含此修复的 VirtualLab 版本。
+**Windows 下在 VirtualLab 内编译 VirtualLab 自身：** 选择 VirtualLab 的 worktree，执行 **Tauri · Desktop build → Build desktop app**。程序会识别当前运行的应用，弹出 **Build and restart** 确认。确认后使用独立的 `src-tauri/target/self-build-stage/` 目录编译，避免运行中的 EXE 被 Windows 锁定而报 `os error 5`。构建成功才会关闭当前窗口，并在旧进程退出后启动新版；构建失败、取消或重启辅助程序启动失败均不关闭现有窗口。仅当旧 EXE 就在当前 worktree 的 `src-tauri/target/release/` 内时才替换该文件并保留旧版备份；通过安装器安装的程序或调试版不会被原地覆盖，新版会从轮换的 `src-tauri/target/self-build-runtimes/a` 或 `b` 目录启动，确保下一次编译仍不会锁住 Cargo 的输出 EXE；安装版本需要另外运行 NSIS/MSI 安装器升级。这一流程只针对当前应用，不会因为编译其他 Tauri 仓库而关闭 VirtualLab。首次使用前需先安装/启动包含此修复的 VirtualLab 版本。
 
 ### 案例 A · npm
 
