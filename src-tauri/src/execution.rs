@@ -756,32 +756,46 @@ mod tests {
 
         let marker = "VIRTUALLAB_CONPTY_ROUNDTRIP";
         let output_line = format!("\n{marker}\r").into_bytes();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&received);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut received = Vec::new();
             let mut chunk = [0u8; 4096];
             loop {
-                match reader.read(&mut chunk) {
+                let size = match reader.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
-                    Ok(size) => received.extend_from_slice(&chunk[..size]),
-                }
+                    Ok(size) => size,
+                };
+                let mut output = captured.lock().unwrap();
+                output.extend_from_slice(&chunk[..size]);
                 // The echoed command contains "echo <marker>", but this
                 // sequence only occurs for actual command output.
-                if received.windows(output_line.len()).any(|s| s == output_line) {
+                if output.windows(output_line.len()).any(|s| s == output_line) {
                     let _ = tx.send(true);
                     return;
                 }
-                if received.len() > 128 * 1024 { break; }
+                if output.len() > 128 * 1024 { break; }
             }
             let _ = tx.send(false);
         });
-        let sent = writer.write_all(format!("echo {marker}\r\n").as_bytes())
+        // Xterm sends one carriage return for Enter (not CRLF).
+        let sent = writer.write_all(format!("echo {marker}\r").as_bytes())
             .and_then(|_| writer.flush());
         let observed = if sent.is_ok() {
-            rx.recv_timeout(Duration::from_secs(20)).unwrap_or(false)
+            rx.recv_timeout(Duration::from_secs(12)).unwrap_or(false)
         } else {
             false
         };
+        if !observed {
+            let bytes = received.lock().unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            eprintln!(
+                "ConPTY diagnostic: wrote={sent:?}, child={:?}, output_bytes={}, sample={:?}",
+                child.try_wait(),
+                bytes.len(),
+                text.chars().take(1024).collect::<String>(),
+            );
+        }
         let _ = child.kill();
         let _ = child.wait();
         assert!(sent.is_ok() && observed, "Windows ConPTY shell did not echo the command result");
