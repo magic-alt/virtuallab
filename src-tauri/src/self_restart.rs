@@ -5,7 +5,7 @@
 //! Installed/debug builds relaunch from alternating runtime copies so the
 //! staged Cargo executable is unlocked for subsequent self-builds.
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 const STAGING_DIR: &str = "self-build-stage";
 const HELPER_FLAG: &str = "--virtuallab-apply-self-build";
