@@ -18,13 +18,15 @@ import { Button } from "@/components/ui/Button";
 import {
   buildWorkflowCancel,
   buildWorkflowDiscover,
+  buildWorkflowSelfUpdateAvailable,
   buildWorkflowStart,
   confirmDeploymentWorkflow,
+  confirmSelfBuildRestart,
   listRuns,
   processSpawn,
   processStop,
 } from "@/lib/backend";
-import { formatStep, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
+import { formatStep, isTauriDesktopBuild, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
 import { BuildLogSanitizer } from "@/lib/buildLogSanitizer";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { processCheckResult } from "@/lib/checks";
@@ -315,8 +317,11 @@ export function ProcessRunner({
         const approved = await confirmDeploymentWorkflow(profile.name, steps);
         if (!approved) return;
       }
+      const restartAfterBuild = isTauriDesktopBuild(steps)
+        && await buildWorkflowSelfUpdateAvailable(cwd);
+      if (restartAfterBuild && !(await confirmSelfBuildRestart())) return;
       const id = nextId("run");
-      const isWorkflow = steps.length > 1;
+      const isWorkflow = steps.length > 1 || restartAfterBuild;
       setRuns((items) => [
         ...items.slice(-19),
         {
@@ -338,7 +343,7 @@ export function ProcessRunner({
       setActiveRunId(id);
       try {
         if (isWorkflow) {
-          await buildWorkflowStart({ id, cwd, steps, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
+          await buildWorkflowStart({ id, cwd, steps, restartAfterBuild, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
         } else {
           await processSpawn({ id, cwd, program: steps[0].program, args: steps[0].args, presentation: { profileId: profile.id, profileName: profile.name, profileKind: profile.kind } });
         }
@@ -409,6 +414,11 @@ export function ProcessRunner({
                   <Badge tone="neutral">{suggestion.tool}</Badge>
                 </div>
                 <p className="mb-0 mt-2 text-[11px] leading-5 text-slate-500">{suggestion.description}</p>
+                {suggestion.id === "npm-tauri-package" && (
+                  <p className="mb-0 mt-1 text-[11px] leading-5 text-orange-200/80">
+                    When building the running app on Windows, an isolated build and a confirmed restart prevent EXE file locking.
+                  </p>
+                )}
                 <div className="mono mt-2 break-all text-[10px] text-slate-600">
                   {suggestion.steps.map(formatStep).join(" → ")}
                 </div>

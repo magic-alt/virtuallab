@@ -13,6 +13,7 @@ mod agent_ownership;
 mod agent_cli;
 mod execution;
 mod build_workflows;
+mod self_restart;
 mod hardware;
 mod verification;
 mod git;
@@ -27,7 +28,7 @@ use agent::{
 };
 use agent_ownership::AgentOwnership;
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
-use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_start, BuildWorkflowManager};
+use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
 use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
@@ -36,6 +37,8 @@ use git::{create_worktree, git_delete_local_branch, git_delete_origin_branch, gi
 use github::{github_capabilities, github_context, github_list_pull_requests, github_merge_pull_request, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
 use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
+
+pub use self_restart::maybe_handle_helper;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -74,6 +77,7 @@ pub fn run() {
             process_spawn,
             process_stop,
             build_workflow_discover,
+            build_workflow_self_update_available,
             build_workflow_start,
             build_workflow_cancel,
             watch_start,

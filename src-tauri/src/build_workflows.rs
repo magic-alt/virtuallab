@@ -2,6 +2,7 @@
 //! Only explicitly requested user actions start processes. Presets never flash,
 //! publish, or deploy, and the executor never interprets a shell command string.
 use crate::execution::process_command;
+use crate::self_restart::{self, SelfBuildPlan};
 use crate::output_decode::Utf8StreamDecoder;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -53,6 +54,8 @@ pub struct BuildWorkflowSpec {
     id: String,
     cwd: String,
     steps: Vec<BuildStep>,
+    #[serde(default)]
+    restart_after_build: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +119,23 @@ pub fn build_workflow_discover(workspace_root: String) -> Result<Vec<BuildSugges
         return Err("Build workspace must be an existing directory".to_string());
     }
     Ok(discover(&root))
+}
+
+/// Only the exact, single-step built-in npm desktop recipe can trigger a
+/// self-restart. Arbitrary user-provided processes never close the workbench.
+fn is_tauri_desktop_build(steps: &[BuildStep]) -> bool {
+    steps.len() == 1
+        && (steps[0].program.trim().eq_ignore_ascii_case("npm")
+            || steps[0].program.trim().eq_ignore_ascii_case("npm.cmd"))
+        && steps[0].args.len() == 2
+        && steps[0].args[0] == "run"
+        && steps[0].args[1] == "tauri:build"
+}
+
+#[tauri::command]
+pub fn build_workflow_self_update_available(app: AppHandle, workspace_root: String) -> bool {
+    let Ok(root) = fs::canonicalize(workspace_root) else { return false };
+    self_restart::available(&app, &root)
 }
 
 fn step(name: &str, program: &str, args: &[&str]) -> BuildStep {
@@ -461,6 +481,14 @@ pub fn build_workflow_start(
     spec: BuildWorkflowSpec,
 ) -> Result<(), String> {
     let root = validate_spec(&spec)?;
+    let restart_plan = if spec.restart_after_build {
+        if !is_tauri_desktop_build(&spec.steps) {
+            return Err("Only npm run tauri:build may rebuild and restart the running app".into());
+        }
+        Some(self_restart::prepare(&app, &root)?)
+    } else {
+        None
+    };
     let run = Arc::new(ActiveBuild::default());
     let manager = state.inner().clone();
     {
@@ -481,7 +509,7 @@ pub fn build_workflow_start(
     let thread_manager = manager.clone();
     let task = thread::Builder::new()
         .name("virtuallab-build-workflow".into())
-        .spawn(move || execute_workflow(app, thread_manager, run, spec, root));
+        .spawn(move || execute_workflow(app, thread_manager, run, spec, root, restart_plan));
     if let Err(error) = task {
         if let Ok(mut active) = manager.active.lock() { active.remove(&id); }
         registry_app.state::<RunRegistry>().fail(&id, &error.to_string());
@@ -514,8 +542,19 @@ fn execute_workflow(
     active: Arc<ActiveBuild>,
     spec: BuildWorkflowSpec,
     root: PathBuf,
+    restart_plan: Option<SelfBuildPlan>,
 ) {
     emit(&app, BuildEvent::new("build.started", &spec.id));
+    if let Some(plan) = &restart_plan {
+        let mut notice = BuildEvent::new("build.output", &spec.id);
+        notice.stream = Some("system");
+        notice.data = Some(format!(
+            "[VirtualLab] Building the running app in isolated Cargo output: {}\n\
+             [VirtualLab] The current window will close only after the build succeeds and the restart helper starts.\n",
+            plan.target_dir.display()
+        ));
+        emit(&app, notice);
+    }
     let mut result = "passed";
     let mut exit_code = Some(0);
 
@@ -534,6 +573,9 @@ fn execute_workflow(
         let mut command = process_command(step.program.trim());
         command.args(&step.args).current_dir(&root)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if let Some(plan) = &restart_plan {
+            command.env("CARGO_TARGET_DIR", &plan.target_dir);
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -645,11 +687,40 @@ fn execute_workflow(
         result = "stopped";
         exit_code = None;
     }
+    let mut restart_scheduled = false;
+    if result == "passed" && !active.cancel.load(Ordering::SeqCst) {
+        if let Some(plan) = &restart_plan {
+            match self_restart::schedule(plan) {
+                Ok(()) => {
+                    restart_scheduled = true;
+                    let mut message = BuildEvent::new("build.output", &spec.id);
+                    message.stream = Some("system");
+                    message.data = Some("[VirtualLab] Build complete. Closing this window and launching the new desktop app.\n".into());
+                    emit(&app, message);
+                }
+                Err(error) => {
+                    // The binary may have built successfully, but a failed
+                    // handoff must never close the still-working application.
+                    result = "failed";
+                    exit_code = Some(-1);
+                    let mut message = BuildEvent::new("build.output", &spec.id);
+                    message.stream = Some("system");
+                    message.data = Some(format!("[VirtualLab] Automatic restart was not possible: {error}\n"));
+                    emit(&app, message);
+                }
+            }
+        }
+    }
     let mut finished = BuildEvent::new("build.finished", &spec.id);
     finished.result = Some(result);
     finished.exit_code = exit_code;
     emit(&app, finished);
     if let Ok(mut items) = manager.active.lock() { items.remove(&spec.id); }
+    if restart_scheduled {
+        // Allow the finished event to reach the UI before initiating exit.
+        thread::sleep(Duration::from_millis(180));
+        app.exit(0);
+    }
 }
 
 fn stream_output<R: Read + Send + 'static>(
@@ -825,9 +896,21 @@ mod tests {
     }
 
     #[test]
+    fn restart_requires_the_exact_tauri_packaging_command() {
+        assert!(is_tauri_desktop_build(&[step("Package", "npm", &["run", "tauri:build"])]));
+        assert!(is_tauri_desktop_build(&[step("Package", "npm.cmd", &["run", "tauri:build"])]));
+        assert!(!is_tauri_desktop_build(&[step("Package", "npm", &["run", "build"])]));
+        assert!(!is_tauri_desktop_build(&[step("Package", "node", &["-e", "process.exit(0)"])]));
+        assert!(!is_tauri_desktop_build(&[
+            step("Package", "npm", &["run", "tauri:build"]),
+            step("Run", "npm", &["run", "dev"]),
+        ]));
+    }
+
+    #[test]
     fn workflow_rejects_shell_strings_and_missing_steps() {
         let root = fixture();
-        let mut spec = BuildWorkflowSpec { presentation: None, id: "run".into(), cwd: root.to_string_lossy().to_string(), steps: vec![] };
+        let mut spec = BuildWorkflowSpec { presentation: None, id: "run".into(), cwd: root.to_string_lossy().to_string(), steps: vec![], restart_after_build: false };
         assert!(validate_spec(&spec).is_err());
         spec.steps.push(step("Compile", "cmake\nrm -rf /", &["--build", "build"]));
         assert!(validate_spec(&spec).is_err());
