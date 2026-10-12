@@ -730,6 +730,63 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_shell_accepts_commands_through_native_conpty() {
+        use std::sync::mpsc;
+        // This is a real ConPTY / portable-pty roundtrip, not a mocked UI
+        // listener. A broken Windows shell path must fail desktop CI.
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("Windows ConPTY must open");
+        let (shell, args) = default_shell();
+        let mut command = CommandBuilder::new(shell);
+        for arg in args {
+            command.arg(arg);
+        }
+        let mut reader = pair.master.try_clone_reader().expect("PTY reader");
+        let mut writer = pair.master.take_writer().expect("PTY writer");
+        let mut child = pair.slave.spawn_command(command).expect("default Windows shell must start");
+        drop(pair.slave);
+
+        let marker = "VIRTUALLAB_CONPTY_ROUNDTRIP";
+        let output_line = format!("\n{marker}\r").into_bytes();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut received = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(size) => received.extend_from_slice(&chunk[..size]),
+                }
+                // The echoed command contains "echo <marker>", but this
+                // sequence only occurs for actual command output.
+                if received.windows(output_line.len()).any(|s| s == output_line) {
+                    let _ = tx.send(true);
+                    return;
+                }
+                if received.len() > 128 * 1024 { break; }
+            }
+            let _ = tx.send(false);
+        });
+        let sent = writer.write_all(format!("echo {marker}\r\n").as_bytes())
+            .and_then(|_| writer.flush());
+        let observed = if sent.is_ok() {
+            rx.recv_timeout(Duration::from_secs(20)).unwrap_or(false)
+        } else {
+            false
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(sent.is_ok() && observed, "Windows ConPTY shell did not echo the command result");
+    }
+
     #[cfg(unix)]
     #[test]
     fn unix_shell_uses_valid_user_shell_then_installed_fallback() {
