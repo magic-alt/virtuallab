@@ -143,6 +143,32 @@ describe("TerminalWorkspace native PTY lifecycle", () => {
     );
   });
 
+  it("sends ConPTY cursor-position replies while the shell is starting", async () => {
+    let acknowledge: (() => void) | undefined;
+    backend.terminalSpawn.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    }));
+    const user = userEvent.setup();
+    render(<TerminalWorkspace cwd="D:/workspace" enabled />);
+    const id = await startTerminal(user);
+
+    expect(screen.getByRole("button", { name: /terminal 1/i }).querySelector("span"))
+      .toHaveClass("bg-amber-400");
+    // ConPTY asks CSI 6n before rendering the first PowerShell prompt.
+    act(() => {
+      events.callbacks["terminal://output"]({ payload: { id, data: [27, 91, 54, 110] } });
+      // xterm's parser emits this response via onData. The real parser is not
+      // emulated by this UI test, so drive the onData callback explicitly.
+      xterm.instances[0].onInput?.("\x1b[1;1R");
+    });
+    await waitFor(() =>
+      expect(backend.terminalWrite).toHaveBeenCalledWith(
+        id, new TextEncoder().encode("\x1b[1;1R"),
+      ),
+    );
+    await act(async () => { acknowledge?.(); });
+  });
+
   it("does not revive a process that exited before the spawn acknowledgement", async () => {
     let completeSpawn: (() => void) | undefined;
     backend.terminalSpawn.mockImplementationOnce(() => new Promise<void>((resolve) => {

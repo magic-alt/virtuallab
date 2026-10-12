@@ -734,8 +734,9 @@ mod tests {
     #[test]
     fn windows_default_shell_accepts_commands_through_native_conpty() {
         use std::sync::mpsc;
-        // This is a real ConPTY / portable-pty roundtrip, not a mocked UI
-        // listener. A broken Windows shell path must fail desktop CI.
+
+        // ConPTY waits for a cursor position report (DSR, CSI 6n) before it
+        // resumes shell I/O. This test acts as a minimal terminal emulator.
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -754,46 +755,52 @@ mod tests {
         let mut child = pair.slave.spawn_command(command).expect("default Windows shell must start");
         drop(pair.slave);
 
-        let marker = "VIRTUALLAB_CONPTY_ROUNDTRIP";
-        let output_line = format!("\n{marker}\r").into_bytes();
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let captured = Arc::clone(&received);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut chunk = [0u8; 4096];
             loop {
-                let size = match reader.read(&mut chunk) {
+                match reader.read(&mut chunk) {
                     Ok(0) | Err(_) => break,
-                    Ok(size) => size,
-                };
-                let mut output = captured.lock().unwrap();
-                output.extend_from_slice(&chunk[..size]);
-                // The echoed command contains "echo <marker>", but this
-                // sequence only occurs for actual command output.
-                if output.windows(output_line.len()).any(|s| s == output_line) {
-                    let _ = tx.send(true);
-                    return;
+                    Ok(size) => {
+                        if tx.send(chunk[..size].to_vec()).is_err() { break; }
+                    }
                 }
-                if output.len() > 128 * 1024 { break; }
             }
-            let _ = tx.send(false);
         });
-        // Xterm sends one carriage return for Enter (not CRLF).
-        let sent = writer.write_all(format!("echo {marker}\r").as_bytes())
+
+        let marker = b"VIRTUALLAB_CONPTY_ROUNDTRIP";
+        let sent = writer.write_all(b"echo VIRTUALLAB_CONPTY_ROUNDTRIP\r")
             .and_then(|_| writer.flush());
-        let observed = if sent.is_ok() {
-            rx.recv_timeout(Duration::from_secs(12)).unwrap_or(false)
-        } else {
-            false
-        };
+        let mut output = Vec::new();
+        let mut answered_dsr = 0usize;
+        let mut observed = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(18);
+        while sent.is_ok() && std::time::Instant::now() < deadline {
+            if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(250)) {
+                output.extend_from_slice(&chunk);
+                // The DSR escape sequence can cross a read boundary.
+                let requests = output.windows(4).filter(|s| *s == b"\x1b[6n").count();
+                while answered_dsr < requests {
+                    writer.write_all(b"\x1b[1;1R").expect("DSR response");
+                    writer.flush().expect("flush DSR response");
+                    answered_dsr += 1;
+                }
+
+                // Don't mistake the echoed command line for successful
+                // execution: its marker is preceded by "echo ".
+                observed = output.windows(marker.len()).enumerate().any(|(index, bytes)| {
+                    bytes == marker &&
+                        (index < 5 || &output[index - 5..index] != b"echo ")
+                });
+                if observed || output.len() > 128 * 1024 { break; }
+            }
+        }
         if !observed {
-            let bytes = received.lock().unwrap();
-            let text = String::from_utf8_lossy(&bytes);
             eprintln!(
-                "ConPTY diagnostic: wrote={sent:?}, child={:?}, output_bytes={}, sample={:?}",
+                "ConPTY diagnostic: wrote={sent:?}, child={:?}, replied_dsr={answered_dsr}, output_bytes={}, sample={:?}",
                 child.try_wait(),
-                bytes.len(),
-                text.chars().take(1024).collect::<String>(),
+                output.len(),
+                String::from_utf8_lossy(&output).chars().take(1500).collect::<String>(),
             );
         }
         let _ = child.kill();
