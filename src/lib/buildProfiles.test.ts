@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { formatStep, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "./buildProfiles";
+import { formatStep, isTauriDesktopBuild, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "./buildProfiles";
 
 describe("build profiles", () => {
+  it("matches only the exact structured Tauri package step for a self-build", () => {
+    const step = { name: "Package", program: "npm", args: ["run", "tauri:build"] };
+    expect(isTauriDesktopBuild([step])).toBe(true);
+    expect(isTauriDesktopBuild([{ ...step, program: "npm.cmd" }])).toBe(true);
+    expect(isTauriDesktopBuild([{ ...step, args: ["run", "build"] }])).toBe(false);
+    expect(isTauriDesktopBuild([step, step])).toBe(false);
+  });
+
   it("distinguishes full Tauri builds from web-only npm builds", () => {
     const base = { tool: "npm", description: "test", supported: true, steps: [] };
     expect(suggestionActionLabel({ ...base, id: "npm-tauri-package", name: "Tauri", kind: "package" }))
