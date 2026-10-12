@@ -276,7 +276,7 @@ export function TerminalWorkspace({
             <div className="mt-1 max-w-md text-xs leading-5 text-slate-600">
               {enabled
                 ? listenersReady
-                  ? "Start a real PowerShell/bash PTY. Each tab is isolated and supports resize, Ctrl+C and direct interactive input."
+                  ? "Start your system's interactive shell in VirtualLab (PowerShell/CMD on Windows, your configured shell on macOS/Linux). Supports resize, Ctrl+C and direct input."
                   : "Connecting native terminal events…"
                 : "Native PTY execution is available in the Tauri desktop runtime. The web build remains a safe UI preview."}
             </div>

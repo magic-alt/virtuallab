@@ -561,23 +561,55 @@ where
     })
 }
 
+/// Launch a native interactive shell *inside* the VirtualLab PTY. This is
+/// intentionally not an external terminal emulator such as wt.exe or Terminal.app:
+/// the existing xterm pane owns input, scrollback and session lifecycle.
 fn default_shell() -> (String, Vec<String>) {
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
-        if command_available("pwsh.exe") {
-            return ("pwsh.exe".to_string(), vec!["-NoLogo".to_string(), "-NoProfile".to_string()]);
+        // PowerShell 7 when installed, the inbox Windows PowerShell otherwise.
+        // Do not execute user profiles, which can block a terminal on startup.
+        for program in ["pwsh.exe", "powershell.exe"] {
+            if command_available(program) {
+                return (
+                    program.to_string(),
+                    vec!["-NoLogo".to_string(), "-NoProfile".to_string()],
+                );
+            }
         }
-        return (
-            "powershell.exe".to_string(),
-            vec!["-NoLogo".to_string(), "-NoProfile".to_string()],
-        );
+        // Minimal/stripped Windows installations still have their command
+        // processor. Prefer a valid OS-configured ComSpec to a hard-coded path.
+        let comspec = std::env::var_os("ComSpec")
+            .filter(|candidate| std::path::Path::new(candidate).is_file())
+            .map(|candidate| candidate.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "cmd.exe".to_string());
+        return (comspec, Vec::new());
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-        (shell, Vec::new())
+        let configured = std::env::var("SHELL").ok();
+        #[cfg(target_os = "macos")]
+        let fallbacks = ["/bin/zsh", "/bin/bash", "/bin/sh"];
+        #[cfg(not(target_os = "macos"))]
+        let fallbacks = ["/bin/bash", "/bin/sh"];
+        (select_unix_shell(configured.as_deref(), &fallbacks), Vec::new())
     }
+}
+
+/// Respect the OS user's configured login shell, and fall back to installed
+/// platform shells when GUI launches do not provide SHELL (e.g. via Finder).
+#[cfg(unix)]
+fn select_unix_shell(configured: Option<&str>, fallbacks: &[&str]) -> String {
+    configured
+        .into_iter()
+        .chain(fallbacks.iter().copied())
+        .find(|candidate| {
+            let path = std::path::Path::new(candidate);
+            path.is_absolute() && path.is_file()
+        })
+        .unwrap_or("/bin/sh")
+        .to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -689,8 +721,25 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_interactive_shell_skips_user_profiles() {
-        let (_, args) = default_shell();
-        assert_eq!(args, vec!["-NoLogo".to_string(), "-NoProfile".to_string()]);
+        let (shell, args) = default_shell();
+        if shell.to_ascii_lowercase().contains("powershell") || shell.eq_ignore_ascii_case("pwsh.exe") {
+            assert_eq!(args, vec!["-NoLogo".to_string(), "-NoProfile".to_string()]);
+        } else {
+            assert!(shell.to_ascii_lowercase().ends_with("cmd.exe"));
+            assert!(args.is_empty(), "cmd.exe should start as an interactive shell");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_shell_uses_valid_user_shell_then_installed_fallback() {
+        assert_eq!(select_unix_shell(Some("/bin/sh"), &["/bin/bash"]), "/bin/sh");
+        assert_eq!(select_unix_shell(Some(""), &["/bin/sh"]), "/bin/sh");
+        assert_eq!(select_unix_shell(Some("/unlikely/virtuallab/missing-shell"), &["/bin/sh"]), "/bin/sh");
+        assert_eq!(select_unix_shell(Some("sh -c echo unsafe"), &["/bin/sh"]), "/bin/sh");
+        let (shell, args) = default_shell();
+        assert!(std::path::Path::new(&shell).is_file(), "selected shell must exist: {shell}");
+        assert!(args.is_empty());
     }
 }
 
