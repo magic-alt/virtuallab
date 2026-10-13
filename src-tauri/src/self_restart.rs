@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
-const STAGING_DIR: &str = "self-build-stage";
+// v2 avoids reusing Tauri build-script caches containing empty core ACLs
+// generated when CARGO_TARGET_DIR had a Windows verbatim prefix.
+const STAGING_DIR: &str = "self-build-stage-v2";
 const HELPER_FLAG: &str = "--virtuallab-apply-self-build";
 
 pub(crate) struct SelfBuildPlan {
