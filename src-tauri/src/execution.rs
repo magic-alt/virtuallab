@@ -12,6 +12,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::run_registry::RunRegistry;
 
+#[cfg(all(test, windows))]
+#[path = "terminal_qualification.rs"]
+mod qualification;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TerminalOutput {
@@ -64,7 +68,7 @@ impl WorkbenchEvent {
 struct TerminalSession {
     #[cfg(unix)]
     process: crate::terminal_process::TerminalProcess,
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
     writer: Box<dyn Write + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
 }
@@ -82,6 +86,12 @@ impl TerminalSession {
             }
         }
         self.child.wait().map_err(|e| format!("Failed to reap terminal: {e}"))?;
+        // ConPTY retains the output pipe until its master is closed. Waiting
+        // for EOF while the reader and manager retain this session is a cycle.
+        // Close only after process cleanup succeeds; the reader drains output
+        // concurrently and can now finish and release the native reservation.
+        #[cfg(windows)]
+        self.master.take();
         Ok(())
     }
 }
@@ -202,14 +212,14 @@ fn terminal_spawn_blocking(
     let session = Arc::new(Mutex::new(TerminalSession {
         #[cfg(unix)]
         process,
-        master: pair.master, writer, child,
+        master: Some(pair.master), writer, child,
     }));
     let startup_cleanup = if cancelled { session.lock().map_err(|_| "Terminal session lock poisoned")?.terminate() } else { Ok(()) };
 
     sessions.insert(id.clone(), session.clone());
     drop(sessions);
 
-    #[cfg(unix)] {
+    {
         // A background job can hold the PTY open after the shell exits, so EOF
         // alone is insufficient. Never reap the leader in this monitor.
         let weak_session = Arc::downgrade(&session);
@@ -224,7 +234,11 @@ fn terminal_spawn_blocking(
                     .map(|pending| pending.get(&monitor_id).copied().unwrap_or(true)).unwrap_or(true);
                 let result = session.lock().map_err(|_| "Terminal session lock poisoned".to_string())
                     .and_then(|mut session| {
-                        if session.process.cleanup_due(stop_requested)? { session.terminate().map(|_| true) }
+                        #[cfg(unix)]
+                        let cleanup_due = session.process.cleanup_due(stop_requested)?;
+                        #[cfg(windows)]
+                        let cleanup_due = stop_requested || session.child.try_wait().map_err(|e| e.to_string())?.is_some();
+                        if cleanup_due { session.terminate().map(|_| true) }
                         else { Ok(false) }
                     });
                 match result {
@@ -310,6 +324,7 @@ pub fn terminal_write(
     let mut session = session
         .lock()
         .map_err(|_| "Terminal session lock poisoned".to_string())?;
+    if session.master.is_none() { return Err("Terminal is stopped".into()); }
     session
         .writer
         .write_all(&data)
@@ -333,6 +348,7 @@ pub fn terminal_resize(
         .map_err(|_| "Terminal session lock poisoned".to_string())?;
     session
         .master
+        .as_ref().ok_or("Terminal is stopped")?
         .resize(PtySize {
             rows: rows.max(2),
             cols: cols.max(2),
