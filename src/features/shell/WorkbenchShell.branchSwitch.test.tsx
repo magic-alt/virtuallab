@@ -22,6 +22,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@/lib/backend", () => ({
   confirmNativeAction: vi.fn().mockResolvedValue(true),
   isDesktopRuntime: () => true,
+  getAppBuildInfo: vi.fn().mockResolvedValue({
+    version: "0.5.0", gitCommit: "aaaaaaaaaaaa1111111111111111111111111111",
+    gitBranch: "build-source", gitDirty: false, builtAtUnixSeconds: 1791849600,
+    profile: "release",
+  }),
   inspectRepository: harness.inspect,
   gitSwitchBranch: harness.switchBranch,
   gitFetchOrigin: vi.fn(),

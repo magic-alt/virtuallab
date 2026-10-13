@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AppBuildInfo } from "@/types/appBuild";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
   BuildSuggestion,
@@ -13,6 +14,12 @@ import type {
 
 export function isDesktopRuntime() {
   return "__TAURI_INTERNALS__" in window;
+}
+
+/** Read compile-time application identity, independent of the selected repository. */
+export async function getAppBuildInfo(): Promise<AppBuildInfo> {
+  requireDesktop();
+  return invoke<AppBuildInfo>("app_build_info");
 }
 
 function requireDesktop() {

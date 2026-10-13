@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import appManifest from "../../../package.json";
+import { BuildIdentity } from "./BuildIdentity";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Command,
@@ -567,7 +567,7 @@ export function WorkbenchShell() {
               </span>
               <span className="min-w-0 truncate" title="workspace owns execution context">workspace owns execution context</span>
             </div>
-            <span className="mono shrink-0 text-orange-300/70">VirtualLab v{appManifest.version}</span>
+            <BuildIdentity />
           </footer>
         </section>
       </div>

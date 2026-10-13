@@ -19,6 +19,29 @@ active repository; it opens an overlay reader without changing the selected
 repository, worktree, tab, or persisted workspace state. A legacy persisted
 `guide` tab is normalized to `overview` while preserving its worktree path.
 
+## Application build identity
+
+`src-tauri/build.rs` embeds the application source commit, branch, dirty status
+and UTC build timestamp into the native executable. `AppBuildInfo` also exposes
+the native package version and Debug/Release mode through the read-only
+`app_build_info` command and its typed `src/lib/backend.ts` wrapper. The shell
+footer shows the short commit and dirty marker; its details panel shows the
+full record independently of the selected repository or workspace.
+
+Git runs only at compile time using fixed argument vectors and the application
+source root. Linked worktrees and detached HEAD builds are supported. Missing
+Git metadata remains unknown; source archives must not inherit a surrounding
+repository's identity. Dirty includes staged, unstaged and non-ignored untracked
+files; it means the commit alone cannot reproduce the compiled program. No
+file contents, credentials or runtime repository state enter this record.
+
+An intentionally absent Cargo rerun input refreshes the build script on every
+Cargo invocation, including incremental self-builds and builds after Git-only
+changes. This trades a native rebuild/relink for reliable provenance without
+recursively watching generated folders. Browser previews are explicitly labeled
+and do not claim native executable provenance. This record identifies a build;
+it does not query a remote or claim that the executable is the latest release.
+
 ## Layers
 
 ```text
