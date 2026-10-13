@@ -125,6 +125,8 @@ Interactive terminals and build/test processes are separate execution paths:
 
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
 
+Windows terminal lifetime also owns the ConPTY master. After confirmed process cleanup, Stop closes the master so the output reader can receive EOF and release the session reservation. A native monitor observes shell exit independently of EOF. The first ConPTY startup cursor query is consumed and answered at `(1,1)` by the native reader using a separately synchronized writer, so teardown does not depend on a mounted xterm or the session mutex; later application cursor queries continue to reach xterm. Input writes release the session mutex before pipe I/O. This follows the [ConPTY teardown requirement](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session#ending-the-pseudoconsole-session) to keep cursor replies and output draining serviceable during close.
+
 
 ## Project build workflow boundary
 

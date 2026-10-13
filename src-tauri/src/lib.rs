@@ -15,6 +15,8 @@ mod execution;
 mod build_workflows;
 mod self_restart;
 mod cargo_path;
+#[cfg(any(windows, test))]
+mod conpty_handshake;
 mod hardware;
 mod verification;
 mod git;
@@ -40,6 +42,12 @@ use watch::{watch_start, watch_stop, WatchManager};
 use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
 
 pub use self_restart::maybe_handle_helper;
+
+// A single expansion is required on macOS: the macro embeds an Info.plist
+// symbol that cannot be defined twice in the same test binary.
+fn desktop_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -98,7 +106,7 @@ pub fn run() {
             verification_cancel,
             verification_import_artifact,
         ])
-        .build(tauri::generate_context!())
+        .build(desktop_context())
         .expect("error while building VirtualLab")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
@@ -117,7 +125,7 @@ pub fn run() {
 mod desktop_acl_tests {
     #[test]
     fn generated_context_allows_main_window_event_subscriptions() {
-        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let mut context = super::desktop_context();
         let authority = context.runtime_authority_mut();
         for command in ["plugin:event|listen", "plugin:event|unlisten"] {
             assert!(authority.resolve_access(command, "main", "main", &tauri::ipc::Origin::Local).is_some(),
