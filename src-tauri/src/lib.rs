@@ -1,3 +1,7 @@
+mod app_build;
+#[cfg(test)]
+#[path = "../build_metadata_test.rs"]
+mod build_metadata_tests;
 mod bounded_lines;
 #[cfg(any(target_os = "macos", test))]
 mod cli_path;
@@ -63,6 +67,7 @@ pub fn run() {
         .manage(VerificationManager::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            app_build::app_build_info,
             inspect_repository,
             git_diff,
             git_switch_branch,

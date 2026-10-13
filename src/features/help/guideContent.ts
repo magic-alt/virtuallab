@@ -79,7 +79,7 @@ export const guidePages: GuidePage[] = [
           ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
           ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Fetch + prune、Pull、Refresh"],
           ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History", "在同一工作区切换任务（不包含文档入口）"],
-          ["底部状态栏", "本地执行边界与应用版本", "确认安装版本"],
+          ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
         ] },
       ] },
       { id: "tabs", title: "如何选择功能标签", blocks: [
