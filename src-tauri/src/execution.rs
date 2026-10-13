@@ -65,11 +65,37 @@ impl WorkbenchEvent {
     }
 }
 
+type TerminalWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+
+// The native reader services ConPTY's initial cursor query even when the UI is
+// unmounted or Stop holds the session lock. Each new terminal starts at (1,1).
+// Later application cursor queries still reach xterm with the original bytes.
+fn read_terminal_output(reader: &mut dyn Read, _writer: &TerminalWriter, mut emit: impl FnMut(&[u8])) -> std::io::Result<()> {
+    let mut buffer = [0u8; 8192];
+    #[cfg(windows)]
+    let mut startup_query = crate::conpty_handshake::StartupCursorQuery::default();
+    loop {
+        let size = reader.read(&mut buffer)?;
+        if size == 0 { return Ok(()); }
+        #[cfg(windows)] {
+            let (bytes, reply) = startup_query.push(&buffer[..size]);
+            if reply {
+                let mut writer = _writer.lock().map_err(|_| std::io::Error::other("Terminal writer lock poisoned"))?;
+                writer.write_all(b"\x1b[1;1R")?;
+                writer.flush()?;
+            }
+            if !bytes.is_empty() { emit(&bytes); }
+        }
+        #[cfg(not(windows))]
+        emit(&buffer[..size]);
+    }
+}
+
 struct TerminalSession {
     #[cfg(unix)]
     process: crate::terminal_process::TerminalProcess,
     master: Option<Box<dyn MasterPty + Send>>,
-    writer: Box<dyn Write + Send>,
+    writer: TerminalWriter,
     child: Box<dyn portable_pty::Child + Send + Sync>,
 }
 
@@ -193,6 +219,8 @@ fn terminal_spawn_blocking(
         .master
         .take_writer()
         .map_err(|error| format!("Failed to open PTY writer: {error}"))?;
+    let writer = Arc::new(Mutex::new(writer));
+    let reader_writer = writer.clone();
 
     let child = pair
         .slave
@@ -220,8 +248,9 @@ fn terminal_spawn_blocking(
     drop(sessions);
 
     {
-        // A background job can hold the PTY open after the shell exits, so EOF
-        // alone is insufficient. Never reap the leader in this monitor.
+        // EOF alone is insufficient while the master remains owned. Unix
+        // keeps the leader unreaped to pin the session identity; Windows uses
+        // the owned process handle and closes ConPTY after observed exit.
         let weak_session = Arc::downgrade(&session);
         let monitor_app = app.clone();
         let monitor_id = id.clone();
@@ -262,22 +291,11 @@ fn terminal_spawn_blocking(
     let app_for_reader = app.clone();
     let id_for_reader = id.clone();
     thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(read) => {
-                    let _ = app_for_reader.emit(
-                        "terminal://output",
-                        TerminalOutput {
-                            id: id_for_reader.clone(),
-                            data: buffer[..read].to_vec(),
-                        },
-                    );
-                }
-                Err(_) => break,
-            }
-        }
+        let _ = read_terminal_output(&mut *reader, &reader_writer, |bytes| {
+            let _ = app_for_reader.emit("terminal://output", TerminalOutput {
+                id: id_for_reader.clone(), data: bytes.to_vec(),
+            });
+        });
 
         let mut reported = false;
         loop {
@@ -321,16 +339,16 @@ pub fn terminal_write(
     data: Vec<u8>,
 ) -> Result<(), String> {
     let session = terminal_session(&state, &id)?;
-    let mut session = session
-        .lock()
-        .map_err(|_| "Terminal session lock poisoned".to_string())?;
-    if session.master.is_none() { return Err("Terminal is stopped".into()); }
-    session
-        .writer
+    let writer = {
+        let session = session.lock().map_err(|_| "Terminal session lock poisoned".to_string())?;
+        if session.master.is_none() { return Err("Terminal is stopped".into()); }
+        session.writer.clone()
+    };
+    let mut writer = writer.lock().map_err(|_| "Terminal writer lock poisoned".to_string())?;
+    writer
         .write_all(&data)
         .map_err(|error| format!("Failed to write terminal input: {error}"))?;
-    session
-        .writer
+    writer
         .flush()
         .map_err(|error| format!("Failed to flush terminal input: {error}"))
 }

@@ -3,14 +3,6 @@ use super::*;
 use std::sync::{atomic::{AtomicUsize, Ordering}, mpsc};
 use std::time::Instant;
 
-struct SharedWriter(Arc<Mutex<Box<dyn Write + Send>>>);
-impl Write for SharedWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().write(bytes)
-    }
-    fn flush(&mut self) -> std::io::Result<()> { self.0.lock().unwrap().flush() }
-}
-
 struct Fixture {
     session: TerminalSession,
     drained: mpsc::Receiver<()>,
@@ -19,6 +11,9 @@ struct Fixture {
 }
 impl Fixture {
     fn start(command: CommandBuilder) -> Self {
+        Self::start_delayed(command, Duration::ZERO)
+    }
+    fn start_delayed(command: CommandBuilder, delay: Duration) -> Self {
         let pair = native_pty_system().openpty(PtySize {
             rows: 24, cols: 80, pixel_width: 0, pixel_height: 0,
         }).unwrap();
@@ -33,33 +28,31 @@ impl Fixture {
         let marker_count = markers.clone();
         let reply = writer.clone();
         thread::spawn(move || {
-            let mut buffer = [0u8; 8192];
+            thread::sleep(delay);
             let mut tail = Vec::new();
-            let mut control_tail = Vec::new();
-            while let Ok(size) = reader.read(&mut buffer) {
-                if size == 0 { break; }
-                count.fetch_add(size, Ordering::Relaxed);
-                tail.extend_from_slice(&buffer[..size]);
+            // Exercise the production transport, including its native cursor
+            // reply. The fixture must not hide UI/session locking races.
+            let _ = read_terminal_output(&mut *reader, &reply, |chunk| {
+                count.fetch_add(chunk.len(), Ordering::Relaxed);
+                tail.extend_from_slice(chunk);
                 marker_count.fetch_add(tail.windows(b"VIRTUALLAB_SOAK_OK".len())
                     .filter(|part| *part == b"VIRTUALLAB_SOAK_OK").count(), Ordering::Relaxed);
-                control_tail.extend_from_slice(&buffer[..size]);
-                for _ in 0..control_tail.windows(4).filter(|part| *part == b"\x1b[6n").count() {
-                    let mut writer = reply.lock().unwrap();
-                    if writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush()).is_err() { break; }
-                }
-                let control_keep = control_tail.len().saturating_sub(3);
-                control_tail.drain(..control_keep);
                 let keep = tail.len().saturating_sub(b"VIRTUALLAB_SOAK_OK".len() - 1);
                 tail.drain(..keep);
-            }
+            });
             let _ = done.send(());
         });
         Self { session: TerminalSession { master: Some(pair.master),
-            writer: Box::new(SharedWriter(writer)), child }, drained, bytes, markers }
+            writer, child }, drained, bytes, markers }
     }
     fn stop(&mut self) {
         self.session.terminate().unwrap();
         self.drained.recv_timeout(Duration::from_secs(10)).expect("PTY reader must exit after stop");
+    }
+    fn send(&mut self, bytes: &[u8]) {
+        let mut writer = self.session.writer.lock().unwrap();
+        writer.write_all(bytes).unwrap();
+        writer.flush().unwrap();
     }
 }
 
@@ -98,13 +91,21 @@ fn run_native_soak(duration: Duration) {
         Fixture::start(command)
     }).collect();
     for terminal in &mut terminals {
-        terminal.session.writer.write_all(b"Write-Output ('VIRTUALLAB_'+'SOAK_OK')\r").unwrap();
-        terminal.session.writer.flush().unwrap();
+        terminal.send(b"Write-Output ('VIRTUALLAB_'+'SOAK_OK')\r");
     }
     let startup = Instant::now();
     while terminals.iter().any(|terminal| terminal.markers.load(Ordering::Relaxed) == 0) {
         assert!(startup.elapsed() < Duration::from_secs(25), "all eight real shells must execute the roundtrip");
         thread::sleep(Duration::from_millis(100));
+    }
+    for terminal in &terminals {
+        use windows_sys::Win32::{Foundation::FILETIME, System::Threading::GetProcessTimes};
+        let mut created: FILETIME = unsafe { std::mem::zeroed() };
+        let mut exited = created; let mut kernel = created; let mut user = created;
+        let handle = terminal.session.child.as_raw_handle().unwrap();
+        assert_ne!(unsafe { GetProcessTimes(handle as _, &mut created, &mut exited, &mut kernel, &mut user) }, 0);
+        let started = ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64;
+        println!("QUALIFICATION_SHELL pid={} filetime={started}", terminal.session.child.process_id().unwrap());
     }
     let registry = crate::run_registry::RunRegistry::default();
     let start = Instant::now();
@@ -140,8 +141,7 @@ fn run_native_soak(duration: Duration) {
                 rows: 24 + cycles % 8, cols: 80 + cycles % 16, pixel_width: 0, pixel_height: 0,
             }).unwrap();
             assert!(terminal.session.child.try_wait().unwrap().is_none());
-            terminal.session.writer.write_all(b"Write-Output ('VIRTUALLAB_'+'SOAK_OK')\r").unwrap();
-            terminal.session.writer.flush().unwrap();
+            terminal.send(b"Write-Output ('VIRTUALLAB_'+'SOAK_OK')\r");
         }
         cycles += 1;
         if cycles % 12 == 0 { println!("QUALIFICATION_SOAK elapsed_secs={} cycles={cycles}", start.elapsed().as_secs()); }
@@ -163,7 +163,7 @@ fn run_native_soak(duration: Duration) {
 
 #[test]
 #[ignore = "explicit native qualification smoke; opens eight real PowerShell terminals"]
-fn native_four_worktree_eight_terminal_smoke() { run_native_soak(Duration::from_secs(1)); }
+fn native_four_worktree_eight_terminal_smoke() { run_native_soak(Duration::from_secs(15)); }
 
 #[test]
 #[ignore = "explicit one-hour native qualification; never part of default CI"]
@@ -178,6 +178,17 @@ fn windows_terminal_stop_releases_pty_reader_without_dropping_session() {
     command.args(["-e", "setInterval(()=>{},1000)"]);
     let mut fixture = Fixture::start(command);
     fixture.stop();
+}
+
+#[test]
+fn windows_startup_cursor_reply_survives_stop_before_ui_attachment() {
+    let (shell, args) = default_shell();
+    let mut command = CommandBuilder::new(shell);
+    command.args(args);
+    let fixture = Mutex::new(Fixture::start_delayed(command, Duration::from_millis(250)));
+    let started = Instant::now();
+    fixture.lock().unwrap().stop();
+    assert!(started.elapsed() < Duration::from_secs(10));
 }
 
 #[test]

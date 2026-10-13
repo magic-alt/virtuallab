@@ -75,6 +75,8 @@ jobs:
       - run: npm ci
       - run: npm run icons:check
       - run: npm run acceptance:local
+      - name: Check qualification identity and completion evidence logic
+        run: powershell -NoProfile -File scripts/qualification-windows.tests.ps1
       # The application's Windows self-update compiles into a separate Cargo
       # directory, not the default target/release. PR #53 only tested the
       # latter, so it missed a capability-resolution failure in real self-builds.

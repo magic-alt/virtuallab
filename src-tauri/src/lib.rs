@@ -15,6 +15,8 @@ mod execution;
 mod build_workflows;
 mod self_restart;
 mod cargo_path;
+#[cfg(any(windows, test))]
+mod conpty_handshake;
 mod hardware;
 mod verification;
 mod git;
