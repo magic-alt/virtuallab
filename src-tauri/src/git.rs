@@ -1440,11 +1440,15 @@ pub struct WorkspaceMutationResult {
 
 #[tauri::command]
 pub async fn create_worktree(
+    app: tauri::AppHandle,
     repository_root: String,
     branch: String,
     base_ref: Option<String>,
     target_path: Option<String>,
 ) -> Result<WorkspaceMutationResult, String> {
+    use tauri::Manager;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&repository_root)?;
     tauri::async_runtime::spawn_blocking(move || {
         create_worktree_blocking(repository_root, branch, base_ref, target_path)
     })
@@ -1562,6 +1566,45 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
 /// Check live native owners even when the frontend has unmounted or lost a
 /// workspace view. This is a conservative preflight; the V0.7 scheduler will
 /// need a shared lifecycle reservation to close start-vs-delete races.
+/// Return the authoritative registered worktrees, including those located
+/// outside the repository directory (e.g. .worktrees siblings).
+fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
+    let main = git(root, &["rev-parse", "--show-toplevel"])?;
+    let inventory = parse_worktrees(&git(main.trim(), &["worktree", "list", "--porcelain"])?);
+    if inventory.is_empty() { return Err("Git reported no registered worktrees".into()); }
+    Ok(inventory.into_iter().map(|item| item.path).collect())
+}
+
+/// Native repository detach is two-phase: mark ALL registered paths as
+/// retiring atomically, verify that no native owners remain, then commit the
+/// detached reservation before the UI removes its repository record.
+#[tauri::command]
+pub async fn repository_detach(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = repository_registered_paths(&repository_root)?;
+        let mut retire = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+            .begin_retirement(&paths)?;
+        for path in &paths { ensure_worktree_not_executing(&app, path)?; }
+        retire.commit_detach()?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Repository detach task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn repository_restore(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
+    use tauri::Manager;
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = repository_registered_paths(&repository_root)?;
+        app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+            .restore_repository(&paths)
+    })
+    .await
+    .map_err(|e| format!("Repository restore task failed: {e}"))?
+}
+
 fn ensure_worktree_not_executing(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     use tauri::Manager;
     if app.state::<crate::agent::AgentManager>().owns_workspace(path)? ||
@@ -1588,6 +1631,11 @@ pub async fn remove_worktree(
     force: bool,
     expected_state: Option<WorktreeRemovalState>,
 ) -> Result<WorktreeRemovalResult, String> {
+    use tauri::Manager;
+    // Start/remove races are closed before the preflight; the guard spans the
+    // asynchronous Git mutation and releases on success, error or cancellation.
+    let _retire = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_retirement(&[worktree_path.clone()])?;
     ensure_worktree_not_executing(&app, &worktree_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         remove_worktree_blocking(repository_root, worktree_path, force, expected_state)
