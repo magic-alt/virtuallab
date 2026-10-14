@@ -71,4 +71,30 @@ describe("AgentWorkspace desktop control surface", () => {
     expect(screen.getByText(/Task running; activity appears below/)).toBeInTheDocument();
   });
 
+  it("stops a saved workspace runtime after the Agents pane is remounted", async () => {
+    const user = userEvent.setup();
+    const root = "C:/work/demo";
+    useAgentSessionStore.getState().setBinding({
+      workspaceRoot: root, harness: "codex", threadId: "persisted-thread",
+      createdAtMs: 1, updatedAtMs: 1,
+    });
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "agent_journal_recover") return {
+        workspaceId: "test", nativeSessionRegistered: true, retainedEvents: 0, turns: [],
+      };
+      if (command === "agent_journal_recent") return [];
+      if (command === "agent_session_stop") return;
+      throw new Error("Unexpected native command: " + command);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    render(<AgentWorkspace workspaceRoot={root} enabled />);
+    const stop = screen.getByRole("button", { name: "Stop runtime" });
+    expect(stop).toBeEnabled();
+    await user.click(stop);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "agent_session_stop", { workspaceRoot: root }, undefined,
+    ));
+  });
+
+
 });
