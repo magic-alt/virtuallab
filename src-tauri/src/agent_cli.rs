@@ -117,7 +117,7 @@ fn cli_command(harness: &str) -> Result<Command, String> {
     Ok(crate::execution::process_command(binary(harness)?))
 }
 fn emit(app: &AppHandle, kind: &str, binding: &CliBinding, turn: Option<&str>, payload: Option<Value>) {
-    let _ = app.emit("agent://event", CliEvent {
+    crate::agent_journal::emit_agent_event(app, Some(&binding.harness), CliEvent {
         event_type: kind.into(),
         workspace_root: binding.workspace_root.clone(),
         thread_id: Some(binding.thread_id.clone()),
