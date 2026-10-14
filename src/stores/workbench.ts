@@ -202,9 +202,10 @@ export const useWorkbenchStore = create<WorkbenchState>()(
           const reviewStates = Object.fromEntries(
             Object.entries(state.reviewStates).filter(([, item]) => {
               if (!removed) return true;
-              return !reviewWorkspaceKey(item.workspaceRoot).startsWith(
-                reviewWorkspaceKey(removed.path),
-              );
+              const root = reviewWorkspaceKey(removed.path);
+              const key = reviewWorkspaceKey(item.workspaceRoot);
+              // Sibling "project-v2" is not a child of "project".
+              return key !== root && !key.startsWith(root + "/");
             }),
           );
 
