@@ -12,6 +12,8 @@ const harness = vi.hoisted(() => ({
   stashChanges: vi.fn(),
   deleteOriginBranch: vi.fn(),
   removeWorktree: vi.fn(),
+  detachRepository: vi.fn(),
+  restoreRepository: vi.fn(),
   watchStart: vi.fn(),
   watchStop: vi.fn(),
 }));
