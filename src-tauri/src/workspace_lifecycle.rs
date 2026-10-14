@@ -21,6 +21,11 @@ fn identity(path: &str) -> String {
     crate::workspace_identity::key(path)
 }
 
+fn overlaps(a: &str, b: &str) -> bool {
+    crate::workspace_identity::contains_key(a, b)
+        || crate::workspace_identity::contains_key(b, a)
+}
+
 /// Blocks removal while an OS/process reservation is still being installed.
 pub struct StartupLease {
     state: Arc<Mutex<LifecycleState>>,
@@ -70,7 +75,8 @@ impl WorkspaceLifecycle {
     pub fn begin_start(&self, path: &str) -> Result<StartupLease, String> {
         let path = identity(path);
         let mut state = self.state.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
-        if state.retiring.contains(&path) || state.detached.contains(&path) {
+        if state.retiring.iter().any(|root| overlaps(root, &path))
+            || state.detached.iter().any(|root| crate::workspace_identity::contains_key(root, &path)) {
             return Err("Workspace is being removed or was detached. Re-add the repository before starting native work.".into());
         }
         *state.starting.entry(path.clone()).or_default() += 1;
@@ -84,10 +90,10 @@ impl WorkspaceLifecycle {
         paths.dedup();
         let mut state = self.state.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
         for path in &paths {
-            if state.retiring.contains(path) || state.detached.contains(path) {
+            if state.retiring.iter().any(|root| overlaps(root, path)) || state.detached.contains(path) {
                 return Err("Workspace is already being removed or detached".into());
             }
-            if state.starting.get(path).copied().unwrap_or(0) > 0 {
+            if state.starting.iter().any(|(root, count)| *count > 0 && overlaps(root, path)) {
                 return Err("Workspace has a native process startup in progress. Retry after it finishes.".into());
             }
         }
@@ -101,7 +107,7 @@ impl WorkspaceLifecycle {
         let mut state = self.state.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
         for path in roots {
             let key = identity(path);
-            if state.retiring.contains(&key) {
+            if state.retiring.iter().any(|root| overlaps(root, &key)) {
                 return Err("Cannot re-import a repository during an incomplete worktree removal".into());
             }
         }
@@ -113,6 +119,63 @@ impl WorkspaceLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retirement_worker_keeps_lease_after_waiter_cancellation() {
+        use std::{sync::mpsc, time::Duration};
+        let state = WorkspaceLifecycle::default();
+        let worker_state = state.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let waiter = tauri::async_runtime::spawn(async move {
+            tauri::async_runtime::spawn_blocking(move || {
+                let lease = worker_state.begin_retirement(&["/repo/worktree".into()]).unwrap();
+                started_tx.send(()).unwrap();
+                let _ = finish_rx.recv_timeout(Duration::from_secs(5));
+                drop(lease);
+                done_tx.send(()).unwrap();
+            }).await
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        waiter.abort();
+        assert!(tauri::async_runtime::block_on(waiter).is_err());
+        let blocked = state.begin_start("/repo/worktree/build").is_err();
+        finish_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(blocked, "Cancelling a waiter must not unlock a running worker");
+        assert!(state.begin_start("/repo/worktree/build").is_ok());
+    }
+
+    #[test]
+    fn descendant_startup_blocks_parent_retirement_without_blocking_siblings() {
+        let state = WorkspaceLifecycle::default();
+        let _start = state.begin_start("/repo/worktree/build/output").unwrap();
+        assert!(state.begin_retirement(&["/repo/worktree".into()]).is_err());
+        assert!(state.begin_retirement(&["/repo/worktree-other".into()]).is_ok());
+    }
+
+    #[test]
+    fn retirement_and_detach_block_descendant_starts_until_restore() {
+        let state = WorkspaceLifecycle::default();
+        let roots = vec!["/repo/worktree".into()];
+        let mut retirement = state.begin_retirement(&roots).unwrap();
+        assert!(state.begin_start("/repo/worktree/build").is_err());
+        assert!(state.begin_start("/repo/worktree-other/build").is_ok());
+        retirement.commit_detach().unwrap();
+        drop(retirement);
+        assert!(state.begin_start("/repo/worktree/build").is_err());
+        state.restore_repository(&roots).unwrap();
+        assert!(state.begin_start("/repo/worktree/build").is_ok());
+    }
+
+    #[test]
+    fn overlapping_retirements_cannot_release_each_others_reservation() {
+        let state = WorkspaceLifecycle::default();
+        let _retirement = state.begin_retirement(&["/repo/worktree/build".into()]).unwrap();
+        assert!(state.begin_retirement(&["/repo/worktree".into()]).is_err());
+        assert!(state.restore_repository(&["/repo/worktree".into()]).is_err());
+    }
 
     #[test]
     fn start_and_delete_reservations_are_mutually_exclusive() {

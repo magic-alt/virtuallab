@@ -153,7 +153,7 @@ pub async fn terminal_spawn(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>().begin_start(&cwd)?;
+    let start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>().begin_start(&cwd)?;
     let manager = state.inner().clone();
     {
         let mut pending = manager.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?;
@@ -165,6 +165,7 @@ pub async fn terminal_spawn(
     let cleanup = manager.clone();
     let cleanup_id = id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let _start = start;
         terminal_spawn_blocking(app, manager, id, cwd, cols, rows)
     }).await.map_err(|error| format!("Terminal startup task failed: {error}"))
         .and_then(|result| result);
@@ -960,10 +961,9 @@ impl TerminalManager {
             .keys().any(|id| !sessions.contains_key(id)) {
             return Ok(true);
         }
-        let key = crate::workspace_identity::key(path);
         for session in sessions.values() {
             let cwd = session.lock().map_err(|_| "Terminal session lock poisoned")?.cwd.clone();
-            if crate::workspace_identity::key(&cwd) == key { return Ok(true); }
+            if crate::workspace_identity::contains(path, &cwd) { return Ok(true); }
         }
         Ok(false)
     }

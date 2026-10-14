@@ -35,9 +35,8 @@ fn workspace_key(path: &str) -> String {
 impl RunRegistry {
     /// Fail closed while any software Run/Build workflow claims this worktree.
     pub fn has_active_workspace(&self, cwd: &str) -> Result<bool, String> {
-        let key = workspace_key(cwd);
         Ok(self.0.lock().map_err(|_| "Run registry lock poisoned")?.iter()
-            .any(|run| workspace_key(&run.cwd) == key
+            .any(|run| crate::workspace_identity::contains(cwd, &run.cwd)
                 && matches!(run.status.as_str(), "running" | "stopping")))
     }
     pub fn begin(&self, id: &str, cwd: &str, label: &str, workflow: bool, presentation: Option<RunPresentation>) -> Result<(), String> {
@@ -149,8 +148,9 @@ mod tests {
     #[test]
     fn worktree_removal_is_blocked_until_run_exit_is_observed() {
         let registry = RunRegistry::default();
-        registry.begin("test-run", "/workspace/repo", "Test", false, None).unwrap();
+        registry.begin("test-run", "/workspace/repo/build", "Test", false, None).unwrap();
         assert!(registry.has_active_workspace("/workspace/repo/").unwrap());
+        assert!(!registry.has_active_workspace("/workspace/rep").unwrap());
         assert!(!registry.has_active_workspace("/workspace/other").unwrap());
         registry.record(serde_json::json!({
             "id":"test-run","eventType":"process.stop_requested"

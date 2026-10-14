@@ -93,7 +93,8 @@ pub struct CliAgentManager {
 
 impl CliAgentManager {
     pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
-        Ok(self.sessions.lock().map_err(err_lock)?.contains_key(&key(path)))
+        Ok(self.sessions.lock().map_err(err_lock)?.keys()
+            .any(|root| crate::workspace_identity::contains(path, root)))
     }
 }
 fn key(root: &str) -> String {

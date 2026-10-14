@@ -140,9 +140,8 @@ impl VerificationManager {
     /// Verification writes evidence under its owning worktree: never delete it
     /// while a gate is still in progress or cancellation is pending.
     pub fn owns_workspace(&self, root: &str) -> Result<bool, String> {
-        let key = crate::workspace_identity::key(root);
         Ok(self.active.lock().map_err(lock_err)?.values().any(|run|
-            crate::workspace_identity::key(&run.workspace_root) == key))
+            crate::workspace_identity::contains(root, &run.workspace_root)))
     }
 }
 
@@ -582,7 +581,7 @@ mod tests {
         let manager = VerificationManager::default();
         let key = "fixture-verification".to_string();
         manager.active.lock().unwrap().insert(key.clone(), ActiveVerification {
-            workspace_root: "/repo/verification".into(),
+            workspace_root: "/repo/verification/build".into(),
             cancel: Arc::new(AtomicBool::new(false)),
         });
         assert!(manager.owns_workspace("/repo/verification/").unwrap());

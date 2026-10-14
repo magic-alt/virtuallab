@@ -1447,9 +1447,10 @@ pub async fn create_worktree(
     target_path: Option<String>,
 ) -> Result<WorkspaceMutationResult, String> {
     use tauri::Manager;
-    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
-        .begin_start(&repository_root)?;
+    let lifecycle = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // The worker owns the lease even if its awaiting command is dropped.
+        let _start = lifecycle.begin_start(&repository_root)?;
         create_worktree_blocking(repository_root, branch, base_ref, target_path)
     })
     .await
@@ -1563,9 +1564,6 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
     Ok((state, entries.len() - untracked_count, untracked_count))
 }
 
-/// Check live native owners even when the frontend has unmounted or lost a
-/// workspace view. This is a conservative preflight; the V0.7 scheduler will
-/// need a shared lifecycle reservation to close start-vs-delete races.
 /// Return the authoritative registered worktrees, including those located
 /// outside the repository directory (e.g. .worktrees siblings).
 fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
@@ -1575,6 +1573,24 @@ fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
     Ok(inventory.into_iter().map(|item| item.path).collect())
 }
 
+fn reserve_repository_retirement(
+    lifecycle: &crate::workspace_lifecycle::WorkspaceLifecycle,
+    mut inventory: impl FnMut() -> Result<Vec<String>, String>,
+) -> Result<(Vec<String>, crate::workspace_lifecycle::RetirementLease), String> {
+    let paths = inventory()?;
+    let lease = lifecycle.begin_retirement(&paths)?;
+    // Creation may have completed after the first read but before reservation.
+    // Once all old paths are reserved, in-app creation is excluded; validate
+    // the inventory again before checking owners or committing detach.
+    let identities = |paths: &[String]| -> std::collections::BTreeSet<String> {
+        paths.iter().map(|path| crate::workspace_identity::key(path)).collect()
+    };
+    if identities(&paths) != identities(&inventory()?) {
+        return Err("Repository worktree inventory changed during removal. Refresh and retry.".into());
+    }
+    Ok((paths, lease))
+}
+
 /// Native repository detach is two-phase: mark ALL registered paths as
 /// retiring atomically, verify that no native owners remain, then commit the
 /// detached reservation before the UI removes its repository record.
@@ -1582,9 +1598,10 @@ fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
 pub async fn repository_detach(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
     use tauri::Manager;
     tauri::async_runtime::spawn_blocking(move || {
-        let paths = repository_registered_paths(&repository_root)?;
-        let mut retire = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
-            .begin_retirement(&paths)?;
+        let (paths, mut retire) = reserve_repository_retirement(
+            &app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>(),
+            || repository_registered_paths(&repository_root),
+        )?;
         for path in &paths { ensure_worktree_not_executing(&app, path)?; }
         retire.commit_detach()?;
         Ok(())
@@ -1632,12 +1649,12 @@ pub async fn remove_worktree(
     expected_state: Option<WorktreeRemovalState>,
 ) -> Result<WorktreeRemovalResult, String> {
     use tauri::Manager;
-    // Start/remove races are closed before the preflight; the guard spans the
-    // asynchronous Git mutation and releases on success, error or cancellation.
-    let _retire = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
-        .begin_retirement(&[worktree_path.clone()])?;
-    ensure_worktree_not_executing(&app, &worktree_path)?;
     tauri::async_runtime::spawn_blocking(move || {
+        // Hold the reservation in the worker so cancellation of the awaiting
+        // command cannot unlock a still-running Git mutation.
+        let _retire = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+            .begin_retirement(&[worktree_path.clone()])?;
+        ensure_worktree_not_executing(&app, &worktree_path)?;
         remove_worktree_blocking(repository_root, worktree_path, force, expected_state)
     })
     .await
@@ -1747,6 +1764,66 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn repository_retirement_rejects_a_worktree_created_after_inventory_read() {
+        let (sandbox, repo) = init_fixture_repo("retirement-inventory");
+        let root = repo.to_string_lossy().to_string();
+        let sibling = sandbox.join("sibling workspace 中文");
+        let lifecycle = crate::workspace_lifecycle::WorkspaceLifecycle::default();
+        let mut reads = 0;
+        let result = reserve_repository_retirement(&lifecycle, || {
+            let paths = repository_registered_paths(&root)?;
+            reads += 1;
+            if reads == 1 {
+                create_worktree_blocking(root.clone(), "new-workspace".into(), None,
+                    Some(sibling.to_string_lossy().to_string()))?;
+            }
+            Ok(paths)
+        });
+        assert!(result.is_err(), "A stale inventory must never commit repository detach");
+        assert!(lifecycle.begin_start(&root).is_ok(), "Failed retirement must release all reservations");
+        assert!(lifecycle.begin_start(&sibling.to_string_lossy()).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn repository_retirement_reserves_external_worktrees_until_explicit_restore() {
+        let (sandbox, repo) = init_fixture_repo("retirement-stable");
+        let root = repo.to_string_lossy().to_string();
+        let sibling = sandbox.join("external workspace 中文");
+        let child = sibling.join("build");
+        create_worktree_blocking(root.clone(), "external".into(), None,
+            Some(sibling.to_string_lossy().to_string())).unwrap();
+        fs::create_dir(&child).unwrap();
+        let lifecycle = crate::workspace_lifecycle::WorkspaceLifecycle::default();
+        let (paths, mut lease) = reserve_repository_retirement(&lifecycle,
+            || repository_registered_paths(&root)).unwrap();
+        assert_eq!(paths.len(), 2);
+        assert!(lifecycle.begin_start(&child.to_string_lossy()).is_err());
+        assert!(lifecycle.begin_start(&root).is_err());
+        lease.commit_detach().unwrap();
+        drop(lease);
+        assert!(repo.join("README.md").exists());
+        assert!(sibling.join("README.md").exists());
+        assert!(lifecycle.begin_start(&child.to_string_lossy()).is_err());
+        lifecycle.restore_repository(&repository_registered_paths(&root).unwrap()).unwrap();
+        assert!(lifecycle.begin_start(&child.to_string_lossy()).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn repository_inventory_read_failure_releases_retirement() {
+        let lifecycle = crate::workspace_lifecycle::WorkspaceLifecycle::default();
+        let mut reads = 0;
+        let result = reserve_repository_retirement(&lifecycle, || {
+            reads += 1;
+            if reads == 1 { Ok(vec!["/repo/workspace".into()]) }
+            else { Err("Git inventory unavailable".into()) }
+        });
+        assert!(result.is_err());
+        assert!(lifecycle.begin_start("/repo/workspace/build").is_ok());
+    }
 
     fn unique_root(name: &str) -> std::path::PathBuf {
         let stamp = SystemTime::now()
