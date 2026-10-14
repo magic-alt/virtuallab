@@ -8,6 +8,7 @@ struct Fixture {
     drained: mpsc::Receiver<()>,
     bytes: Arc<AtomicUsize>,
     markers: Arc<AtomicUsize>,
+    output: Arc<Mutex<Vec<u8>>>,
 }
 impl Fixture {
     fn start(command: CommandBuilder) -> Self {
@@ -26,6 +27,8 @@ impl Fixture {
         let count = bytes.clone();
         let markers = Arc::new(AtomicUsize::new(0));
         let marker_count = markers.clone();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let captured = output.clone();
         let reply = writer.clone();
         thread::spawn(move || {
             thread::sleep(delay);
@@ -33,6 +36,11 @@ impl Fixture {
             // Exercise the production transport, including its native cursor
             // reply. The fixture must not hide UI/session locking races.
             let _ = read_terminal_output(&mut *reader, &reply, |chunk| {
+                let mut output = captured.lock().unwrap();
+                output.extend_from_slice(chunk);
+                let excess = output.len().saturating_sub(16 * 1024);
+                output.drain(..excess);
+                drop(output);
                 count.fetch_add(chunk.len(), Ordering::Relaxed);
                 tail.extend_from_slice(chunk);
                 marker_count.fetch_add(tail.windows(b"VIRTUALLAB_SOAK_OK".len())
@@ -43,7 +51,7 @@ impl Fixture {
             let _ = done.send(());
         });
         Self { session: TerminalSession { cwd: "/virtuallab-pty-fixture".into(), master: Some(pair.master),
-            writer, child }, drained, bytes, markers }
+            writer, child }, drained, bytes, markers, output }
     }
     fn stop(&mut self) {
         self.session.terminate().unwrap();
@@ -196,16 +204,31 @@ fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{
         OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_TERMINATE,
     }};
-    let root = std::env::temp_dir().join(format!("vl terminal qualification 中文 {}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("vl terminal qualification 中文 {} {}", std::process::id(), now_ms()));
     std::fs::create_dir_all(&root).unwrap();
     let pid_file = root.join("descendant.pid");
+    let script = root.join("terminal-process.cjs");
+    std::fs::write(&script, include_str!("../test-fixtures/terminal-process.cjs")).unwrap();
     let mut command = CommandBuilder::new("node.exe");
-    command.args(["-e", "const fs=require('fs');const {spawn}=require('child_process');spawn(process.execPath,['-e',\"require('fs').writeFileSync(process.argv[1],String(process.pid));setInterval(()=>{},1000)\",process.argv[1]],{stdio:'inherit'});const t=setInterval(()=>{if(fs.existsSync(process.argv[1]))process.exit(0)},10);setTimeout(()=>process.exit(2),8000)"]);
-    command.arg(&pid_file);
+    command.arg(&script).arg("--leader").arg(&pid_file);
     let mut fixture = Fixture::start(command);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !pid_file.is_file() && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
-    let pid = std::fs::read_to_string(&pid_file).unwrap().parse::<u32>().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(40);
+    while !pid_file.is_file() && Instant::now() < deadline {
+        if let Some(status) = fixture.session.child.try_wait().unwrap() {
+            // Readiness can be published between the loop's file check and
+            // observing the leader's exit. Recheck after that observation.
+            if !pid_file.is_file() {
+                panic!("Fixture leader exited before descendant readiness: {status:?}; output={}",
+                    String::from_utf8_lossy(&fixture.output.lock().unwrap()));
+            }
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let pid = std::fs::read_to_string(&pid_file).unwrap_or_else(|error| {
+        panic!("Descendant readiness failed: {error}; output={}",
+            String::from_utf8_lossy(&fixture.output.lock().unwrap()));
+    }).parse::<u32>().unwrap();
     // Own a handle throughout verification, so PID reuse cannot affect the check/cleanup.
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE | 0x0010_0000, 0, pid) };
     assert!(!handle.is_null());
@@ -222,6 +245,7 @@ fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     drop(fixture);
     drained.recv_timeout(Duration::from_secs(10)).unwrap();
     std::fs::remove_file(pid_file).unwrap();
+    std::fs::remove_file(script).unwrap();
     std::fs::remove_dir(root).unwrap();
     assert!(exited, "an exited terminal leader must not leave a live descendant holding the PTY");
 }

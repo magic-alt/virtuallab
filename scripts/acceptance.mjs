@@ -58,6 +58,8 @@ try {
   runStep("TypeScript typecheck", "npm", ["run", "typecheck"], doctor.env);
   runStep("Frontend control tests", "npm", ["run", "test:controls"], doctor.env);
   runStep("Frontend production build", "npm", ["run", "build"], doctor.env);
+  runStep("Terminal process fixture regression", process.execPath,
+    ["--test", "scripts/terminal-process.node-check.mjs"], doctor.env);
   runStep(
     "Rust native tests",
     "cargo",

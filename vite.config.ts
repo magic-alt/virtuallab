@@ -35,7 +35,12 @@ export default defineConfig({
           const modulePath = id.replace(/\\/g, "/");
           if (/\/node_modules\/(react|react-dom|scheduler)\//.test(modulePath)) return "react-vendor";
           if (modulePath.includes("/node_modules/@xterm/")) return "terminal-vendor";
-          if (/\/node_modules\/monaco-editor\/esm\/vs\/(base|editor|platform)\//.test(modulePath)) {
+          // Monaco calls DOMPurify through its trusted-types adapter, which
+          // also imports Monaco utilities. Keep both sides in the same chunk.
+          if (modulePath.includes("/node_modules/dompurify/")) return "monaco-core";
+          // Root helpers such as amdX/nls import and are imported by the core;
+          // keep that cycle together while language modules remain lazy.
+          if (/\/node_modules\/monaco-editor\/esm\/vs\/((base|editor|platform)\/|(amdX|nls)\.js($|\?))/.test(modulePath)) {
             return "monaco-core";
           }
         },

@@ -79,7 +79,7 @@ Rust native core
 - Zustand for local application state
 - Lucide icons
 
-Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff, optional `gh` PR/issue context, Agent workspace UI and four harness transports. Durable cross-run event history is still planned.
+Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff, optional `gh` PR/issue context, Agent workspace UI and four harness transports. V0.6 adds bounded, metadata-only agent lifecycle history; full durable event/transcript history remains planned.
 
 ## Native stack
 
@@ -147,6 +147,7 @@ Interactive terminals and build/test processes are separate execution paths:
 - `WorkspaceTerminals` retains a separate mounted `TerminalWorkspace` per normalized workspace path for the workbench lifetime. Tab, worktree and repository navigation only changes visibility; hidden terminals continue receiving output and keep their shell state, selected terminal and xterm scrollback. Windows path spelling variants reuse the same pane. Preview panes have separate identities and cannot disable native panes. Stop/Close remain explicit session actions; workbench teardown and native application shutdown clean up running sessions. Retention is in memory and does not restore sessions after application restart; the native eight-session cap remains global.
 - **Process profile:** structured executable + argument vector + working directory. Intended for repeatable build/test/check commands; it does not accept a shell command string.
 - **Worktree mutation:** branch validation and explicit native confirmation precede ordinary worktree removal. A dirty registered non-primary worktree returns a typed `needsForce` preflight instead of being deleted. A separate irreversible-loss native confirmation is required before a single `git worktree remove --force`; Rust revalidates registered path, primary exclusion, full HEAD, checked-out branch and a SHA-256 digest of NUL-delimited status entries against the preflight snapshot. Stale previews and direct force calls without a matching snapshot fail closed; a locked worktree is not bypassed (never supply a second `--force`). Removing a worktree never deletes its Git branch. Ignored/generated files inside the directory can also be lost.
+- Native removal also rejects workspaces held by attached agent runtimes, running/stopping Run/Build jobs, active verification runs or retained PTY sessions/startup. These are conservative ownership checks; a shared lifecycle reservation to close concurrent start-versus-delete races remains future work.
 - **Filesystem watcher:** emits debounced UI refresh signals while ignoring generated-heavy directories such as `.git`, `node_modules`, `target` and `dist`.
 
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
@@ -209,6 +210,8 @@ The first V0.4/V0.5 bridge keeps the workspace as the durable owner while adding
 This slice defines the contracts but does not yet make an agent authoritative for verification. The restricted native verification runner writes evidence into `.virtuallab/evidence/<run-id>/`. A private hardware lease policy contract exists but cannot authorize real hardware: there is no public grant-minting method, physical interlock, or approved hardware execution provider. Release readiness UI, searchable history and complete authorization are not implemented.
 
 See [V0.4 → V0.5 agent foundation](./V0.4_V0.5_AGENT_FOUNDATION.md).
+
+V0.6 native agent producers also write an allowlisted lifecycle metadata journal under the application data directory. Raw prompts, messages, tool output and stderr are omitted; workspace/thread/turn identifiers are hashed. Two rotating JSONL segments are bounded to 2 MiB each, with Unix directory/file permissions of 0700/0600. Appends repair torn trailing records using a separate write-capable handle before reopening for append, including on Windows; invalid interior records fail closed. The typed `agent_journal_recent` command returns at most 300 records for the selected workspace. The frontend displays restart history separately from live events and never treats a historical active status as a running process or permission to reattach. Browser events cannot inject journal rows.
 
 
 ## V0.3 review loop (current)
