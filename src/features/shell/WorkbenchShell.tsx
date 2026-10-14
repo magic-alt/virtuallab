@@ -283,9 +283,11 @@ export function WorkbenchShell() {
       // invalid folder must not modify the current repository's selection.
       const next = await inspectRepository(path);
       snapshotCacheRef.current.set(normalizePath(next.root), next);
-      const id =
-        globalThis.crypto?.randomUUID?.() ??
-        `repo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const existing = useWorkbenchStore.getState().repositories.find(
+        (item) => normalizePath(item.path) === normalizePath(next.root));
+      const id = existing?.id ??
+        (globalThis.crypto?.randomUUID?.() ??
+          `repo-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
       addRepository({
         id,
