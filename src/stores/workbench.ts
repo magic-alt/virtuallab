@@ -172,7 +172,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       addRepository: (repository) =>
         set((state) => {
           const existing = state.repositories.find(
-            (item) => item.path.toLowerCase() === repository.path.toLowerCase(),
+            (item) => workspaceKey(item.path) === workspaceKey(repository.path),
           );
 
           if (existing) {
