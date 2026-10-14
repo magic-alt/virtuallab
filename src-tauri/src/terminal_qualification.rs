@@ -42,7 +42,7 @@ impl Fixture {
             });
             let _ = done.send(());
         });
-        Self { session: TerminalSession { master: Some(pair.master),
+        Self { session: TerminalSession { cwd: "/virtuallab-pty-fixture".into(), master: Some(pair.master),
             writer, child }, drained, bytes, markers }
     }
     fn stop(&mut self) {
