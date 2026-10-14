@@ -41,6 +41,8 @@ vi.mock("@/lib/backend", () => ({
   chooseRepositoryDirectory: vi.fn(),
   createWorktree: vi.fn(),
   removeWorktreeAfterConfirmation: harness.removeWorktree,
+  detachRepositoryAfterConfirmation: harness.detachRepository,
+  restoreRepositoryRegistration: harness.restoreRepository,
   watchStart: harness.watchStart,
   watchStop: harness.watchStop,
 }));
