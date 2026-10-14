@@ -1,4 +1,5 @@
 import { confirmNativeAction } from "@/lib/backend";
+import { agentJournalRecent, unresolvedJournalTurns, type AgentJournalEntry } from "@/lib/agentJournal";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleStop, Play, ShieldAlert } from "lucide-react";
 import { getHarnessAdapter } from "@/lib/agentHarness";
@@ -61,6 +62,10 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const [resourceId, setResourceId] = useState("");
   const [action, setAction] = useState<ProtectedAction>("motion");
   const [approvalMessage, setApprovalMessage] = useState("");
+  const [journal, setJournal] = useState<AgentJournalEntry[]>([]);
+  const [journalError, setJournalError] = useState("");
+  const [journalBusy, setJournalBusy] = useState(false);
+  const [journalRevision, setJournalRevision] = useState(0);
   const broker = useRef(new AgentApprovalBroker());
   const adapter = useMemo(() => getHarnessAdapter(harness), [harness]);
 
@@ -68,6 +73,22 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setHarness(useAgentSessionStore.getState().bindings[agentWorkspaceKey(workspaceRoot)]?.harness ?? "codex");
     setAttached(false); setCapabilities(null); setError("");
   }, [workspaceRoot]);
+
+  // Hydrate native metadata separately from live, unredacted session events.
+  // Cancel an old response if the operator switches workspaces during read.
+  useEffect(() => {
+    if (!enabled) { setJournal([]); setJournalError(""); return; }
+    let cancelled = false;
+    setJournalBusy(true);
+    setJournalError("");
+    void agentJournalRecent(workspaceRoot)
+      .then((rows) => { if (!cancelled) setJournal(rows); })
+      .catch((cause) => { if (!cancelled) setJournalError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (!cancelled) setJournalBusy(false); });
+    return () => { cancelled = true; };
+  }, [workspaceRoot, enabled, journalRevision]);
+
+  const unresolved = unresolvedJournalTurns(journal);
 
   async function run(task: () => Promise<void>) {
     setBusy(true); setError("");
@@ -257,6 +278,27 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           ))}
         </div>
       </section>
+      <section className="rounded-xl border border-white/10 bg-black/20 p-4" data-testid="agent-journal-history">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="font-semibold">Recovered lifecycle metadata</h3>
+          <button type="button" disabled={!enabled || journalBusy}
+            onClick={() => setJournalRevision((value) => value + 1)}
+            className="shrink-0 text-xs text-stone-400 underline">Refresh history</button>
+        </div>
+        <p className="mt-1 text-xs text-stone-500">Native bounded metadata segments; prompts, model output and stderr are not saved. Thread/turn IDs are hashed. A stored start event is not proof of a running process after restart.</p>
+        {journalError && <p role="alert" className="mt-2 text-xs text-rose-300">{journalError}</p>}
+        {unresolved.length > 0 && <p role="status" className="mt-2 text-xs text-amber-300">{unresolved.length} turn(s) have no observed terminal event in the retained journal window. State is unverified; reattach the provider to inspect.</p>}
+        <div role="list" aria-label="Agent metadata history" className="mt-3 max-h-48 space-y-1 overflow-y-auto font-mono text-[11px]">
+          {journal.map((entry) => (
+            <div role="listitem" key={entry.eventId} className="break-words border-b border-white/5 py-1 text-stone-400">
+              {timeLabel(entry.timestampMs)} · {entry.harness} · {entry.eventKind} · {entry.outcome}
+              {entry.turnKey ? " · turn " + entry.turnKey.slice(0, 10) : ""}
+            </div>
+          ))}
+          {!journal.length && <p className="text-stone-500">{journalBusy ? "Loading..." : "No retained lifecycle events for this workspace."}</p>}
+        </div>
+      </section>
+
       <section className="rounded-xl border border-amber-400/20 bg-black/20 p-4">
         <h3 className="flex items-center gap-2 font-semibold"><ShieldAlert size={16}/>Protected operations · fail-closed approval broker</h3>
         <p className="mt-1 text-xs text-stone-400">Motion, power, flashing and release always require an independent device-side lease provider. Recording human acknowledgement here never enables hardware I/O.</p>
