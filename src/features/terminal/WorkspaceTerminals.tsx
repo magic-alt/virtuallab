@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,9 @@ export function WorkspaceTerminals({
 }) {
   const key = `${enabled ? "native" : "preview"}:${workspaceKey(cwd)}`;
   const [workspaces, setWorkspaces] = useState<WorkspaceTerminal[]>([]);
+  // Each removal event must be consumed once. Otherwise opening another
+  // worktree later could accidentally prune a newly created pane at that path.
+  const handledRetirement = useRef<number | null>(null);
   const repositoryIds = registeredRepositoryIds.join("\u0000");
 
   useEffect(() => {
@@ -41,7 +44,9 @@ export function WorkspaceTerminals({
 
   useEffect(() => {
     const registered = new Set(registeredRepositoryIds);
-    const retiredKey = retiredWorkspace ? workspaceKey(retiredWorkspace.path) : null;
+    const newlyRetired = retiredWorkspace && handledRetirement.current !== retiredWorkspace.sequence;
+    const retiredKey = newlyRetired ? workspaceKey(retiredWorkspace.path) : null;
+    if (newlyRetired) handledRetirement.current = retiredWorkspace.sequence;
     setWorkspaces((current) => {
       const next = current.filter((item) =>
         (item.repositoryId === null || registered.has(item.repositoryId)) &&
