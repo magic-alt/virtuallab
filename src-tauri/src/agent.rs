@@ -274,6 +274,8 @@ pub async fn agent_session_start(
     state: State<'_, AgentManager>,
     request: AgentSessionStartRequest,
 ) -> Result<AgentSessionBinding, String> {
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let manager = state.inner().clone();
     let owner = app.state::<AgentOwnership>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
