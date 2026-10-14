@@ -139,6 +139,7 @@ Verification evidence is stored under `<workspace>/.virtuallab/evidence/`. HIL, 
 | [Local build](docs/LOCAL_BUILD.md) | Platform setup, development modes, packaging, and troubleshooting |
 | [Project build workflows](docs/PROJECT_BUILD_WORKFLOWS.md) | npm, Keil and Qt/CMake presets, multi-step builds, deployment scope and acceptance |
 | [Architecture](docs/ARCHITECTURE.md) | Workspace model, native boundaries, events, and execution contracts |
+| [Product audit (2026-10-14)](docs/PRODUCT_AUDIT_2026-10-14.md) | Current multi-workspace code audit, verified gaps, V0.6 safety/journal slice and next Agent Supervisor milestones |
 | [Review and GitHub](docs/V0.3_REVIEW_GITHUB.md) | Diff modes, local drafts, and GitHub integration |
 | [GitHub PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md) | Open PR list, check/job status interpretation, merge qualification and safety |
 | [Agent harnesses](docs/V0.5_AGENT_HARNESSES.md) | Provider setup, session behavior, and integration limits |

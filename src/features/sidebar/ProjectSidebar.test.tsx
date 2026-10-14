@@ -107,6 +107,28 @@ describe("ProjectSidebar controls", () => {
     expect(screen.queryByRole("button", { name: "Delete local branch release/stable" })).not.toBeInTheDocument();
   });
 
+  it("distinguishes case-sensitive POSIX worktrees but folds Windows path spellings", () => {
+    const p = props();
+    const { rerender } = render(
+      <ProjectSidebar {...p} snapshot={{
+        ...p.snapshot,
+        root: "/work/Servo",
+        currentBranch: "main",
+        branches: [{ name: "feat/case", local: true, remote: false, worktreePath: "/work/servo" }],
+      }} />,
+    );
+    expect(screen.getByRole("button", { name: "Open worktree for feat/case" })).toBeInTheDocument();
+    rerender(
+      <ProjectSidebar {...p} snapshot={{
+        ...p.snapshot,
+        root: "D:/Work/Servo",
+        currentBranch: "main",
+        branches: [{ name: "feat/case", local: true, remote: false, worktreePath: "d:\\work\\servo\\" }],
+      }} />,
+    );
+    expect(screen.getByRole("button", { name: "Switch to feat/case" })).toBeInTheDocument();
+  });
+
   it("filters repositories and disables native-only controls in web preview", () => {
     const p = props();
     const { rerender } = render(

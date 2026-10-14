@@ -14,9 +14,14 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Commit privacy-filtered lifecycle metadata before notifying the frontend.
+fn emit(app: &AppHandle, event: AgentEvent) {
+    crate::agent_journal::emit_agent_event(app, None, event);
+}
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
 type SharedStdin = Arc<Mutex<ChildStdin>>;
 
@@ -209,6 +214,15 @@ pub struct AgentManager {
     lifecycle: Arc<Mutex<()>>,
 }
 
+impl AgentManager {
+    /// Conservative gate for worktree removal: a registered runtime must be
+    /// explicitly stopped before its worktree can be deleted.
+    pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
+        Ok(self.runtimes.lock().map_err(lock_error)?
+            .contains_key(&workspace_key(path)))
+    }
+}
+
 #[tauri::command]
 pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabilities, String> {
     if harness != "codex" && harness != "deepseek" {
@@ -374,8 +388,7 @@ fn start_session(
             binding: binding.clone(),
         }),
     );
-    let _ = app.emit(
-        "agent://event",
+    crate::agent_journal::emit_agent_event(&app, Some(&request.harness),
         AgentEvent::lifecycle("agent.session_started", root, Some(thread_id)),
     );
     Ok(binding)
@@ -464,7 +477,8 @@ pub fn agent_session_stop(
     if let Some(runtime) = runtime {
         runtime.process.stop()?;
         state.runtimes.lock().map_err(lock_error)?.remove(&workspace_key(&workspace_root));
-        let _ = app.emit("agent://event", AgentEvent::lifecycle("agent.session_stopped", &workspace_root, Some(runtime.binding.thread_id.clone())));
+        crate::agent_journal::emit_agent_event(&app, Some(&runtime.binding.harness),
+            AgentEvent::lifecycle("agent.session_stopped", &workspace_root, Some(runtime.binding.thread_id.clone())));
     }
     app.state::<AgentOwnership>().release(&workspace_root, "codex");
     app.state::<AgentOwnership>().release(&workspace_root, "deepseek");
@@ -575,8 +589,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
             let line = match line {
                 Ok(line) => line,
                 Err(error) => {
-                    let _ = app.emit(
-                        "agent://event",
+                    emit(&app,
                         AgentEvent::diagnostic("agent.protocol_error", &root, error.to_string()),
                     );
                     if error.kind() == std::io::ErrorKind::InvalidData { continue; }
@@ -586,8 +599,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
             let message: Value = match serde_json::from_str(&line) {
                 Ok(message) => message,
                 Err(error) => {
-                    let _ = app.emit(
-                        "agent://event",
+                    emit(&app,
                         AgentEvent::diagnostic(
                             "agent.protocol_error",
                             &root,
@@ -612,8 +624,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
             if let Some(method) = message.get("method").and_then(Value::as_str) {
                 let payload = message.get("params").cloned().unwrap_or_default();
                 if let Some(request_id) = message.get("id").cloned() {
-                    let _ = app.emit(
-                        "agent://event",
+                    emit(&app,
                         AgentEvent::server_request(&root, method, payload),
                     );
                     if let Err(error) = write_message(
@@ -623,15 +634,13 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
                             "VirtualLab foundation adapter rejects server-initiated requests",
                         ),
                     ) {
-                        let _ = app.emit(
-                            "agent://event",
+                        emit(&app,
                             AgentEvent::diagnostic("agent.protocol_error", &root, error),
                         );
                     }
                     continue;
                 }
-                let _ = app.emit(
-                    "agent://event",
+                emit(&app,
                     AgentEvent::notification(&root, method, payload),
                 );
             }
@@ -641,8 +650,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
                 let _ = sender.send(Err("Codex app-server stdout closed".into()));
             }
         }
-        let _ = app.emit(
-            "agent://event",
+        emit(&app,
             AgentEvent::lifecycle("agent.process_exited", &root, None),
         );
     });
@@ -652,8 +660,7 @@ fn spawn_stderr<R: std::io::Read + Send + 'static>(app: AppHandle, root: String,
     thread::spawn(move || {
         for line in bounded_lines(stderr, MAX_AGENT_LINE_BYTES).map(|line| line.unwrap_or_else(|error| format!("Agent stderr record rejected: {error}"))) {
             if !line.trim().is_empty() {
-                let _ = app.emit(
-                    "agent://event",
+                emit(&app,
                     AgentEvent::diagnostic("agent.stderr", &root, line),
                 );
             }

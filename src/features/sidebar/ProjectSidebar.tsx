@@ -221,7 +221,7 @@ export function ProjectSidebar({
               const active = branch.name === snapshot.currentBranch;
               const inOtherWorktree = Boolean(
                 branch.worktreePath &&
-                branch.worktreePath.replaceAll("\\", "/").toLowerCase() !== snapshot.root.replaceAll("\\", "/").toLowerCase(),
+                workspaceKey(branch.worktreePath) !== workspaceKey(snapshot.root),
               );
               const protectedBranch =
                 branch.name === "main" ||

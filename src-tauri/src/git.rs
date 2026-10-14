@@ -1559,13 +1559,36 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
     Ok((state, entries.len() - untracked_count, untracked_count))
 }
 
+/// Check live native owners even when the frontend has unmounted or lost a
+/// workspace view. This is a conservative preflight; the V0.7 scheduler will
+/// need a shared lifecycle reservation to close start-vs-delete races.
+fn ensure_worktree_not_executing(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    use tauri::Manager;
+    if app.state::<crate::agent::AgentManager>().owns_workspace(path)? ||
+       app.state::<crate::agent_cli::CliAgentManager>().owns_workspace(path)? {
+        return Err("Workspace has an attached agent. Stop its agent runtime before removing this worktree.".into());
+    }
+    if app.state::<crate::run_registry::RunRegistry>().has_active_workspace(path)? {
+        return Err("Workspace has an active Run/Build job. Stop it and confirm exit before removing this worktree.".into());
+    }
+    if app.state::<crate::verification::VerificationManager>().owns_workspace(path)? {
+        return Err("Workspace has an active verification run. Cancel the run and confirm completion before removing this worktree.".into());
+    }
+    if app.state::<crate::execution::TerminalManager>().owns_workspace(path)? {
+        return Err("Workspace has an active terminal (or terminal startup). Close the terminal before removing this worktree.".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn remove_worktree(
+    app: tauri::AppHandle,
     repository_root: String,
     worktree_path: String,
     force: bool,
     expected_state: Option<WorktreeRemovalState>,
 ) -> Result<WorktreeRemovalResult, String> {
+    ensure_worktree_not_executing(&app, &worktree_path)?;
     tauri::async_runtime::spawn_blocking(move || {
         remove_worktree_blocking(repository_root, worktree_path, force, expected_state)
     })

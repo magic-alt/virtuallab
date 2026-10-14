@@ -13,7 +13,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +90,12 @@ struct CliSession {
 pub struct CliAgentManager {
     sessions: Arc<Mutex<HashMap<String, Arc<CliSession>>>>,
 }
+
+impl CliAgentManager {
+    pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
+        Ok(self.sessions.lock().map_err(err_lock)?.contains_key(&key(path)))
+    }
+}
 fn key(root: &str) -> String {
     crate::workspace_identity::key(root)
 }
@@ -111,7 +117,7 @@ fn cli_command(harness: &str) -> Result<Command, String> {
     Ok(crate::execution::process_command(binary(harness)?))
 }
 fn emit(app: &AppHandle, kind: &str, binding: &CliBinding, turn: Option<&str>, payload: Option<Value>) {
-    let _ = app.emit("agent://event", CliEvent {
+    crate::agent_journal::emit_agent_event(app, Some(&binding.harness), CliEvent {
         event_type: kind.into(),
         workspace_root: binding.workspace_root.clone(),
         thread_id: Some(binding.thread_id.clone()),
