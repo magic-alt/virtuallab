@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleStop, Play, ShieldAlert, Settings2, FolderOpen } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getHarnessAdapter } from "@/lib/agentHarness";
+import { latestCodexAnswer } from "@/lib/agentActivity";
 import { AgentApprovalBroker, type ProtectedAction } from "@/lib/agentSafety";
 import { WorkspaceAgentService } from "@/lib/workspaceAgent";
 import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions";
@@ -90,6 +91,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const [journalRevision, setJournalRevision] = useState(0);
   const broker = useRef(new AgentApprovalBroker());
   const adapter = useMemo(() => getHarnessAdapter(harness), [harness]);
+  const latestAnswer = useMemo(() => latestCodexAnswer(events), [events]);
 
   useEffect(() => {
     setHarness(useAgentSessionStore.getState().bindings[agentWorkspaceKey(workspaceRoot)]?.harness ?? "codex");
@@ -333,10 +335,21 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <button type="button" onClick={() => clearTimeline(workspaceRoot)}
             className="text-xs text-stone-400 underline">Clear timeline</button>
         </div>
+        {latestAnswer && (
+          <div className="mt-3 min-w-0 rounded-lg border border-emerald-400/20 bg-emerald-950/10 p-3">
+            <h4 className="text-xs font-semibold text-emerald-300">Latest Codex response</h4>
+            <pre className="mt-2 max-h-96 max-w-full overflow-auto whitespace-pre-wrap break-words text-sm leading-6 text-stone-200">
+              {latestAnswer}
+            </pre>
+            <p className="mt-2 text-[11px] text-stone-500">
+              Reconstructed from recent in-memory events; long messages may be partial after the event limit.
+            </p>
+          </div>
+        )}
         <div role="log" aria-label="Agent event timeline" className="mt-3 max-h-80 min-w-0 space-y-2 overflow-y-auto text-xs">
           {!events.length && <p className="text-stone-500">Run a task to see progress and responses here.</p>}
-          {events.slice(-15).map((event, idx) => (
-            <div key={events.length - 15 + idx} className="min-w-0 rounded border border-white/5 bg-stone-950/60 p-3">
+          {events.filter((event) => event.method !== "item/agentMessage/delta").slice(-12).map((event, idx) => (
+            <div key={event.timestampMs + ":" + idx} className="min-w-0 rounded border border-white/5 bg-stone-950/60 p-3">
               <div className="font-medium text-orange-300">{timeLabel(event.timestampMs)} · {eventTitle(event)}</div>
               {(event.eventType === "agent.notification" || event.eventType === "agent.stderr" ||
                 event.eventType === "agent.protocol_error" || event.eventType === "agent.turn_completed") && (
