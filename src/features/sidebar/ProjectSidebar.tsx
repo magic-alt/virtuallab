@@ -1,6 +1,7 @@
 import {
   Boxes,
   FolderGit2,
+  FolderOpen,
   GitBranch,
   Plus,
   GitBranchPlus,
@@ -9,6 +10,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { cn, compactPath } from "@/lib/utils";
+import { workspaceKey } from "@/lib/workspaceKey";
 import type { RepositoryRecord, RepositorySnapshot } from "@/types/workbench";
 
 interface Props {
@@ -19,6 +21,8 @@ interface Props {
   onAdd: () => void;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
+  onOpenRepositoryFolder: (path: string) => void;
+  onOpenWorkspaceFolder: (path: string) => void;
   onNewWorkspace: () => void;
   onSelectWorkspace: (path: string) => void;
   onRemoveWorkspace: (path: string) => void;
@@ -39,6 +43,8 @@ export function ProjectSidebar({
   onAdd,
   onSelect,
   onRemove,
+  onOpenRepositoryFolder,
+  onOpenWorkspaceFolder,
   onNewWorkspace,
   onSelectWorkspace,
   onRemoveWorkspace,
@@ -126,6 +132,16 @@ export function ProjectSidebar({
                     </div>
                   </button>
                   <button
+                    aria-label={`Open repository folder ${repository.name}`}
+                    title="Open repository in the system file manager"
+                    disabled={!repositoryActionsEnabled}
+                    className="rounded-md p-1.5 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
+                    onClick={() => onOpenRepositoryFolder(repository.path)}
+                    type="button"
+                  >
+                    <FolderOpen size={13} />
+                  </button>
+                  <button
                     aria-label={`Remove ${repository.name}`}
                     className="rounded-md p-1.5 text-slate-700 opacity-0 transition hover:bg-white/[0.06] hover:text-rose-300 group-hover:opacity-100"
                     onClick={() => onRemove(repository.id)}
@@ -153,9 +169,9 @@ export function ProjectSidebar({
             </button>
           </div>
           <div className="mt-2 space-y-1.5">
-            {visibleWorktrees.map((worktree, index) => (
+            {visibleWorktrees.map((worktree) => (
               <div
-                key={`${worktree.path}-${index}`}
+                key={workspaceKey(worktree.path)}
                 className="group flex items-center gap-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
               >
                 <button className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={!workspaceActionsEnabled} onClick={() => onSelectWorkspace(worktree.path)} type="button">
@@ -169,7 +185,17 @@ export function ProjectSidebar({
                     {compactPath(worktree.path, 30)}
                   </div>
                 </button>
-                {index > 0 && (
+                <button
+                  aria-label={`Open workspace folder ${worktree.branch ?? worktree.path}`}
+                  title="Open worktree in the system file manager"
+                  disabled={!workspaceActionsEnabled}
+                  className="rounded-md p-1 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
+                  onClick={() => onOpenWorkspaceFolder(worktree.path)}
+                  type="button"
+                >
+                  <FolderOpen size={12} />
+                </button>
+                {workspaceKey(worktree.path) !== workspaceKey(snapshot.worktrees[0]?.path ?? "") && (
                   <button
                     aria-label="Remove workspace"
                     disabled={!workspaceActionsEnabled}
