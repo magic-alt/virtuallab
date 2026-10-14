@@ -1,5 +1,8 @@
 import { confirmNativeAction } from "@/lib/backend";
-import { agentJournalRecent, unresolvedJournalTurns, type AgentJournalEntry } from "@/lib/agentJournal";
+import {
+  agentJournalRecent, agentJournalRecover, agentJournalPurgeAll, unverifiedRecoveredTurns,
+  type AgentRecoverySnapshot, type AgentJournalEntry,
+} from "@/lib/agentJournal";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CircleStop, Play, ShieldAlert } from "lucide-react";
 import { getHarnessAdapter } from "@/lib/agentHarness";
@@ -63,6 +66,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const [action, setAction] = useState<ProtectedAction>("motion");
   const [approvalMessage, setApprovalMessage] = useState("");
   const [journal, setJournal] = useState<AgentJournalEntry[]>([]);
+  const [recovery, setRecovery] = useState<AgentRecoverySnapshot | null>(null);
   const [journalError, setJournalError] = useState("");
   const [journalBusy, setJournalBusy] = useState(false);
   const [journalRevision, setJournalRevision] = useState(0);
@@ -77,18 +81,21 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   // Hydrate native metadata separately from live, unredacted session events.
   // Cancel an old response if the operator switches workspaces during read.
   useEffect(() => {
-    if (!enabled) { setJournal([]); setJournalError(""); return; }
+    if (!enabled) { setJournal([]); setRecovery(null); setJournalError(""); return; }
     let cancelled = false;
     setJournalBusy(true);
     setJournalError("");
-    void agentJournalRecent(workspaceRoot)
-      .then((rows) => { if (!cancelled) setJournal(rows); })
+    void agentJournalRecover(workspaceRoot)
+      .then(async (status) => {
+        const rows = await agentJournalRecent(workspaceRoot);
+        if (!cancelled) { setRecovery(status); setJournal(rows); }
+      })
       .catch((cause) => { if (!cancelled) setJournalError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (!cancelled) setJournalBusy(false); });
     return () => { cancelled = true; };
   }, [workspaceRoot, enabled, journalRevision]);
 
-  const unresolved = unresolvedJournalTurns(journal);
+  const unresolved = unverifiedRecoveredTurns(recovery);
 
   async function run(task: () => Promise<void>) {
     setBusy(true); setError("");
@@ -281,13 +288,25 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
       <section className="rounded-xl border border-white/10 bg-black/20 p-4" data-testid="agent-journal-history">
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-semibold">Recovered lifecycle metadata</h3>
-          <button type="button" disabled={!enabled || journalBusy}
-            onClick={() => setJournalRevision((value) => value + 1)}
-            className="shrink-0 text-xs text-stone-400 underline">Refresh history</button>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" disabled={!enabled || journalBusy}
+              onClick={() => setJournalRevision((value) => value + 1)}
+              className="shrink-0 text-xs text-stone-400 underline">Refresh history</button>
+            <button type="button" disabled={!enabled || journalBusy}
+              onClick={() => void run(async () => {
+                if (!await confirmNativeAction("Delete ALL retained Agent lifecycle metadata for every workspace? This does not stop agents or delete provider threads. This cannot be undone.")) return;
+                await agentJournalPurgeAll();
+                setRecovery(null);
+                setJournal([]);
+                setJournalRevision((value) => value + 1);
+              })}
+              className="shrink-0 text-xs text-rose-300 underline">Purge metadata</button>
+          </div>
         </div>
         <p className="mt-1 text-xs text-stone-500">Native bounded metadata segments; prompts, model output and stderr are not saved. Thread/turn IDs are hashed. A stored start event is not proof of a running process after restart.</p>
         {journalError && <p role="alert" className="mt-2 text-xs text-rose-300">{journalError}</p>}
-        {unresolved.length > 0 && <p role="status" className="mt-2 text-xs text-amber-300">{unresolved.length} turn(s) have no observed terminal event in the retained journal window. State is unverified; reattach the provider to inspect.</p>}
+        {unresolved.length > 0 && <p role="status" className="mt-2 text-xs text-amber-300">{unresolved.length} turn(s) are not verified completed. Restart never resumes them automatically; inspect the provider thread and run fresh checks before relying on their results.</p>}
+        {recovery && <p className="mt-2 text-xs text-stone-500">Native ownership: {recovery.nativeSessionRegistered ? "registered (turn status not assumed)" : "no runtime registered"} · Retained events: {recovery.retainedEvents}</p>}
         <div role="list" aria-label="Agent metadata history" className="mt-3 max-h-48 space-y-1 overflow-y-auto font-mono text-[11px]">
           {journal.map((entry) => (
             <div role="listitem" key={entry.eventId} className="break-words border-b border-white/5 py-1 text-stone-400">
