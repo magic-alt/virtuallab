@@ -45,6 +45,12 @@ export async function inspectRepository(path: string): Promise<RepositorySnapsho
   return invoke<RepositorySnapshot>("inspect_repository", { path });
 }
 
+/** Opens a registered worktree in Explorer, Finder or the Linux file manager. */
+export async function openWorkspaceDirectory(repositoryRoot: string, workspaceRoot: string): Promise<void> {
+  requireDesktop();
+  return invoke("open_workspace_directory", { repositoryRoot, workspaceRoot });
+}
+
 export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: string, branch: string): Promise<void> {
   requireDesktop();
   return invoke("git_switch_branch", { repositoryRoot, workspaceRoot, branch });
