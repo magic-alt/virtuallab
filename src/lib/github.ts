@@ -9,6 +9,7 @@ import type {
   GithubPullRequestList,
   GithubMergeRequest,
   GithubMergeResponse,
+  GithubReadyForReviewRequest,
 } from "@/types/workbench";
 
 export interface GithubAdapter {
@@ -16,6 +17,7 @@ export interface GithubAdapter {
   loadContext(workspaceRoot: string, reference?: string | null): Promise<GithubContext>;
   listPullRequests(workspaceRoot: string): Promise<GithubPullRequestList>;
   mergePullRequest(request: GithubMergeRequest): Promise<GithubMergeResponse>;
+  markReadyForReview(request: GithubReadyForReviewRequest): Promise<GithubPullRequest>;
   postReviewComment(
     request: GithubPostReviewCommentRequest,
   ): Promise<GithubPostReviewCommentResponse>;
@@ -53,6 +55,11 @@ export const githubAdapter: GithubAdapter = {
     return invoke<GithubMergeResponse>("github_merge_pull_request", { request });
   },
 
+  async markReadyForReview(request) {
+    requireDesktop();
+    return invoke<GithubPullRequest>("github_mark_ready_for_review", { request });
+  },
+
   async postReviewComment(request) {
     requireDesktop();
     return invoke<GithubPostReviewCommentResponse>("github_post_review_comment", {
@@ -68,7 +75,7 @@ export const githubAdapter: GithubAdapter = {
 export function getPrMergeBlockers(pr: GithubPullRequest): string[] {
   const reasons: string[] = [];
   if (pr.state !== "OPEN") reasons.push("PR is not open.");
-  if (pr.isDraft) reasons.push("Draft PRs cannot be merged.");
+  if (pr.isDraft) reasons.push('Draft PR: select "Ready for review" before merging.');
   if (pr.checks.total === 0 || pr.checks.success === 0) {
     reasons.push("No successful CI checks have been reported.");
   }

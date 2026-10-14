@@ -36,6 +36,17 @@ A PR is eligible for a manual merge only when **all** of these conditions hold:
 
 Merge readiness is checked twice: once to enable the UI button, and again in the native Rust command immediately before the remote mutation. The final GitHub REST merge request supplies the **expected SHA**; GitHub rejects an outdated head and independently applies repository rules and permissions.
 
+### Draft PR → Ready for review
+
+A Draft PR is not mergeable by GitHub. To change its state directly in VirtualLab:
+
+1. Open the draft from **Open pull requests** and inspect its changes.
+2. Under **Merge eligibility**, select **Ready for review** (the separate review-loop **Mark fix in progress** is only a local workflow marker).
+3. Confirm the repository, PR number and exact HEAD SHA. VirtualLab uses your existing `gh` credentials to run `gh pr ready` for the verified origin and then reloads the PR state. It does not submit an approval.
+4. Wait for required CI checks and reviewers. **Merge PR** becomes available only when all existing merge gates pass, not merely when the draft flag is removed.
+
+Switching away from the GitHub tab and back **keeps the selected PR and loaded results** within the same workspace; use **Refresh** to fetch the latest remote state. Selecting another worktree or repository creates a new GitHub context instead of reusing the previous repository's PR. A refreshed remote check remains mandatory before any merge mutation.
+
 ### Merge a PR
 
 1. Select a PR and wait for CI to finish.
@@ -63,6 +74,7 @@ A successful merge changes **remote GitHub state**; it does not automatically pu
 
 - `github_list_pull_requests`: read-only list for workspace origin, using `gh pr list --repo ... --state open --json ...`.
 - `github_context`: explicit PR/issue lookup, including full CI rollup and GitHub merge metadata.
+- `github_mark_ready_for_review`: explicit Draft → Ready for review action; validates workspace origin, live PR draft state and inspected HEAD SHA; uses `gh pr ready` and verifies the new state. Does not approve reviews or merge.
 - `github_merge_pull_request`: typed request with workspace root, origin identity, PR number, method and expected SHA. It validates the latest GitHub state, then calls `gh api --method PUT repos/{owner}/{repo}/pulls/{number}/merge` with `sha` and `merge_method`.
 - `src/lib/github.ts`: typed Tauri invocations and conservative UI merge-readiness helper.
 
