@@ -265,6 +265,9 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
             )}
           </div>
         )}
+        {unresolved.length > 0 && <p role="status" className="mt-2 text-xs text-amber-300">
+          {unresolved.length} earlier task(s) have unverified completion after restart. Review history before relying on their results.
+        </p>}
         {binding && <p className="mt-2 break-all text-xs text-stone-500">
           Saved thread: {binding.harness} · {binding.threadId}
         </p>}
@@ -276,6 +279,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <AlertTriangle size={14} className="shrink-0"/>{error}
         </p>}
 
+        <p className="mt-1 text-xs text-stone-500">{HARNESS.find((entry) => entry.id === harness)?.detail}</p>
         <label className="mt-5 block text-xs text-stone-300">
           <span className="font-semibold text-orange-300">2 · Describe the task</span>
           <span className="ml-2 text-stone-500">Role: {role.name}</span>
@@ -292,6 +296,13 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <button type="button" onClick={() => void attach()}
             disabled={!enabled || busy || attached || !!(binding && binding.harness !== harness)}
             className="rounded border border-white/20 px-3 py-2 text-xs">Attach / resume</button>
+          {turn && capabilities?.features.steering && (
+            <button type="button" onClick={() => void steer()}
+              disabled={!enabled || busy || !prompt.trim()}
+              className="rounded border border-white/20 px-3 py-2 text-xs">
+              Steer running task
+            </button>
+          )}
           {turn && (
             <button type="button" onClick={() => void interrupt()} disabled={!enabled || busy}
               className="flex items-center gap-2 rounded border border-rose-400/30 px-3 py-2 text-xs text-rose-300">
