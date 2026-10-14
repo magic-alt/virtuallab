@@ -161,11 +161,133 @@ fn append_at(dir: &Path, mut entry: AgentJournalEntry, capacity: u64) -> Result<
     Ok(())
 }
 
+
+/// A previously recorded start is never considered proof of a live worker.
+/// A new native process instance starts with no registered runtime; unmatched
+/// turns are sealed as unverified and never automatically dispatched.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveredTurn {
+    turn_key: String,
+    state: String,
+    last_sequence: u64,
+    harness: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRecoverySnapshot {
+    workspace_id: String,
+    native_session_registered: bool,
+    turns: Vec<RecoveredTurn>,
+    retained_events: usize,
+}
+
+fn replay_turns(entries: &[AgentJournalEntry], owner: &str) -> Vec<RecoveredTurn> {
+    let mut rows = entries.iter().filter(|row| row.workspace_id == owner).collect::<Vec<_>>();
+    rows.sort_by_key(|row| row.sequence);
+    let mut states = std::collections::BTreeMap::<String, RecoveredTurn>::new();
+    for row in rows {
+        match row.event_kind.as_str() {
+            "turn.started" => {
+                if let Some(key) = &row.turn_key {
+                    // The app-server may emit a started notification as well
+                    // as the native RPC acknowledgement. Replays are idempotent.
+                    states.entry(key.clone()).or_insert_with(|| RecoveredTurn {
+                        turn_key: key.clone(), state: "in_flight_unverified".into(),
+                        last_sequence: row.sequence, harness: row.harness.clone(),
+                    });
+                }
+            }
+            "turn.completed" | "recovery.unverified" => {
+                if let Some(key) = &row.turn_key {
+                    let state = if row.event_kind == "recovery.unverified" { "unverified" }
+                        else { match row.outcome.as_str() {
+                            "completed" => "completed", "failed" => "failed",
+                            "cancelled" => "cancelled", _ => "unverified",
+                        }};
+                    states.insert(key.clone(), RecoveredTurn {
+                        turn_key: key.clone(), state: state.into(),
+                        last_sequence: row.sequence, harness: row.harness.clone(),
+                    });
+                }
+            }
+            "process.exited" | "session.stopped" => {
+                // Existing Codex process-exit events do not contain turn IDs:
+                // close any still-open turns conservatively, never as PASS.
+                for turn in states.values_mut() {
+                    if turn.state == "in_flight_unverified" {
+                        turn.state = "unverified".into();
+                        turn.last_sequence = row.sequence;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    states.into_values().collect()
+}
+
+fn all_entries(dir: &Path) -> Result<Vec<AgentJournalEntry>, String> {
+    let (current, previous) = segments(dir);
+    let (mut rows, _) = read_entries(&previous)?;
+    rows.extend(read_entries(&current)?.0);
+    rows.sort_by_key(|row| row.sequence);
+    rows.dedup_by_key(|row| row.sequence);
+    Ok(rows)
+}
+
+fn reconcile_at(dir: &Path, root: &str, native_session_registered: bool) -> Result<AgentRecoverySnapshot, String> {
+    let owner = workspace_id(root);
+    let mut rows = all_entries(dir)?;
+    if !native_session_registered {
+        for turn in replay_turns(&rows, &owner).iter()
+            .filter(|turn| turn.state == "in_flight_unverified") {
+            // Exactly one durable recovery marker per retained unfinished
+            // turn. The subsequent scan sees it and does not append again.
+            append_at(dir, AgentJournalEntry {
+                schema_version: SCHEMA, sequence: 0, event_id: String::new(),
+                workspace_id: owner.clone(), harness: turn.harness.clone(),
+                thread_key: None, turn_key: Some(turn.turn_key.clone()),
+                event_kind: "recovery.unverified".into(), outcome: "unverified".into(),
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+                visibility: "metadata_only".into(), redaction_status: "payload_omitted".into(),
+            }, SEGMENT_BYTES)?;
+        }
+        rows = all_entries(dir)?;
+    }
+    let retained_events = rows.iter().filter(|row| row.workspace_id == owner).count();
+    Ok(AgentRecoverySnapshot {
+        workspace_id: owner.clone(), native_session_registered,
+        turns: replay_turns(&rows, &owner), retained_events,
+    })
+}
+
 impl AgentJournal {
     fn directory(app: &AppHandle) -> Result<PathBuf, String> {
         app.path().app_data_dir().map(|base| base.join("agent-journal"))
             .map_err(|e| format!("Resolve app data directory: {e}"))
     }
+    fn recovery(&self, app: &AppHandle, root: &str, native_registered: bool) -> Result<AgentRecoverySnapshot, String> {
+        if !Path::new(root).is_dir() { return Err("Journal workspace directory not found".into()); }
+        let _guard = self.0.lock().map_err(|_| "Journal lock poisoned")?;
+        reconcile_at(&Self::directory(app)?, root, native_registered)
+    }
+
+    fn purge(&self, app: &AppHandle) -> Result<(), String> {
+        let _guard = self.0.lock().map_err(|_| "Journal lock poisoned")?;
+        let (current, previous) = segments(&Self::directory(app)?);
+        for file in [current, previous] {
+            if let Err(error) = fs::remove_file(file) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    return Err(format!("Could not purge agent metadata journal: {error}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn record(&self, app: &AppHandle, event: &Value, harness: Option<&str>) -> Result<(), String> {
         let Some(entry) = metadata(event, harness) else { return Ok(()); };
         let _guard = self.0.lock().map_err(|_| "Journal lock poisoned")?;
@@ -211,6 +333,29 @@ pub fn agent_journal_recent(
     journal.recent(&app, &workspace_root, limit.unwrap_or(MAX_RESULTS))
 }
 
+#[tauri::command]
+pub fn agent_journal_recover(
+    app: AppHandle,
+    journal: State<'_, AgentJournal>,
+    workspace_root: String,
+) -> Result<AgentRecoverySnapshot, String> {
+    // Active native ownership prevents an in-flight event from being sealed
+    // while its current-session worker may still be emitting results.
+    let registered = app.state::<crate::agent::AgentManager>().owns_workspace(&workspace_root)?
+        || app.state::<crate::agent_cli::CliAgentManager>().owns_workspace(&workspace_root)?;
+    journal.recovery(&app, &workspace_root, registered)
+}
+
+#[tauri::command]
+pub fn agent_journal_purge_all(
+    app: AppHandle,
+    journal: State<'_, AgentJournal>,
+) -> Result<(), String> {
+    // Requires an explicit, native confirmation in the frontend; no path from
+    // user input is accepted, and only VirtualLab-owned journal files are removed.
+    journal.purge(&app)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +370,59 @@ mod tests {
         json!({"eventType":"agent.turn_started", "workspaceRoot":root,
             "threadId":token,"turnId":token,"timestampMs":123,
             "payload":{"prompt":"SECRET_CONTENT_123","delta":"SECRET_CONTENT_123"}})
+    }
+
+    #[test]
+    fn forced_restart_recovery_marks_unfinished_turn_once_and_never_resumes() {
+        let dir = temp("restart");
+        append_at(&dir, metadata(&input("/fixture/repo", "pending-secret"), Some("codex")).unwrap(), SEGMENT_BYTES).unwrap();
+        let first = reconcile_at(&dir, "/fixture/repo", false).unwrap();
+        assert_eq!(first.turns.len(), 1);
+        assert_eq!(first.turns[0].state, "unverified");
+        let next = reconcile_at(&dir, "/fixture/repo", false).unwrap();
+        assert_eq!(next.retained_events, first.retained_events);
+        let data = fs::read_to_string(segments(&dir).0).unwrap();
+        assert!(!data.contains("pending-secret"));
+        assert!(!data.contains("SECRET_CONTENT_123"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn active_native_session_does_not_mark_in_flight_turn_as_crashed() {
+        let dir = temp("attached");
+        append_at(&dir, metadata(&input("/repo/x", "turn1"), Some("claude")).unwrap(), SEGMENT_BYTES).unwrap();
+        let active = reconcile_at(&dir, "/repo/x", true).unwrap();
+        assert_eq!(active.turns[0].state, "in_flight_unverified");
+        assert_eq!(active.retained_events, 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn known_completion_and_exit_are_not_replayed_as_running() {
+        let dir = temp("complete");
+        append_at(&dir, metadata(&input("/repo", "turn1"), Some("codex")).unwrap(), SEGMENT_BYTES).unwrap();
+        let completed = serde_json::json!({
+            "eventType":"agent.turn_completed","workspaceRoot":"/repo",
+            "turnId":"turn1","timestampMs":124,
+            "payload":{"status":"completed","secret":"DO_NOT_WRITE"}
+        });
+        append_at(&dir, metadata(&completed, Some("codex")).unwrap(), SEGMENT_BYTES).unwrap();
+        let result = reconcile_at(&dir, "/repo", false).unwrap();
+        assert_eq!(result.turns[0].state, "completed");
+        assert_eq!(result.retained_events, 2);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn case_distinct_workspaces_reconcile_independently() {
+        let dir = temp("isolation");
+        append_at(&dir, metadata(&input("/repo/Alpha", "one"), None).unwrap(), SEGMENT_BYTES).unwrap();
+        append_at(&dir, metadata(&input("/repo/alpha", "two"), None).unwrap(), SEGMENT_BYTES).unwrap();
+        #[cfg(unix)] {
+            assert_eq!(reconcile_at(&dir, "/repo/Alpha", false).unwrap().turns.len(), 1);
+            assert_eq!(reconcile_at(&dir, "/repo/alpha", false).unwrap().turns.len(), 1);
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
