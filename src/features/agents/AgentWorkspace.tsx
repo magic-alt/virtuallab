@@ -187,14 +187,15 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     // Tabs unmount this pane. The native runtime can still be alive when
     // attached=false; stop the saved owner rather than the selected dropdown.
     await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
-    setAttached(false); setActiveTurn(workspaceRoot, null);
+    setAttached(false); setActiveTurn(workspaceRoot, null); setRecovery(null);
     setJournalRevision((value) => value + 1);
   });
   const forget = () => run(async () => {
     if (!await confirmNativeAction("Forget the saved thread association for this workspace? This cannot be undone.")) return;
     await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
-    setAttached(false); setActiveTurn(workspaceRoot, null);
+    setAttached(false); setActiveTurn(workspaceRoot, null); setRecovery(null);
+    setJournalRevision((value) => value + 1);
   });
   const changeHarness = (value: AgentHarnessKind) => {
     if (attached || turn || nativeRuntimeRegistered) {
