@@ -209,6 +209,15 @@ pub struct AgentManager {
     lifecycle: Arc<Mutex<()>>,
 }
 
+impl AgentManager {
+    /// Conservative gate for worktree removal: a registered runtime must be
+    /// explicitly stopped before its worktree can be deleted.
+    pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
+        Ok(self.runtimes.lock().map_err(lock_error)?
+            .contains_key(&workspace_key(path)))
+    }
+}
+
 #[tauri::command]
 pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabilities, String> {
     if harness != "codex" && harness != "deepseek" {
