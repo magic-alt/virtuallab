@@ -30,10 +30,16 @@ pub struct NativeRun {
 #[derive(Default)]
 pub struct RunRegistry(Mutex<VecDeque<NativeRun>>, AtomicBool);
 fn workspace_key(path: &str) -> String {
-    let path = path.replace('\\', "/").trim_end_matches('/').to_owned();
-    if cfg!(windows) { path.to_lowercase() } else { path }
+    crate::workspace_identity::key(path)
 }
 impl RunRegistry {
+    /// Fail closed while any software Run/Build workflow claims this worktree.
+    pub fn has_active_workspace(&self, cwd: &str) -> Result<bool, String> {
+        let key = workspace_key(cwd);
+        Ok(self.0.lock().map_err(|_| "Run registry lock poisoned")?.iter()
+            .any(|run| workspace_key(&run.cwd) == key
+                && matches!(run.status.as_str(), "running" | "stopping")))
+    }
     pub fn begin(&self, id: &str, cwd: &str, label: &str, workflow: bool, presentation: Option<RunPresentation>) -> Result<(), String> {
         if id.trim().is_empty() || id.len() > 160 { return Err("Invalid run ID".into()); }
         if presentation.as_ref().is_some_and(|p| p.profile_id.len() > 160 || p.profile_name.len() > 512
