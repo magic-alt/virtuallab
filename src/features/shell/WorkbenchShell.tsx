@@ -128,8 +128,15 @@ export function WorkbenchShell() {
           activePathRef.current = next.root;
           setSnapshot(next);
           setSnapshotRevision((revision) => revision + 1);
+          setLoading(false);
         }
         return next;
+      }).catch((cause) => {
+        if (ownsSelection()) {
+          setLoading(false);
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+        throw cause;
       });
     }
 
