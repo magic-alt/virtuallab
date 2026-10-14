@@ -97,9 +97,16 @@ export function WorkbenchShell() {
   const [retiredTerminal, setRetiredTerminal] = useState<{ path: string; sequence: number } | null>(null);
   const retiredTerminalSequence = useRef(0);
 
-  const loadSnapshot = useCallback((path: string, requireFresh = false): Promise<RepositorySnapshot> => {
+  const loadSnapshot = useCallback((
+    path: string, requireFresh = false,
+    ownerId: string | null = useWorkbenchStore.getState().activeRepositoryId,
+  ): Promise<RepositorySnapshot> => {
+    // Fresh retries inherit the *original* owner. A previous repository's
+    // delayed watch/inspection must not select a path inside the new one.
+    if (ownerId !== useWorkbenchStore.getState().activeRepositoryId) {
+      return Promise.reject(new Error("Workspace selection changed during inspection"));
+    }
     const key = normalizePath(path);
-    const ownerId = useWorkbenchStore.getState().activeRepositoryId;
     latestSnapshotRequestRef.current = key;
     const ownsSelection = () =>
       latestSnapshotRequestRef.current === key &&
@@ -111,7 +118,7 @@ export function WorkbenchShell() {
         // A filesystem watch refresh may have started before git switch ended.
         // Wait for it, then *reinspect* the new HEAD instead of displaying
         // the snapshot that captured the previous branch.
-        return existing.catch(() => undefined).then(() => loadSnapshot(path, true));
+        return existing.catch(() => undefined).then(() => loadSnapshot(path, true, ownerId));
       }
       // An older request may have lost ownership of the UI when the user
       // switched worktrees. Re-selecting its path must commit its snapshot.
@@ -127,7 +134,7 @@ export function WorkbenchShell() {
 
     const cached = snapshotCacheRef.current.get(key);
     if (
-      cached &&
+      cached && ownsSelection() &&
       normalizePath(activePathRef.current ?? "") !== key
     ) {
       // Switching back to a known repository/worktree should be visually
@@ -383,7 +390,8 @@ export function WorkbenchShell() {
   };
 
   const runGitMutation = async (action: () => Promise<void | boolean>): Promise<boolean> => {
-    if (!activeRepository || gitMutationInFlightRef.current || loading) return false;
+    if (!activeRepository || gitMutationInFlightRef.current || loading ||
+        useWorkbenchStore.getState().activeRepositoryId !== activeRepository.id) return false;
     const repositoryId = activeRepository.id;
     const selectedPath = activePathRef.current ?? activeRepository.path;
     const stillSelected = () =>
@@ -523,6 +531,7 @@ export function WorkbenchShell() {
   };
 
   const switchTab = (nextTab: WorkspaceTab) => {
+    if (activeRepository && !workspaceReady) return;
     setTab(nextTab);
     if (!activeRepository) return;
     saveWorkspaceState({
