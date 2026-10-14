@@ -4,7 +4,8 @@ import {
   type AgentRecoverySnapshot, type AgentJournalEntry,
 } from "@/lib/agentJournal";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CircleStop, Play, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CircleStop, Play, ShieldAlert, Settings2, FolderOpen } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { getHarnessAdapter } from "@/lib/agentHarness";
 import { AgentApprovalBroker, type ProtectedAction } from "@/lib/agentSafety";
 import { WorkspaceAgentService } from "@/lib/workspaceAgent";
@@ -38,6 +39,22 @@ function describe(event: AgentEvent): string {
 const timeLabel = (time: number) => new Date(time).toLocaleTimeString();
 const emptyCapabilities: AgentHarnessCapabilities | null = null;
 const EMPTY_EVENTS: AgentEvent[] = [];
+const CODEX_PATH_KEY = "virtuallab-codex-executable-v1";
+function storedCodexPath(): string {
+  try { return window.localStorage.getItem(CODEX_PATH_KEY) ?? ""; }
+  catch { return ""; }
+}
+function isCodexHarness(kind: AgentHarnessKind): boolean {
+  return kind === "codex" || kind === "deepseek";
+}
+function eventTitle(event: AgentEvent): string {
+  if (event.eventType === "agent.turn_started" || event.method === "turn/started") return "Task started";
+  if (event.eventType === "agent.turn_completed" || event.method === "turn/completed") return "Task finished";
+  if (event.eventType === "agent.session_started") return "Agent connected";
+  if (event.eventType === "agent.session_stopped") return "Agent disconnected";
+  if (event.eventType === "agent.protocol_error" || event.eventType === "agent.stderr") return "Diagnostic";
+  return event.method ?? event.eventType.replace(/^agent\./, "");
+}
 
 export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const key = agentWorkspaceKey(workspaceRoot);
@@ -54,6 +71,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const skills = config.skills.filter((v) => selection.skillIds.includes(v.id));
   const [harness, setHarness] = useState<AgentHarnessKind>(binding?.harness ?? "codex");
   const [capabilities, setCapabilities] = useState<AgentHarnessCapabilities | null>(emptyCapabilities);
+  const [codexPath, setCodexPath] = useState(storedCodexPath);
   const [attached, setAttached] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,26 +121,52 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   }
-  const check = () => run(async () => { setCapabilities(await adapter.capabilities()); });
-  const attach = () => run(async () => {
-    const status = await adapter.capabilities();
+  const check = () => run(async () => {
+    setCapabilities(await adapter.capabilities(isCodexHarness(harness) ? codexPath || undefined : undefined));
+  });
+  // First task can connect and start in one explicit click. Use the binary
+  // returned by the capability probe so check and app-server cannot diverge.
+  async function ensureAttached() {
+    const current = useAgentSessionStore.getState().bindings[key];
+    if (current && current.harness !== harness) {
+      throw new Error("This workspace remembers another provider. Stop and forget that thread before switching.");
+    }
+    if (attached && current) return current;
+    const status = await adapter.capabilities(isCodexHarness(harness) ? codexPath || undefined : undefined);
     setCapabilities(status);
     if (!status.available) throw new Error(status.detail);
-    const result = await new WorkspaceAgentService(adapter).attach(workspaceRoot);
+    const result = await new WorkspaceAgentService(adapter).attach(
+      workspaceRoot, isCodexHarness(harness) ? status.executablePath ?? codexPath : undefined,
+    );
     setBinding(result);
     setAttached(true);
-  });
+    return result;
+  }
+  const attach = () => run(async () => { await ensureAttached(); });
   const send = () => run(async () => {
-    if (!attached || !prompt.trim()) return;
+    if (!prompt.trim() || turn) return;
+    const current = await ensureAttached();
     const input = buildAgentPrompt(prompt, role, skills);
-    const current = useAgentSessionStore.getState().bindings[key];
-    if (!current || current.harness !== harness) throw new Error("Attach this harness first.");
     const result = await adapter.startTurn({
       workspaceRoot, threadId: current.threadId, text: input,
     });
     setActiveTurn(workspaceRoot, result.turnId);
     setPrompt("");
   });
+  const chooseCodexPath = () => run(async () => {
+    if (attached || turn) throw new Error("Stop the attached runtime before changing the Codex executable.");
+    const path = await open({ directory: false, multiple: false, title: "Choose codex executable or launcher" });
+    if (typeof path !== "string") return;
+    window.localStorage.setItem(CODEX_PATH_KEY, path);
+    setCodexPath(path);
+    setCapabilities(null);
+  });
+  const resetCodexPath = () => {
+    if (attached || turn) return;
+    window.localStorage.removeItem(CODEX_PATH_KEY);
+    setCodexPath("");
+    setCapabilities(null);
+  };
   const interrupt = () => run(async () => {
     const current = useAgentSessionStore.getState().bindings[key];
     if (!turn || !current) return;
