@@ -116,6 +116,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   }, [workspaceRoot, enabled, journalRevision]);
 
   const unresolved = unverifiedRecoveredTurns(recovery);
+  const nativeRuntimeRegistered = recovery?.nativeSessionRegistered ?? false;
 
   async function run(task: () => Promise<void>) {
     setBusy(true); setError("");
@@ -156,7 +157,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setPrompt("");
   });
   const chooseCodexPath = () => run(async () => {
-    if (attached || turn) throw new Error("Stop the attached runtime before changing the Codex executable.");
+    if (attached || turn || nativeRuntimeRegistered) throw new Error("Stop the attached runtime before changing the Codex executable.");
     const path = await open({ directory: false, multiple: false, title: "Choose codex executable or launcher" });
     if (typeof path !== "string") return;
     window.localStorage.setItem(CODEX_PATH_KEY, path);
@@ -164,7 +165,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setCapabilities(null);
   });
   const resetCodexPath = () => {
-    if (attached || turn) return;
+    if (attached || turn || nativeRuntimeRegistered) return;
     window.localStorage.removeItem(CODEX_PATH_KEY);
     setCodexPath("");
     setCapabilities(null);
@@ -183,8 +184,11 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setPrompt("");
   });
   const stop = () => run(async () => {
-    await adapter.stopSession(workspaceRoot);
+    // Tabs unmount this pane. The native runtime can still be alive when
+    // attached=false; stop the saved owner rather than the selected dropdown.
+    await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
     setAttached(false); setActiveTurn(workspaceRoot, null);
+    setJournalRevision((value) => value + 1);
   });
   const forget = () => run(async () => {
     if (!await confirmNativeAction("Forget the saved thread association for this workspace? This cannot be undone.")) return;
@@ -193,7 +197,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setAttached(false); setActiveTurn(workspaceRoot, null);
   });
   const changeHarness = (value: AgentHarnessKind) => {
-    if (attached || turn) {
+    if (attached || turn || nativeRuntimeRegistered) {
       setError("Stop the current session before changing harness.");
       return;
     }
@@ -311,7 +315,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
               <CircleStop size={14}/>Interrupt task
             </button>
           )}
-          <button type="button" onClick={() => void stop()} disabled={!enabled || busy || !attached}
+          <button type="button" onClick={() => void stop()} disabled={!enabled || busy || (!attached && !binding && !nativeRuntimeRegistered)}
             className="rounded border border-white/20 px-3 py-2 text-xs">Stop runtime</button>
           {binding && <button type="button" onClick={() => void forget()}
             disabled={!enabled || busy} className="text-xs text-stone-400 underline">Forget saved thread</button>}
@@ -415,12 +419,12 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <div className="break-all font-mono text-[11px]">Configured Codex executable: {codexPath || "Automatic (desktop PATH)"}</div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void chooseCodexPath()}
-              disabled={!enabled || busy || attached || !!turn || !isCodexHarness(harness)}
+              disabled={!enabled || busy || attached || !!turn || nativeRuntimeRegistered || !isCodexHarness(harness)}
               className="flex items-center gap-2 rounded border border-white/20 px-3 py-2">
               <FolderOpen size={14}/>Choose Codex executable
             </button>
             <button type="button" onClick={resetCodexPath}
-              disabled={!enabled || busy || attached || !!turn || !codexPath}
+              disabled={!enabled || busy || attached || !!turn || nativeRuntimeRegistered || !codexPath}
               className="rounded border border-white/20 px-3 py-2">Use automatic PATH</button>
           </div>
           <p>Windows PowerShell: run <code className="text-stone-200">Get-Command codex -All</code> or
