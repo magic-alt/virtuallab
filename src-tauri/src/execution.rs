@@ -92,6 +92,7 @@ fn read_terminal_output(reader: &mut dyn Read, _writer: &TerminalWriter, mut emi
 }
 
 struct TerminalSession {
+    cwd: String,
     #[cfg(unix)]
     process: crate::terminal_process::TerminalProcess,
     master: Option<Box<dyn MasterPty + Send>>,
@@ -238,6 +239,7 @@ fn terminal_spawn_blocking(
     let cancelled = app.state::<RunRegistry>().is_closed() || state.reservations.lock()
         .map_err(|_| "Terminal reservation lock poisoned")?.get(&id).copied().unwrap_or(true);
     let session = Arc::new(Mutex::new(TerminalSession {
+        cwd: cwd.clone(),
         #[cfg(unix)]
         process,
         master: Some(pair.master), writer, child,
@@ -871,6 +873,22 @@ impl ProcessManager {
     }
 }
 impl TerminalManager {
+    /// A terminal whose shell still owns a worktree blocks deletion. Startup
+    /// reservations are also treated as busy until they can be attributed.
+    pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
+        let sessions = self.sessions.lock().map_err(|_| "Terminal manager lock poisoned")?.clone();
+        if self.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?
+            .keys().any(|id| !sessions.contains_key(id)) {
+            return Ok(true);
+        }
+        let key = crate::workspace_identity::key(path);
+        for session in sessions.values() {
+            let cwd = &session.lock().map_err(|_| "Terminal session lock poisoned")?.cwd;
+            if crate::workspace_identity::key(cwd) == key { return Ok(true); }
+        }
+        Ok(false)
+    }
+
     pub fn shutdown(&self) {
         if let Ok(mut pending) = self.reservations.lock() { for cancelled in pending.values_mut() { *cancelled = true; } }
         if let Ok(sessions) = self.sessions.lock() {
