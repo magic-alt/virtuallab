@@ -45,6 +45,34 @@ export async function inspectRepository(path: string): Promise<RepositorySnapsho
   return invoke<RepositorySnapshot>("inspect_repository", { path });
 }
 
+/**
+ * Deregistration never deletes Git data. A native confirmation is required,
+ * followed by a native all-worktree reservation and active-owner preflight.
+ * On rejection the repository remains visible and workers keep running.
+ */
+export async function detachRepositoryAfterConfirmation(repositoryRoot: string): Promise<boolean> {
+  requireDesktop();
+  const accepted = await confirm(
+    "Remove this repository from VirtualLab?\n\n" + repositoryRoot +
+    "\n\nGit files and worktrees are NOT deleted. All attached Agents, Terminals, Run/Build and Verification tasks must already be stopped; active work blocks removal.",
+    {
+      title: "Remove repository from VirtualLab",
+      kind: "warning",
+      okLabel: "Remove from list",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!accepted) return false;
+  await invoke("repository_detach", { repositoryRoot });
+  return true;
+}
+
+/** Re-importing a known Git repository lifts its native detached reservation. */
+export async function restoreRepositoryRegistration(repositoryRoot: string): Promise<void> {
+  requireDesktop();
+  await invoke("repository_restore", { repositoryRoot });
+}
+
 /** Opens a registered worktree in Explorer, Finder or the Linux file manager. */
 export async function openWorkspaceDirectory(repositoryRoot: string, workspaceRoot: string): Promise<void> {
   requireDesktop();
