@@ -2,8 +2,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspace } from "./TerminalWorkspace";
+import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
+import { PREVIEW_SNAPSHOT } from "@/data/preview";
 
 const backend = vi.hoisted(() => ({
+  isDesktopRuntime: vi.fn(() => true),
   terminalSpawn: vi.fn().mockResolvedValue(undefined),
   terminalStop: vi.fn().mockResolvedValue(undefined),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
@@ -12,6 +15,7 @@ const backend = vi.hoisted(() => ({
 
 const events = vi.hoisted(() => ({
   callbacks: {} as Record<string, (event: { payload: unknown }) => void>,
+  listeners: {} as Record<string, Set<(event: { payload: unknown }) => void>>,
   holdOutputListener: false,
   resolveOutputListener: null as (() => void) | null,
 }));
@@ -26,13 +30,16 @@ const xterm = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/backend", () => backend);
+vi.mock("@/features/execution/ProcessRunner", () => ({ ProcessRunner: () => null }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
     if (name === "terminal://output" && events.holdOutputListener) {
       await new Promise<void>((resolve) => { events.resolveOutputListener = resolve; });
     }
-    events.callbacks[name] = callback;
-    return () => { delete events.callbacks[name]; };
+    const listeners = events.listeners[name] ??= new Set();
+    listeners.add(callback);
+    events.callbacks[name] = (event) => { for (const listener of listeners) listener(event); };
+    return () => { listeners.delete(callback); if (!listeners.size) delete events.callbacks[name]; };
   }),
 }));
 vi.mock("@xterm/addon-fit", () => ({
@@ -62,10 +69,12 @@ vi.mock("@xterm/xterm", () => ({
 
 beforeEach(() => {
   events.callbacks = {};
+  events.listeners = {};
   events.holdOutputListener = false;
   events.resolveOutputListener = null;
   xterm.instances.length = 0;
   for (const method of Object.values(backend)) method.mockReset().mockResolvedValue(undefined);
+  backend.isDesktopRuntime.mockReset().mockReturnValue(true);
 });
 
 async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
@@ -231,5 +240,55 @@ describe("TerminalWorkspace native PTY lifecycle", () => {
       expect(screen.queryByRole("button", { name: /terminal 1/i })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: /start terminal/i })).toBeInTheDocument();
+  });
+});
+
+
+describe("workspace terminal navigation", () => {
+  it("retains each worktree and repository PTY, scrollback and input across round trips", async () => {
+    const user = userEvent.setup();
+    const props = { profileRepositoryRoot: "D:/repo", isPreview: false, onTabChange: vi.fn() };
+    const first = { ...PREVIEW_SNAPSHOT, root: "D:/repo", currentBranch: "main" };
+    const second = { ...first, root: "D:/repo-feature", currentBranch: "feature" };
+    const other = { ...first, root: "D:/other" };
+    const view = render(<WorkspaceContent {...props} snapshot={first} tab="terminal" />);
+    const id = await startTerminal(user);
+    const handle = xterm.instances[0];
+
+    view.rerender(<WorkspaceContent {...props} snapshot={second} tab="terminal" />);
+    const secondId = await startTerminal(user);
+    const secondHandle = xterm.instances[1];
+    view.rerender(<WorkspaceContent {...props} profileRepositoryRoot="D:/other" snapshot={other} tab="terminal" />);
+    const otherId = await startTerminal(user);
+    view.rerender(<WorkspaceContent {...props} profileRepositoryRoot="D:/other" snapshot={other} tab="run" />);
+    expect(backend.terminalStop).not.toHaveBeenCalled();
+    expect(handle.dispose).not.toHaveBeenCalled();
+    expect(secondHandle.dispose).not.toHaveBeenCalled();
+    act(() => {
+      events.callbacks["terminal://output"]({ payload: { id, data: [65] } });
+      events.callbacks["terminal://output"]({ payload: { id: secondId, data: [66] } });
+    });
+    expect(handle.write).toHaveBeenCalledWith(new Uint8Array([65]));
+    expect(secondHandle.write).toHaveBeenCalledWith(new Uint8Array([66]));
+
+    view.rerender(<WorkspaceContent {...props} snapshot={{ ...first, root: "d:\\repo\\" }} tab="terminal" />);
+    expect(screen.getByRole("button", { name: /terminal 1/i })).toBeInTheDocument();
+    act(() => { handle.onInput?.("echo alive\r"); });
+    await waitFor(() => expect(backend.terminalWrite).toHaveBeenCalledWith(id, new TextEncoder().encode("echo alive\r")));
+    view.rerender(<WorkspaceContent {...props} snapshot={second} tab="terminal" />);
+    expect(screen.getByRole("button", { name: /terminal 1/i })).toBeInTheDocument();
+    expect(backend.terminalSpawn).toHaveBeenCalledTimes(3);
+    expect(xterm.instances).toHaveLength(3);
+    expect(backend.terminalStop).not.toHaveBeenCalled();
+    view.rerender(<WorkspaceContent {...props} profileRepositoryRoot="D:/other" snapshot={other} tab="terminal" />);
+    expect(screen.getByRole("button", { name: /terminal 1/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /close terminal/i }));
+    expect(backend.terminalStop).toHaveBeenCalledWith(otherId);
+    expect(screen.queryByRole("button", { name: /terminal 1/i })).not.toBeInTheDocument();
+    view.unmount();
+    await waitFor(() => {
+      expect(backend.terminalStop).toHaveBeenCalledWith(id);
+      expect(backend.terminalStop).toHaveBeenCalledWith(secondId);
+    });
   });
 });

@@ -92,7 +92,7 @@ describe("WorkspaceContent navigation", () => {
       "history",
     ]);
   });
-  it("retains terminal mounts across navigation and resets only for a new worktree", () => {
+  it("retains terminal mounts across tabs, worktrees and repositories", () => {
     const props = {
       snapshot: PREVIEW_SNAPSHOT,
       profileRepositoryRoot: "D:/Project/virtuallab",
@@ -112,15 +112,15 @@ describe("WorkspaceContent navigation", () => {
     expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(1);
     expect(terminalLifecycle.unmounts).not.toHaveBeenCalled();
 
-    // Equivalent Windows spellings are one identity; changing worktrees
-    // disposes the old native PTY and establishes the new worktree context.
+    // Equivalent Windows spellings are one identity; other workspaces
+    // keep their own mounted terminal panes when selection changes.
     const slash = { ...PREVIEW_SNAPSHOT, root: "D:/Project/repo" };
     view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={slash} />);
     expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(2);
     view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={{ ...slash, root: "d:\\Project\\repo\\" }} />);
     expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(2);
     view.rerender(<WorkspaceContent {...props} tab="terminal" snapshot={{ ...slash, root: "D:/Project/another" }} />);
-    expect(terminalLifecycle.unmounts).toHaveBeenCalledTimes(2);
+    expect(terminalLifecycle.unmounts).not.toHaveBeenCalled();
     expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(3);
   });
 

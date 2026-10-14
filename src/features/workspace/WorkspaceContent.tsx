@@ -20,9 +20,8 @@ import { AgentWorkspace } from "@/features/agents/AgentWorkspace";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
-import { TerminalWorkspace } from "@/features/terminal/TerminalWorkspace";
+import { WorkspaceTerminals } from "@/features/terminal/WorkspaceTerminals";
 import { isDesktopRuntime } from "@/lib/backend";
-import { workspaceKey } from "@/lib/workspaceKey";
 import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
@@ -146,20 +145,11 @@ export function WorkspaceContent({
         {tab === "agents" && (
           <AgentWorkspace workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
-        {/* Preserve PTY, command history and scrollback when switching tabs.
-            Selecting another worktree is a separate session-lifetime boundary. */}
-        <div
-          className={cn("h-full min-h-0", tab !== "terminal" && "hidden")}
-          aria-hidden={tab !== "terminal"}
-          data-testid="terminal-pane"
-        >
-          <TerminalWorkspace
-            key={workspaceKey(snapshot.root)}
-            cwd={snapshot.root}
-            enabled={!isPreview && isDesktopRuntime()}
-            visible={tab === "terminal"}
-          />
-        </div>
+        <WorkspaceTerminals
+          cwd={snapshot.root}
+          enabled={!isPreview && isDesktopRuntime()}
+          visible={tab === "terminal"}
+        />
         {tab === "run" && (
           <ProcessRunner
             key={snapshot.root}
