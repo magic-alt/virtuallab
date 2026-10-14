@@ -20,6 +20,8 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
+  detachRepositoryAfterConfirmation,
+  restoreRepositoryRegistration,
   deleteLocalBranchAfterConfirmation,
   deleteOriginBranchAfterConfirmation,
   gitFetchOrigin,
@@ -289,6 +291,8 @@ export function WorkbenchShell() {
       // Inspect before registering a new repository: a failed dialog or an
       // invalid folder must not modify the current repository's selection.
       const next = await inspectRepository(path);
+      // Lift a prior native detached reservation before restoring runnable UI.
+      await restoreRepositoryRegistration(next.root);
       snapshotCacheRef.current.set(normalizePath(next.root), next);
       const existing = useWorkbenchStore.getState().repositories.find(
         (item) => normalizePath(item.path) === normalizePath(next.root));
@@ -535,6 +539,25 @@ export function WorkbenchShell() {
     }
   };
 
+  const detachLocalRepository = async (id: string) => {
+    const record = useWorkbenchStore.getState().repositories.find((repo) => repo.id === id);
+    if (!record || gitMutationInFlightRef.current || !isDesktopRuntime()) return;
+    gitMutationInFlightRef.current = true;
+    setGitBusy(true);
+    setError(null);
+    try {
+      if (!await detachRepositoryAfterConfirmation(record.path)) return;
+      // Only after native retirement can the UI forget the repository.
+      removeRepository(id);
+      snapshotCacheRef.current.delete(normalizePath(record.path));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      gitMutationInFlightRef.current = false;
+      setGitBusy(false);
+    }
+  };
+
   const selectRepository = (id: string) => {
     if (id === activeRepositoryId) return;
     latestSnapshotRequestRef.current = null;
@@ -619,9 +642,9 @@ export function WorkbenchShell() {
           isPreview={isPreview}
           onAdd={addLocalRepository}
           filterQuery={searchQuery}
-          repositoryActionsEnabled={native}
+          repositoryActionsEnabled={native && !gitBusy}
           onSelect={selectRepository}
-          onRemove={removeRepository}
+          onRemove={(id) => { void detachLocalRepository(id); }}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}
           onOpenWorkspaceFolder={(path) => {
             if (activeRepository && workspaceReady) void openFolder(path, activeRepository.path);
