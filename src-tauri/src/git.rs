@@ -1234,7 +1234,7 @@ fn git_switch_branch_blocking(repository_root: String, workspace_root: String, b
 }
 
 /// Open only a registered Git worktree in the OS file manager.
-//// On Windows explorer.exe is a GUI process (no terminal window); do not
+/// On Windows explorer.exe is a GUI process (no terminal window); do not
 /// invoke a command shell or interpolate a user-controlled path.
 #[tauri::command]
 pub async fn open_workspace_directory(
@@ -1247,11 +1247,11 @@ pub async fn open_workspace_directory(
             return Err(format!("Workspace directory no longer exists: {workspace}"));
         }
         #[cfg(target_os = "windows")]
-        let mut command = std::process::Command::new("explorer.exe");
+        let mut command = background_command("explorer.exe");
         #[cfg(target_os = "macos")]
-        let mut command = std::process::Command::new("open");
+        let mut command = background_command("open");
         #[cfg(target_os = "linux")]
-        let mut command = std::process::Command::new("xdg-open");
+        let mut command = background_command("xdg-open");
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         return Err("Opening folders is unsupported on this operating system".into());
 
