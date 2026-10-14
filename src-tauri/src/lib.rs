@@ -9,9 +9,11 @@ mod cli_path;
 mod terminal_process;
 mod managed_process;
 mod workspace_identity;
+mod workspace_lifecycle;
 mod run_registry;
 use tauri::Manager;
 use run_registry::{RunRegistry, list_runs};
+use workspace_lifecycle::WorkspaceLifecycle;
 mod agent;
 mod agent_journal;
 mod agent_ownership;
@@ -61,6 +63,7 @@ pub fn run() {
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
         .manage(RunRegistry::default())
+        .manage(WorkspaceLifecycle::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentJournal::default())
