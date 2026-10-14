@@ -261,8 +261,8 @@ has been observed and resolved on a physical Windows session.
 | Surface | Control or safety contract | Automated evidence | Desktop acceptance required |
 | --- | --- | --- | --- |
 | Navigation | Agents tab | \`WorkspaceContent.test.tsx\` | switch across all tabs and reopen Agents |
-| Agents | provider selector and capability detection | \`agentHarness.test.ts\` | Codex/DeepSeek/Claude/OpenCode availability, missing CLI, missing DeepSeek env key |
-| Agents | Attach, resume, stop and forget saved thread | \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | restart application and explicitly resume saved provider session |
+| Agents | provider selector, explicit Codex path, capability detection | \`agentHarness.test.ts\`, \`AgentWorkspace.test.tsx\`, Rust launcher-path tests | Compare PowerShell 0.162 against a GUI that resolves older 0.157.1; inspect path; choose newer launcher; verify detected/runtime paths match |
+| Agents | One-click Connect & run task, manual Attach, stop and forget thread | \`AgentWorkspace.test.tsx\`, \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | Run harmless turn without pre-attaching; stop and explicitly resume saved thread after restart |
 | Native | exactly one harness runtime per workspace | \`agent_ownership.rs\` Rust test | attempt a second provider without stopping first; must refuse |
 | Agents | bounded structured event timeline, interrupt | \`AgentWorkspace.test.tsx\`, native protocol unit tests | stream real provider turn and inspect 300-event cap; stop and interrupt |
 | Agents | custom roles and optional skills | \`agentConfiguration.test.ts\`, \`AgentWorkspace.test.tsx\` | select role, add user-defined skill, switch worktrees, verify isolation |
@@ -271,7 +271,7 @@ has been observed and resolved on a physical Windows session.
 
 ### V0.5 manual provider checks (not covered by CI)
 
-1. Use two disposable worktrees. Select **Agents**, check Codex availability, Attach and run a harmless prompt. Confirm \`item/agentMessage/delta\` and \`turn/completed\` appear as structured events.
+1. Use two disposable worktrees. Select **Agents**, enter a harmless prompt, click **Connect & run task** (no manual Attach required). Confirm \`item/agentMessage/delta\` and \`turn/completed\` appear as structured events.
 2. Run a long non-destructive Codex turn and Interrupt; verify the runtime can accept another turn. Stop and resume; thread ID should remain bound.
 3. Set \`DEEPSEEK_API_KEY\` in the desktop process environment and configure the official Codex DeepSeek model catalog. Check availability, select DeepSeek, Attach, run a harmless request, confirm selected provider/model and that no API key appears in UI logs/argv.
 4. With native \`claude\` and \`opencode\` executables installed and authenticated, run harmless read-only prompts. Verify provider-native session IDs replace provisional IDs and subsequent turns resume the same session. Test missing executable and malformed event failure behavior.
