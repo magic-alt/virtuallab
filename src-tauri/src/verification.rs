@@ -576,6 +576,22 @@ mod tests {
         path
     }
     #[test]
+    fn active_verification_prevents_worktree_removal_until_finished() {
+        let manager = VerificationManager::default();
+        let key = "fixture-verification".to_string();
+        manager.active.lock().unwrap().insert(key.clone(), ActiveVerification {
+            workspace_root: "/repo/verification".into(),
+            cancel: Arc::new(AtomicBool::new(false)),
+        });
+        assert!(manager.owns_workspace("/repo/verification/").unwrap());
+        assert!(!manager.owns_workspace("/repo/other").unwrap());
+        manager.active.lock().unwrap().get(&key).unwrap().cancel.store(true, Ordering::Release);
+        assert!(manager.owns_workspace("/repo/verification").unwrap(),
+            "Cancellation pending must still block deletion");
+        manager.active.lock().unwrap().remove(&key);
+        assert!(!manager.owns_workspace("/repo/verification").unwrap());
+    }
+    #[test]
     fn exited_parent_with_inherited_pipes_finishes_promptly() {
         let dir = fixture_dir("parent-exit");
         // Finite descendant ensures a broken runner fails rather than hanging the suite.
