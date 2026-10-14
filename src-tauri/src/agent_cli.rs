@@ -159,6 +159,8 @@ pub fn agent_cli_session_start(
     request: CliStart,
 ) -> Result<CliBinding, String> {
     binary(&request.harness)?;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let root = request.workspace_root.trim();
     if root.is_empty() || !std::path::Path::new(root).is_dir() {
         return Err("Agent workspace must be an existing directory.".into());
