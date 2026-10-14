@@ -1571,6 +1571,9 @@ fn ensure_worktree_not_executing(app: &tauri::AppHandle, path: &str) -> Result<(
     if app.state::<crate::run_registry::RunRegistry>().has_active_workspace(path)? {
         return Err("Workspace has an active Run/Build job. Stop it and confirm exit before removing this worktree.".into());
     }
+    if app.state::<crate::verification::VerificationManager>().owns_workspace(path)? {
+        return Err("Workspace has an active verification run. Cancel the run and confirm completion before removing this worktree.".into());
+    }
     if app.state::<crate::execution::TerminalManager>().owns_workspace(path)? {
         return Err("Workspace has an active terminal (or terminal startup). Close the terminal before removing this worktree.".into());
     }
