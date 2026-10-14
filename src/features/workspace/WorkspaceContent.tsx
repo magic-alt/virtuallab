@@ -22,6 +22,7 @@ import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
 import { WorkspaceTerminals } from "@/features/terminal/WorkspaceTerminals";
 import { isDesktopRuntime } from "@/lib/backend";
+import { workspaceKey } from "@/lib/workspaceKey";
 import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
@@ -129,6 +130,7 @@ export function WorkspaceContent({
         {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
         {tab === "changes" && (
           <ChangesReview
+            key={workspaceKey(snapshot.root)}
             snapshot={snapshot}
             repositoryRoot={profileRepositoryRoot}
             workspaceRoot={snapshot.root}
@@ -141,6 +143,7 @@ export function WorkspaceContent({
         )}
         {tab === "github" && (
           <GithubPanel
+            key={workspaceKey(snapshot.root)}
             snapshot={snapshot}
             workspaceRoot={snapshot.root}
             enabled={!isPreview && isDesktopRuntime()}
@@ -149,7 +152,7 @@ export function WorkspaceContent({
           />
         )}
         {tab === "agents" && (
-          <AgentWorkspace workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
+          <AgentWorkspace key={workspaceKey(snapshot.root)} workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
         <WorkspaceTerminals
           cwd={snapshot.root}
@@ -161,7 +164,7 @@ export function WorkspaceContent({
         />
         {tab === "run" && (
           <ProcessRunner
-            key={snapshot.root}
+            key={workspaceKey(snapshot.root)}
             cwd={snapshot.root}
             repositoryRoot={profileRepositoryRoot}
             enabled={!isPreview && isDesktopRuntime()}
