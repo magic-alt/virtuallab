@@ -12,6 +12,8 @@ const harness = vi.hoisted(() => ({
   stashChanges: vi.fn(),
   deleteOriginBranch: vi.fn(),
   removeWorktree: vi.fn(),
+  detachRepository: vi.fn(),
+  restoreRepository: vi.fn(),
   watchStart: vi.fn(),
   watchStop: vi.fn(),
 }));
@@ -39,6 +41,8 @@ vi.mock("@/lib/backend", () => ({
   chooseRepositoryDirectory: vi.fn(),
   createWorktree: vi.fn(),
   removeWorktreeAfterConfirmation: harness.removeWorktree,
+  detachRepositoryAfterConfirmation: harness.detachRepository,
+  restoreRepositoryRegistration: harness.restoreRepository,
   watchStart: harness.watchStart,
   watchStop: harness.watchStop,
 }));
@@ -114,6 +118,8 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.stashChanges.mockReset().mockResolvedValue(true);
     harness.deleteOriginBranch.mockReset();
     harness.removeWorktree.mockReset();
+    harness.detachRepository.mockReset().mockResolvedValue(true);
+    harness.restoreRepository.mockReset().mockResolvedValue(undefined);
     harness.watchStart.mockReset();
     harness.watchStop.mockReset();
     harness.inspect.mockImplementation(async () => snapshot());
@@ -127,6 +133,33 @@ describe("workbench branch switching with untracked artifacts", () => {
       activeRepositoryId: "repo-1",
       workspaceStates: {},
     });
+  });
+
+  it("keeps the repository registered when native retirement rejects active workers", async () => {
+    const user = userEvent.setup();
+    harness.detachRepository.mockRejectedValueOnce(new Error("Workspace has an attached agent"));
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledWith(repoRoot));
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
+    expect(await screen.findByText(/Workspace has an attached agent/)).toBeInTheDocument();
+  });
+
+  it("forgets the repository only after native retirement confirms success", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledWith(repoRoot));
+    await waitFor(() => expect(useWorkbenchStore.getState().repositories).toHaveLength(0));
+  });
+
+  it("preserves the repository when operator cancels native removal confirmation", async () => {
+    const user = userEvent.setup();
+    harness.detachRepository.mockResolvedValueOnce(false);
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledTimes(1));
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
   });
 
   it("opens documentation from the application Help menu, not a workspace tab", async () => {

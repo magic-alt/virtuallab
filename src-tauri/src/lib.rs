@@ -9,9 +9,11 @@ mod cli_path;
 mod terminal_process;
 mod managed_process;
 mod workspace_identity;
+mod workspace_lifecycle;
 mod run_registry;
 use tauri::Manager;
 use run_registry::{RunRegistry, list_runs};
+use workspace_lifecycle::WorkspaceLifecycle;
 mod agent;
 mod agent_journal;
 mod agent_ownership;
@@ -42,7 +44,7 @@ use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
 };
-use git::{create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, open_workspace_directory, remove_worktree};
+use git::{create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, open_workspace_directory, remove_worktree, repository_detach, repository_restore};
 use github::{github_capabilities, github_context, github_list_pull_requests, github_merge_pull_request, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
 use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
@@ -61,6 +63,7 @@ pub fn run() {
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
         .manage(RunRegistry::default())
+        .manage(WorkspaceLifecycle::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentJournal::default())
@@ -87,6 +90,8 @@ pub fn run() {
             github_post_review_comment,
             create_worktree,
             remove_worktree,
+            repository_detach,
+            repository_restore,
             terminal_spawn,
             terminal_write,
             terminal_resize,

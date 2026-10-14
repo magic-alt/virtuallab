@@ -93,7 +93,8 @@ pub struct CliAgentManager {
 
 impl CliAgentManager {
     pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
-        Ok(self.sessions.lock().map_err(err_lock)?.contains_key(&key(path)))
+        Ok(self.sessions.lock().map_err(err_lock)?.keys()
+            .any(|root| crate::workspace_identity::contains(path, root)))
     }
 }
 fn key(root: &str) -> String {
@@ -159,6 +160,8 @@ pub fn agent_cli_session_start(
     request: CliStart,
 ) -> Result<CliBinding, String> {
     binary(&request.harness)?;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let root = request.workspace_root.trim();
     if root.is_empty() || !std::path::Path::new(root).is_dir() {
         return Err("Agent workspace must be an existing directory.".into());

@@ -496,6 +496,8 @@ pub fn build_workflow_start(
     spec: BuildWorkflowSpec,
 ) -> Result<(), String> {
     let root = validate_spec(&spec)?;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&root.to_string_lossy())?;
     let restart_plan = if spec.restart_after_build {
         if !is_tauri_desktop_build(&spec.steps) {
             return Err("Only npm run tauri:build may rebuild and restart the running app".into());

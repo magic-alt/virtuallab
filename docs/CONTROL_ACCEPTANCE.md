@@ -286,3 +286,36 @@ A green CI means tests/builds passed on that commit, not that provider credentia
 ## Cross-project one-click workflow acceptance
 
 See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix. Manually verify detected npm and Tauri scripts, Qt CMake configure/build, Windows Keil UV4 batch build, a customized two-step profile across two worktrees, cancellation and stop-on-failure. Confirm that a cancelled Deploy prompt creates no process and that no implicit firmware flashing or remote publish occurs. Build workflow output is transient and must not be claimed as durable verification evidence.
+
+
+## V0.6 lifecycle acceptance (PR stack #62 plus V0.6-B)
+
+- [ ] Navigate 2 repositories × 2 registered worktrees; start 2 native PTYs in different worktrees; removing either repository with a live PTY must fail closed without hiding it
+- [ ] Start an Agent/Run/Build/Verification gate, attempt removal while running and during Stop; removal must fail until observed native cleanup
+- [ ] Attempt `remove_worktree` concurrently with `terminal_spawn`, `process_spawn`, `agent_session_start` and `verification_run`. The startup lease/retirement lease must be mutually exclusive; no owner may be lost
+- [ ] Cancel native removal confirmation: repository list, worktrees and workers are unchanged
+- [ ] Detach an idle repository: only UI registration is removed, physical repository/worktrees remain; re-import restores the ability to start PTYs and Agents
+- [ ] Validate Windows casefold/UNC aliases, POSIX case-distinct folders and symlink aliases; Git inventory includes external sibling worktrees
+- [ ] Forced quit and relaunch: native agent journal never auto-reruns an incomplete turn; recent recovery is marked UNVERIFIED, not successful
+- [ ] CI final SHA and packaged interactive Windows/macOS/Linux acceptance recorded separately; do not mark an unchecked manual row as PASS
+
+### V0.6-B lifecycle regression coverage
+
+Native automated tests cover startup/retirement mutual exclusion, ancestor/descendant overlap, component-boundary sibling isolation, worker-held reservation survival after waiter cancellation, detach/restore, pending-stop Run and Verification ownership in child directories, canonical symlink ownership, and Windows drive/UNC matching (Windows-only assertions). Real Git fixtures cover an external worktree with spaces/Unicode, preservation of physical files on detach, explicit restore, creation between inventory read and retirement reservation, and rollback when the second inventory read fails.
+
+Additional desktop checks remain manual:
+
+- [ ] Start a Run/Build or PTY with a child-directory cwd; parent worktree/repository removal must remain blocked until native cleanup completes.
+- [ ] Race New Workspace against repository removal; either creation is excluded or removal rejects a changed inventory and leaves the repository visible. Refresh and retry after creation finishes.
+- [ ] Cancel/drop an awaiting startup or Git mutation command after its blocking worker begins; concurrent retirement/startup must remain excluded until worker registration/mutation finishes.
+
+Automated results do not mark the interactive or other-host acceptance rows above as passed.
+
+Local validation on 2026-10-14, macOS, branch `feat/v0.6-b-workspace-lifecycle-p0` (base `d40eaef` plus local lifecycle fixes):
+
+- PASS: locked dependency installation with `npm ci`; no lockfile changes.
+- PASS: `cargo check --locked --manifest-path src-tauri/Cargo.toml` on macOS.
+- PASS: `npm run acceptance:local` (TypeScript typecheck, frontend control tests: 212 passed / 1 skipped, production build, native Rust tests: 137 passed).
+- PASS: `git diff --check`; review of execution changes found no new arbitrary-shell path.
+- Environment note: sandboxed native process inspection returned `Operation not permitted`; the complete acceptance runner was rerun with system process inspection permitted and passed.
+- NOT RUN: Linux `cargo check --locked`, Windows/Linux acceptance runners, packaged desktop interactive matrix and authenticated provider acceptance. Existing frontend skip remains unchanged.

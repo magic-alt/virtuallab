@@ -219,7 +219,7 @@ impl AgentManager {
     /// explicitly stopped before its worktree can be deleted.
     pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
         Ok(self.runtimes.lock().map_err(lock_error)?
-            .contains_key(&workspace_key(path)))
+            .keys().any(|root| crate::workspace_identity::contains(path, root)))
     }
 }
 
@@ -274,9 +274,12 @@ pub async fn agent_session_start(
     state: State<'_, AgentManager>,
     request: AgentSessionStartRequest,
 ) -> Result<AgentSessionBinding, String> {
+    let start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let manager = state.inner().clone();
     let owner = app.state::<AgentOwnership>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let _start = start;
         let lifecycle = manager.lifecycle.clone();
         let _lifecycle = lifecycle.lock().map_err(lock_error)?;
         if app.state::<crate::run_registry::RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }

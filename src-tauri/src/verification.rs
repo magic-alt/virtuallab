@@ -13,7 +13,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 const READER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -140,9 +140,8 @@ impl VerificationManager {
     /// Verification writes evidence under its owning worktree: never delete it
     /// while a gate is still in progress or cancellation is pending.
     pub fn owns_workspace(&self, root: &str) -> Result<bool, String> {
-        let key = crate::workspace_identity::key(root);
         Ok(self.active.lock().map_err(lock_err)?.values().any(|run|
-            crate::workspace_identity::key(&run.workspace_root) == key))
+            crate::workspace_identity::contains(root, &run.workspace_root)))
     }
 }
 
@@ -154,6 +153,8 @@ pub async fn verification_run(
 ) -> Result<EvidenceManifest, String> {
     validate_id(&request.run_id)?;
     validate_profile(&request.profile)?;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let manager = manager.inner().clone();
     let token = Arc::new(AtomicBool::new(false));
     {
@@ -580,7 +581,7 @@ mod tests {
         let manager = VerificationManager::default();
         let key = "fixture-verification".to_string();
         manager.active.lock().unwrap().insert(key.clone(), ActiveVerification {
-            workspace_root: "/repo/verification".into(),
+            workspace_root: "/repo/verification/build".into(),
             cancel: Arc::new(AtomicBool::new(false)),
         });
         assert!(manager.owns_workspace("/repo/verification/").unwrap());
