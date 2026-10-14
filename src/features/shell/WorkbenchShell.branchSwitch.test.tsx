@@ -118,6 +118,8 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.stashChanges.mockReset().mockResolvedValue(true);
     harness.deleteOriginBranch.mockReset();
     harness.removeWorktree.mockReset();
+    harness.detachRepository.mockReset().mockResolvedValue(true);
+    harness.restoreRepository.mockReset().mockResolvedValue(undefined);
     harness.watchStart.mockReset();
     harness.watchStop.mockReset();
     harness.inspect.mockImplementation(async () => snapshot());
