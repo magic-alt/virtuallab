@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{Write},
-    process::{ ChildStdin, Command, Stdio},
+    process::{ ChildStdin, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Mutex,
