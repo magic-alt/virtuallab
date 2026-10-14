@@ -34,6 +34,9 @@ import type {
 interface Props {
   snapshot: RepositorySnapshot;
   profileRepositoryRoot: string;
+  terminalRepositoryId?: string | null;
+  registeredRepositoryIds?: string[];
+  retiredTerminal?: { path: string; sequence: number } | null;
   tab: WorkspaceTab;
   isPreview: boolean;
   snapshotRevision?: number;
@@ -68,6 +71,9 @@ const tabs: Array<{
 export function WorkspaceContent({
   snapshot,
   profileRepositoryRoot,
+  terminalRepositoryId = null,
+  registeredRepositoryIds = [],
+  retiredTerminal = null,
   tab,
   isPreview,
   snapshotRevision = 0,
@@ -149,6 +155,9 @@ export function WorkspaceContent({
           cwd={snapshot.root}
           enabled={!isPreview && isDesktopRuntime()}
           visible={tab === "terminal"}
+          repositoryId={terminalRepositoryId}
+          registeredRepositoryIds={registeredRepositoryIds}
+          retiredWorkspace={retiredTerminal}
         />
         {tab === "run" && (
           <ProcessRunner
