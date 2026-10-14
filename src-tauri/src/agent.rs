@@ -396,6 +396,7 @@ fn start_session(
 
 #[tauri::command]
 pub async fn agent_turn_start(
+    app: AppHandle,
     state: State<'_, AgentManager>,
     request: AgentTurnStartRequest,
 ) -> Result<AgentTurnStartResult, String> {
@@ -412,10 +413,18 @@ pub async fn agent_turn_start(
                 "input": [{ "type": "text", "text": request.text, "text_elements": [] }]
             }),
         )?;
+        let turn_id = nested_id(&result, "turn")
+            .ok_or_else(|| "Codex response missing turn.id".to_string())?;
+        crate::agent_journal::emit_agent_event(&app, Some(&runtime.binding.harness), AgentEvent {
+            event_type: "agent.turn_started".into(),
+            workspace_root: request.workspace_root.clone(),
+            thread_id: Some(runtime.binding.thread_id.clone()),
+            turn_id: Some(turn_id.clone()),
+            method: None, payload: None, timestamp_ms: now_ms(),
+        });
         Ok(AgentTurnStartResult {
             thread_id: runtime.binding.thread_id.clone(),
-            turn_id: nested_id(&result, "turn")
-                .ok_or_else(|| "Codex response missing turn.id".to_string())?,
+            turn_id,
         })
     })
     .await
