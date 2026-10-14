@@ -91,6 +91,7 @@ export function WorkbenchShell() {
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
+  const watchSequence = useRef(0);
   const snapshotLoadsRef = useRef(new Map<string, Promise<RepositorySnapshot>>());
   const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
   const latestSnapshotRequestRef = useRef<string | null>(null);
@@ -240,7 +241,9 @@ export function WorkbenchShell() {
       return;
     }
 
-    const watchId = `${WATCH_ID}:${snapshot.root}`;
+    // Each subscription owns a unique native ID: an old asynchronous stop
+    // must not tear down a freshly reselected watcher of the same path.
+    const watchId = `${WATCH_ID}:${++watchSequence.current}:${snapshot.root}`;
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
 
@@ -259,6 +262,8 @@ export function WorkbenchShell() {
       if (typeof fn !== "function") return;
       if (disposed) fn();
       else unlisten = fn;
+    }).catch((cause) => {
+      if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
     });
 
     return () => {
