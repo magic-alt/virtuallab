@@ -147,6 +147,21 @@ mod tests {
         registry.begin("two", "/repo", "Build", true, None).unwrap();
     }
     #[test]
+    fn worktree_removal_is_blocked_until_run_exit_is_observed() {
+        let registry = RunRegistry::default();
+        registry.begin("test-run", "/workspace/repo", "Test", false, None).unwrap();
+        assert!(registry.has_active_workspace("/workspace/repo/").unwrap());
+        assert!(!registry.has_active_workspace("/workspace/other").unwrap());
+        registry.record(serde_json::json!({
+            "id":"test-run","eventType":"process.stop_requested"
+        }));
+        assert!(registry.has_active_workspace("/workspace/repo").unwrap());
+        registry.record(serde_json::json!({
+            "id":"test-run","eventType":"process.exited","exitCode":0
+        }));
+        assert!(!registry.has_active_workspace("/workspace/repo").unwrap());
+    }
+    #[test]
     fn retains_utf8_tail_and_isolates_workspaces() {
         let registry = RunRegistry::default();
         registry.begin("one", "/repo", "Build", false, None).unwrap();
