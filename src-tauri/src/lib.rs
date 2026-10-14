@@ -13,6 +13,7 @@ mod run_registry;
 use tauri::Manager;
 use run_registry::{RunRegistry, list_runs};
 mod agent;
+mod agent_journal;
 mod agent_ownership;
 mod agent_cli;
 mod execution;
@@ -34,6 +35,7 @@ use agent::{
     agent_turn_start, agent_turn_steer, AgentManager,
 };
 use agent_ownership::AgentOwnership;
+use agent_journal::{agent_journal_recent, AgentJournal};
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
 use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
 use execution::{
@@ -61,6 +63,7 @@ pub fn run() {
         .manage(RunRegistry::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
+        .manage(AgentJournal::default())
         .manage(AgentManager::default())
         .manage(AgentOwnership::default())
         .manage(CliAgentManager::default())
@@ -97,6 +100,7 @@ pub fn run() {
             build_workflow_cancel,
             watch_start,
             watch_stop,
+            agent_journal_recent,
             agent_harness_capabilities,
             agent_session_start,
             agent_session_stop,
