@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{Write},
-    process::{ ChildStdin, Command, Stdio},
+    process::{ ChildStdin, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Mutex,
@@ -31,6 +31,7 @@ pub struct AgentHarnessCapabilities {
     harness: String,
     available: bool,
     version: Option<String>,
+    executable_path: Option<String>,
     detail: String,
     features: AgentHarnessFeatures,
 }
@@ -61,6 +62,7 @@ pub struct AgentSessionStartRequest {
     workspace_root: String,
     harness: String,
     thread_id: Option<String>,
+    executable_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +208,7 @@ impl CodexProcess {
 struct AgentRuntime {
     process: Arc<CodexProcess>,
     binding: AgentSessionBinding,
+    executable_path: String,
 }
 
 #[derive(Clone, Default)]
@@ -224,12 +227,12 @@ impl AgentManager {
 }
 
 #[tauri::command]
-pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabilities, String> {
+pub fn agent_harness_capabilities(harness: String, executable_path: Option<String>) -> Result<AgentHarnessCapabilities, String> {
     if harness != "codex" && harness != "deepseek" {
         return Err(format!("Unsupported agent harness: {harness}"));
     }
     if harness == "deepseek" && std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
-        return Ok(AgentHarnessCapabilities { harness, available: false, version: None, detail: "DEEPSEEK_API_KEY is not set; configure the official DeepSeek Codex model catalog locally.".into(), features: AgentHarnessFeatures { persistent_threads: true, turns: true, steering: true, interrupt: true, structured_events: true } });
+        return Ok(AgentHarnessCapabilities { harness, available: false, version: None, executable_path: None, detail: "DEEPSEEK_API_KEY is not set; configure the official DeepSeek Codex model catalog locally.".into(), features: AgentHarnessFeatures { persistent_threads: true, turns: true, steering: true, interrupt: true, structured_events: true } });
     }
     let features = AgentHarnessFeatures {
         persistent_threads: true,
@@ -238,7 +241,11 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
         interrupt: true,
         structured_events: true,
     };
-    match codex_command().arg("--version").output() {
+    // Report the exact binary we probe, then pin it for app-server startup.
+    // A desktop app can inherit an older PATH than a newly opened shell.
+    let executable = selected_codex_executable(executable_path.as_deref())?;
+    let reported_path = std::path::Path::new(&executable).is_absolute().then_some(executable.clone());
+    match crate::execution::process_command(&executable).arg("--version").output() {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -247,6 +254,7 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
                 harness: harness.clone(),
                 available: true,
                 version: (!version.is_empty()).then_some(version),
+                executable_path: reported_path.clone(),
                 detail: if harness == "deepseek" { "DeepSeek provider via Codex Responses app-server; requires DEEPSEEK_API_KEY and a local Codex model catalog.".into() } else { "Codex CLI available; VirtualLab uses app-server stdio JSON-RPC.".into() },
                 features,
             })
@@ -255,6 +263,7 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
             harness,
             available: false,
             version: None,
+            executable_path: reported_path.clone(),
             detail: format!("Codex '--version' exited with {:?}.", output.status.code()),
             features,
         }),
@@ -262,6 +271,7 @@ pub fn agent_harness_capabilities(harness: String) -> Result<AgentHarnessCapabil
             harness,
             available: false,
             version: None,
+            executable_path: reported_path,
             detail: format!("Codex CLI unavailable: {error}"),
             features,
         }),
@@ -309,6 +319,7 @@ fn start_session(
         return Err(format!("Agent workspace is not a directory: {}", request.workspace_root));
     }
     let key = workspace_key(root);
+    let selected_executable = selected_codex_executable(request.executable_path.as_deref())?;
     let existing = manager
         .runtimes
         .lock()
@@ -325,12 +336,20 @@ fn start_session(
                 return Err("Workspace already has a different active agent thread.".into());
             }
             if existing.binding.harness != request.harness { return Err("Stop the current harness before switching providers.".into()); }
+            let same_executable = if cfg!(windows) {
+                existing.executable_path.eq_ignore_ascii_case(&selected_executable)
+            } else {
+                existing.executable_path == selected_executable
+            };
+            if !same_executable {
+                return Err("Codex executable changed while this workspace runtime is active. Stop runtime, then attach again.".into());
+            }
             return Ok(existing.binding.clone());
         }
         manager.runtimes.lock().map_err(lock_error)?.remove(&key);
     }
 
-    let process = spawn_codex(&app, root, &request.harness)?;
+    let process = spawn_codex(&app, root, &request.harness, &selected_executable)?;
     if let Err(error) = initialize_codex(&process) {
         let _ = process.stop();
         return Err(error);
@@ -386,6 +405,7 @@ fn start_session(
         Arc::new(AgentRuntime {
             process,
             binding: binding.clone(),
+            executable_path: selected_executable,
         }),
     );
     crate::agent_journal::emit_agent_event(&app, Some(&request.harness),
@@ -528,8 +548,8 @@ fn initialize_codex(process: &CodexProcess) -> Result<(), String> {
     process.notify("initialized")
 }
 
-fn spawn_codex(app: &AppHandle, root: &str, harness: &str) -> Result<Arc<CodexProcess>, String> {
-    let mut command = codex_command();
+fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str) -> Result<Arc<CodexProcess>, String> {
+    let mut command = crate::execution::process_command(executable_path);
     command.arg("app-server").arg("--listen").arg("stdio://");
     if harness == "deepseek" {
         if std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
@@ -751,8 +771,47 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
-fn codex_command() -> Command {
-    crate::execution::process_command("codex")
+/// An operator-chosen Codex executable is an absolute, existing local launcher;
+/// it is never interpreted by a shell or substituted with an arbitrary command.
+fn selected_codex_executable(override_path: Option<&str>) -> Result<String, String> {
+    if let Some(value) = override_path.map(str::trim).filter(|value| !value.is_empty()) {
+        let path = std::path::Path::new(value);
+        let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
+        #[cfg(windows)]
+        let valid_name = ["codex.exe", "codex.cmd", "codex.bat", "codex.com"].contains(&name.as_str());
+        #[cfg(not(windows))]
+        let valid_name = name == "codex";
+        if !path.is_absolute() || !path.is_file() || !valid_name {
+            return Err("Choose an existing absolute Codex launcher path (codex.exe/codex.cmd on Windows, codex on Unix).".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if path.metadata().map_err(|error| error.to_string())?.permissions().mode() & 0o111 == 0 {
+                return Err("Selected Codex launcher is not executable.".into());
+            }
+        }
+        return Ok(value.into());
+    }
+
+    #[cfg(windows)]
+    {
+        // Match the launcher selected by the existing background subprocess API.
+        return Ok(crate::execution::resolve_windows_program("codex").unwrap_or_else(|| "codex".into()));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // Finder/Dock may omit Homebrew/Volta/npm PATH entries.
+        return Ok(crate::process::macos_cli_path("codex")
+            .map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "codex".into()));
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let directories: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+            .map(|path| std::env::split_paths(&path).collect()).unwrap_or_default();
+        return Ok(crate::cli_path::find_executable(std::path::Path::new("codex"), &directories)
+            .map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| "codex".into()));
+    }
 }
 impl AgentManager {
     pub fn shutdown(&self) {
@@ -766,6 +825,25 @@ impl AgentManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_codex_path_requires_real_codex_launcher() {
+        assert!(selected_codex_executable(Some("git")).is_err());
+        assert!(selected_codex_executable(Some("/does/not/exist/codex")).is_err());
+        let filename = if cfg!(windows) { "codex.cmd" } else { "codex" };
+        let root = std::env::temp_dir().join(format!("virtuallab-codex-path-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let launcher = root.join(filename);
+        std::fs::write(&launcher, "fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(selected_codex_executable(launcher.to_str()).unwrap(), launcher.to_str().unwrap());
+        assert!(selected_codex_executable(root.to_str()).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn codex_wire_messages_omit_jsonrpc_version_field() {

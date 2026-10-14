@@ -689,7 +689,7 @@ pub(crate) fn process_command(program: &str) -> Command {
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_windows_program(program: &str) -> Option<String> {
+pub(crate) fn resolve_windows_program(program: &str) -> Option<String> {
     let path = std::path::Path::new(program);
     if path.is_file() && is_windows_launcher(program) {
         return Some(program.to_string());

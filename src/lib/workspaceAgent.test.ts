@@ -42,10 +42,24 @@ describe("WorkspaceAgentService", () => {
       workspaceRoot: root,
       harness: "codex",
       threadId: null,
+      executablePath: null,
     });
     expect(
       useAgentSessionStore.getState().bindings[agentWorkspaceKey(root)]?.threadId,
     ).toBe("thr-new");
+  });
+
+  it("pins the explicitly probed launcher on native attach", async () => {
+    const root = "D:/Project/demo";
+    const selected = "C:/Users/test/AppData/Roaming/npm/codex.cmd";
+    const startOrResumeSession = vi.fn().mockResolvedValue({
+      workspaceRoot: root, harness: "codex", threadId: "thr-pinned",
+      createdAtMs: 1, updatedAtMs: 1,
+    });
+    await new WorkspaceAgentService(adapter({ startOrResumeSession })).attach(root, selected);
+    expect(startOrResumeSession).toHaveBeenCalledWith({
+      workspaceRoot: root, harness: "codex", threadId: null, executablePath: selected,
+    });
   });
 
   it("resumes the persisted thread instead of creating a second workspace thread", async () => {
