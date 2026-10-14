@@ -135,6 +135,33 @@ describe("workbench branch switching with untracked artifacts", () => {
     });
   });
 
+  it("keeps the repository registered when native retirement rejects active workers", async () => {
+    const user = userEvent.setup();
+    harness.detachRepository.mockRejectedValueOnce(new Error("Workspace has an attached agent"));
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledWith(repoRoot));
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
+    expect(await screen.findByText(/Workspace has an attached agent/)).toBeInTheDocument();
+  });
+
+  it("forgets the repository only after native retirement confirms success", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledWith(repoRoot));
+    await waitFor(() => expect(useWorkbenchStore.getState().repositories).toHaveLength(0));
+  });
+
+  it("preserves the repository when operator cancels native removal confirmation", async () => {
+    const user = userEvent.setup();
+    harness.detachRepository.mockResolvedValueOnce(false);
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(harness.detachRepository).toHaveBeenCalledTimes(1));
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
+  });
+
   it("opens documentation from the application Help menu, not a workspace tab", async () => {
     const user = userEvent.setup();
     render(<WorkbenchShell />);
