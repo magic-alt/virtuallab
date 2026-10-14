@@ -1221,16 +1221,53 @@ fn git_switch_branch_blocking(repository_root: String, workspace_root: String, b
     require_no_tracked_changes(&workspace)?;
     let local_ref = format!("refs/heads/{branch}");
     if git_read(&workspace, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_ok() {
-        git(&workspace, &["switch", branch])?;
+        git(&workspace, &["switch", "--no-overwrite-ignore", branch])?;
     } else {
         let remote_ref = format!("refs/remotes/origin/{branch}");
         if git_read(&workspace, &["show-ref", "--verify", "--quiet", remote_ref.as_str()]).is_err() {
             return Err(format!("Branch '{branch}' is not available locally or on origin. Fetch origin first."));
         }
         let tracking = format!("origin/{branch}");
-        git(&workspace, &["switch", "--track", "-c", branch, tracking.as_str()])?;
+        git(&workspace, &["switch", "--no-overwrite-ignore", "--track", "-c", branch, tracking.as_str()])?;
     }
     Ok(())
+}
+
+/// Open only a registered Git worktree in the OS file manager.
+//// On Windows explorer.exe is a GUI process (no terminal window); do not
+/// invoke a command shell or interpolate a user-controlled path.
+#[tauri::command]
+pub async fn open_workspace_directory(
+    repository_root: String,
+    workspace_root: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, workspace) = resolve_git_workspace(&repository_root, &workspace_root)?;
+        if !Path::new(&workspace).is_dir() {
+            return Err(format!("Workspace directory no longer exists: {workspace}"));
+        }
+        #[cfg(target_os = "windows")]
+        let mut command = std::process::Command::new("explorer.exe");
+        #[cfg(target_os = "macos")]
+        let mut command = std::process::Command::new("open");
+        #[cfg(target_os = "linux")]
+        let mut command = std::process::Command::new("xdg-open");
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        return Err("Opening folders is unsupported on this operating system".into());
+
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            // Do not pass untrusted paths to cmd.exe, sh, or AppleScript.
+            #[cfg(target_os = "macos")]
+            command.arg("--");
+            let mut child = command.arg(&workspace).spawn()
+                .map_err(|e| format!("Cannot open workspace folder: {e}"))?;
+            std::thread::spawn(move || { let _ = child.wait(); });
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|error| format!("Open workspace folder task failed: {error}"))?
 }
 
 #[tauri::command]
