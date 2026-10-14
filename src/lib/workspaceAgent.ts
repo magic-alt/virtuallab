@@ -6,7 +6,7 @@ import type { AgentSessionBinding } from "@/types/agent";
 export class WorkspaceAgentService {
   constructor(private readonly adapter: HarnessAdapter = getHarnessAdapter("codex")) {}
 
-  async attach(workspaceRoot: string): Promise<AgentSessionBinding> {
+  async attach(workspaceRoot: string, executablePath?: string): Promise<AgentSessionBinding> {
     const root = workspaceRoot.trim();
     if (!root) {
       throw new Error("Workspace root must not be empty.");
@@ -21,6 +21,7 @@ export class WorkspaceAgentService {
       workspaceRoot: root,
       harness: this.adapter.kind,
       threadId: saved?.harness === this.adapter.kind ? saved.threadId : null,
+      executablePath: executablePath || null,
     });
 
     if (agentWorkspaceKey(binding.workspaceRoot) !== key) {
