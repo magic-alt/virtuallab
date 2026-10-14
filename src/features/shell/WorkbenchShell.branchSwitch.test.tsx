@@ -451,7 +451,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     });
     render(<WorkbenchShell />);
     await waitFor(() => expect(harness.inspect).toHaveBeenCalledWith(repoRoot));
-    await user.click(screen.getByRole("button", { name: /second-repo/i }));
+    await user.click(screen.getByRole("button", { name: /^second-repo /i }));
     await waitFor(() => expect(screen.getByText("second-repo", { selector: "h1" })).toBeInTheDocument());
     resolveFirst(snapshot());
     await waitFor(() => expect(useWorkbenchStore.getState().workspaceStates["repo-2"]?.activeWorktreePath).toBe("/fixtures/other"));
