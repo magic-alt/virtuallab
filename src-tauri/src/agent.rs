@@ -14,7 +14,7 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(20);
 
