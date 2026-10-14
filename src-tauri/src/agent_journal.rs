@@ -135,8 +135,19 @@ fn append_at(dir: &Path, mut entry: AgentJournalEntry, capacity: u64) -> Result<
             let old = OpenOptions::new().write(true).open(&current).map_err(|e| e.to_string())?;
             old.set_len(valid_bytes).map_err(|e| e.to_string())?;
             old.sync_all().map_err(|e| e.to_string())?;
+            drop(old); // Windows rename requires the file handle to be closed.
             fs::rename(&current, &previous).map_err(|e| e.to_string())?;
         }
+    }
+    if !rotate && current.exists() {
+        // On Windows FILE_APPEND_DATA does not grant the SetEndOfFile right.
+        // Repair the torn tail with a write-capable handle, then close it
+        // before opening the append-only handle for the next event.
+        let repair = OpenOptions::new().write(true).open(&current)
+            .map_err(|e| format!("Open journal for repair: {e}"))?;
+        repair.set_len(valid_bytes).map_err(|e| format!("Repair journal tail: {e}"))?;
+        repair.sync_data().map_err(|e| format!("Sync journal repair: {e}"))?;
+        drop(repair);
     }
     let mut file = OpenOptions::new().create(true).append(true).open(&current)
         .map_err(|e| format!("Open journal: {e}"))?;
@@ -145,7 +156,6 @@ fn append_at(dir: &Path, mut entry: AgentJournalEntry, capacity: u64) -> Result<
         fs::set_permissions(&current, fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("Secure journal file: {e}"))?;
     }
-    if !rotate { file.set_len(valid_bytes).map_err(|e| e.to_string())?; }
     file.write_all(&record).map_err(|e| format!("Append journal: {e}"))?;
     file.sync_data().map_err(|e| format!("Sync journal: {e}"))?;
     Ok(())
