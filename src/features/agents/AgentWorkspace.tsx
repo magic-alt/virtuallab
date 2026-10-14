@@ -233,32 +233,115 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   };
 
   return (
-    <div className="mx-auto flex max-w-[1180px] flex-col gap-4 text-sm" data-testid="agent-workspace">
-      <div className="rounded-xl border border-orange-400/20 bg-black/25 p-4">
-        <h2 className="text-base font-semibold text-white">Workspace agents</h2>
-        <p className="mt-1 text-xs text-stone-400">One attached runtime per workspace. Sessions follow the worktree, not a global chat. Commands requiring elevation and hardware access do not receive automatic approval.</p>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="text-xs text-stone-300">
-            Harness
-            <select aria-label="Harness" className="ml-2 rounded border border-white/15 bg-stone-900 px-2 py-2"
+    <div className="mx-auto flex min-w-0 max-w-[1040px] flex-col gap-4 text-sm" data-testid="agent-workspace">
+      <section className="min-w-0 rounded-xl border border-orange-400/20 bg-black/25 p-4 sm:p-5">
+        <h2 className="text-base font-semibold text-white">Agents · workspace task</h2>
+        <p className="mt-1 text-xs leading-5 text-stone-400">
+          Run one coding agent in the selected worktree. Choose a provider, describe a task and click Run task.
+          On the first run VirtualLab checks the CLI and attaches/resumes its workspace thread automatically.
+        </p>
+
+        <div className="mt-4 grid min-w-0 gap-2 border-t border-white/10 pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <label className="block min-w-0 text-xs text-stone-300">
+            <span className="font-semibold text-orange-300">1 · Provider</span>
+            <select aria-label="Harness" className="mt-2 w-full rounded border border-white/15 bg-stone-900 px-3 py-2"
               value={harness} onChange={(e) => changeHarness(e.target.value as AgentHarnessKind)}>
               {HARNESS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          <button type="button" onClick={() => void check()} disabled={!enabled || busy} className="rounded border border-white/20 px-3 py-2 text-xs">Check availability</button>
-          <button type="button" onClick={() => void attach()} disabled={!enabled || busy || attached} className="rounded bg-orange-500 px-3 py-2 text-xs font-medium text-black">Attach / resume</button>
-          <button type="button" onClick={() => void stop()} disabled={!enabled || busy || !attached} className="rounded border border-white/20 px-3 py-2 text-xs">Stop runtime</button>
-          <button type="button" onClick={() => void forget()} disabled={!enabled || busy || !binding} className="text-xs text-stone-400 underline">Forget thread</button>
+          <button type="button" onClick={() => void check()} disabled={!enabled || busy}
+            className="rounded border border-white/20 px-3 py-2 text-xs">Check availability</button>
         </div>
-        <div className="mt-2 text-xs text-stone-400">{HARNESS.find((entry) => entry.id === harness)?.detail}</div>
-        {capabilities && <p className="mt-2 text-xs" role="status">{capabilities.available ? "Available" : "Unavailable"} · {capabilities.version ?? "n/a"} · {capabilities.detail}</p>}
-        {binding && <p className="mt-2 break-all font-mono text-[11px] text-stone-400">Saved: {binding.harness} / {binding.threadId}</p>}
+        {capabilities && (
+          <div className="mt-2 min-w-0 text-xs text-stone-400" role="status">
+            <span className={capabilities.available ? "font-semibold text-emerald-300" : "font-semibold text-amber-300"}>
+              {capabilities.available ? "Available" : "Unavailable"}
+            </span>
+            {" · " + (capabilities.version ?? "version unknown") + " · " + capabilities.detail}
+            {capabilities.executablePath && (
+              <div className="mt-1 break-all font-mono text-[11px] text-stone-500">
+                Detected executable: {capabilities.executablePath}
+              </div>
+            )}
+          </div>
+        )}
+        {binding && <p className="mt-2 break-all text-xs text-stone-500">
+          Saved thread: {binding.harness} · {binding.threadId}
+        </p>}
+        {binding && binding.harness !== harness && <p className="mt-2 text-xs text-amber-300">
+          A thread from {binding.harness} is saved here. Stop and forget it before using {harness}.
+        </p>}
         {!enabled && <p className="mt-2 text-xs text-amber-300">Native desktop runtime required; this is a UI preview.</p>}
-        {error && <p role="alert" className="mt-2 flex gap-1 text-xs text-rose-300"><AlertTriangle size={14}/>{error}</p>}
-      </div>
+        {error && <p role="alert" className="mt-2 flex min-w-0 items-start gap-2 break-words text-xs text-rose-300">
+          <AlertTriangle size={14} className="shrink-0"/>{error}
+        </p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border border-white/10 bg-black/20 p-4">
+        <label className="mt-5 block text-xs text-stone-300">
+          <span className="font-semibold text-orange-300">2 · Describe the task</span>
+          <span className="ml-2 text-stone-500">Role: {role.name}</span>
+          <textarea aria-label="Agent message" value={prompt} onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Example: Review the current worktree for a bug, propose a fix and explain which files changed."
+            rows={5} className="mt-2 w-full min-w-0 rounded border border-white/15 bg-stone-900 p-3 text-sm" />
+        </label>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void send()}
+            disabled={!enabled || busy || !prompt.trim() || !!turn || !!(binding && binding.harness !== harness)}
+            className="flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-xs font-semibold text-black">
+            <Play size={14}/>{attached ? "Send next task" : "Connect & run task"}
+          </button>
+          <button type="button" onClick={() => void attach()}
+            disabled={!enabled || busy || attached || !!(binding && binding.harness !== harness)}
+            className="rounded border border-white/20 px-3 py-2 text-xs">Attach / resume</button>
+          {turn && (
+            <button type="button" onClick={() => void interrupt()} disabled={!enabled || busy}
+              className="flex items-center gap-2 rounded border border-rose-400/30 px-3 py-2 text-xs text-rose-300">
+              <CircleStop size={14}/>Interrupt task
+            </button>
+          )}
+          <button type="button" onClick={() => void stop()} disabled={!enabled || busy || !attached}
+            className="rounded border border-white/20 px-3 py-2 text-xs">Stop runtime</button>
+          {binding && <button type="button" onClick={() => void forget()}
+            disabled={!enabled || busy} className="text-xs text-stone-400 underline">Forget saved thread</button>}
+        </div>
+        <p className="mt-2 text-xs text-stone-400" role="status">
+          {busy ? "Processing request…" : turn ? "3 · Task running; activity appears below." :
+            attached ? "Ready for another task in this workspace." : "Ready to connect when you run a task."}
+        </p>
+        <p className="mt-1 text-xs text-stone-500">
+          Codex/DeepSeek can write within the selected workspace; Claude Code/OpenCode are launched in plan mode.
+          Check Changes before committing or merging. No automatic hardware approvals.
+        </p>
+      </section>
+
+      <section className="min-w-0 rounded-xl border border-white/10 bg-black/20 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="font-semibold">3 · Agent activity</h3>
+            <p className="mt-1 text-xs text-stone-500">Live output is temporary; the last 300 structured events are kept in memory, not as a chat transcript.</p>
+          </div>
+          <button type="button" onClick={() => clearTimeline(workspaceRoot)}
+            className="text-xs text-stone-400 underline">Clear timeline</button>
+        </div>
+        <div role="log" aria-label="Agent event timeline" className="mt-3 max-h-80 min-w-0 space-y-2 overflow-y-auto text-xs">
+          {!events.length && <p className="text-stone-500">Run a task to see progress and responses here.</p>}
+          {events.slice(-15).map((event, idx) => (
+            <div key={events.length - 15 + idx} className="min-w-0 rounded border border-white/5 bg-stone-950/60 p-3">
+              <div className="font-medium text-orange-300">{timeLabel(event.timestampMs)} · {eventTitle(event)}</div>
+              {(event.eventType === "agent.notification" || event.eventType === "agent.stderr" ||
+                event.eventType === "agent.protocol_error" || event.eventType === "agent.turn_completed") && (
+                <pre className="mt-1 max-w-full whitespace-pre-wrap break-all font-mono text-stone-300">{describe(event)}</pre>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <details className="min-w-0 rounded-xl border border-white/10 bg-black/15">
+        <summary className="flex cursor-pointer items-center gap-2 p-4 text-xs font-semibold text-stone-300">
+          <Settings2 size={15}/> Role & optional skills · advanced
+        </summary>
+        <div className="px-3 pb-3">
+                  <section className="rounded-xl border border-white/10 bg-black/20 p-4">
           <h3 className="font-semibold">Role and skills</h3>
           <p className="mb-3 mt-1 text-xs text-stone-400">Instructions are user-configured and repository-neutral, stored locally. Never include secrets.</p>
           <label className="block text-xs text-stone-300">Role
@@ -294,42 +377,55 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <textarea aria-label="New skill instructions" value={skillPrompt} onChange={(e) => setSkillPrompt(e.target.value)}
             placeholder="Skill instructions..." maxLength={4000} rows={2} className="mt-2 w-full rounded border border-white/15 bg-stone-900 p-2 text-xs"/>
         </section>
-        <section className="rounded-xl border border-white/10 bg-black/20 p-4">
-          <h3 className="font-semibold">Agent turn</h3>
-          <textarea aria-label="Agent message" value={prompt} onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Ask this agent to inspect or work within the current workspace..." rows={6}
-            className="mt-3 w-full rounded border border-white/15 bg-stone-900 p-3 text-xs" />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={() => void send()} disabled={!enabled || busy || !attached || !prompt.trim() || !!turn}
-              className="flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-xs font-semibold text-black">
-              <Play size={14}/>Start turn</button>
-            <button type="button" onClick={() => void steer()} disabled={!enabled || busy || !turn || !capabilities?.features.steering || !prompt.trim()}
-              className="rounded border border-white/20 px-3 py-2 text-xs">Steer turn</button>
-            <button type="button" onClick={() => void interrupt()} disabled={!enabled || busy || !turn}
-              className="flex items-center gap-2 rounded border border-rose-400/30 px-3 py-2 text-xs text-rose-300">
-              <CircleStop size={14}/>Interrupt</button>
-          </div>
-          <p className="mt-2 text-xs text-stone-400">{turn ? "Turn active · " + turn : attached ? "Ready for the next turn" : "Attach a provider to enable turns."}</p>
-          <p className="mt-2 text-xs text-stone-500">Claude/OpenCode start in provider plan/read-only modes; Codex/DeepSeek use workspace-write with approvalPolicy=never. These controls do not substitute for OS sandboxing or a physical interlock.</p>
-        </section>
-      </div>
-
-      <section className="rounded-xl border border-white/10 bg-black/20 p-4">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Structured event timeline <span className="text-xs font-normal text-stone-500">({events.length}/300)</span></h3>
-          <button type="button" onClick={() => clearTimeline(workspaceRoot)} className="text-xs text-stone-400 underline">Clear timeline</button>
         </div>
-        <div role="log" aria-label="Agent event timeline" className="mt-3 max-h-80 space-y-2 overflow-y-auto font-mono text-xs">
-          {!events.length && <p className="text-stone-500">No events received for this workspace.</p>}
+      </details>
+
+      <details className="min-w-0 rounded-xl border border-white/10 bg-black/15">
+        <summary className="cursor-pointer p-4 text-xs font-semibold text-stone-300">
+          CLI diagnostics · executable selection
+        </summary>
+        <div className="space-y-3 border-t border-white/10 p-4 text-xs text-stone-400">
+          <p>A GUI can inherit a different PATH from your terminal. Detection reports the exact executable used
+            by the runtime; if its version is old, choose the executable installed for your terminal.
+            This choice is stored locally and shared by Codex and DeepSeek.</p>
+          <div className="break-all font-mono text-[11px]">Configured Codex executable: {codexPath || "Automatic (desktop PATH)"}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => void chooseCodexPath()}
+              disabled={!enabled || busy || attached || !!turn || !isCodexHarness(harness)}
+              className="flex items-center gap-2 rounded border border-white/20 px-3 py-2">
+              <FolderOpen size={14}/>Choose Codex executable
+            </button>
+            <button type="button" onClick={resetCodexPath}
+              disabled={!enabled || busy || attached || !!turn || !codexPath}
+              className="rounded border border-white/20 px-3 py-2">Use automatic PATH</button>
+          </div>
+          <p>Windows PowerShell: run <code className="text-stone-200">Get-Command codex -All</code> or
+            <code className="ml-1 text-stone-200">where.exe codex</code> to locate installed versions.
+            Choose a real codex.exe or codex.cmd launcher. Stop a connected runtime before changing it.</p>
+        </div>
+      </details>
+
+      <details className="min-w-0 rounded-xl border border-white/10 bg-black/15">
+        <summary className="cursor-pointer p-4 text-xs font-semibold text-stone-300">
+          Full structured event timeline · diagnostic
+        </summary>
+        <div className="max-h-80 min-w-0 space-y-2 overflow-y-auto border-t border-white/10 p-3 font-mono text-xs">
           {events.map((event, idx) => (
-            <div key={idx} className="rounded border border-white/5 bg-stone-950/60 p-2">
-              <div className="mb-1 text-orange-300">{timeLabel(event.timestampMs)} · {event.method ?? event.eventType}</div>
-              <pre className="whitespace-pre-wrap break-all text-stone-300">{describe(event)}</pre>
+            <div key={idx} className="min-w-0 rounded border border-white/5 bg-stone-950/60 p-2">
+              <div className="text-orange-300">{timeLabel(event.timestampMs)} · {event.method ?? event.eventType}</div>
+              <pre className="mt-1 whitespace-pre-wrap break-all text-stone-300">{describe(event)}</pre>
             </div>
           ))}
+          {!events.length && <p className="text-stone-500">No events in memory.</p>}
         </div>
-      </section>
-      <section className="rounded-xl border border-white/10 bg-black/20 p-4" data-testid="agent-journal-history">
+      </details>
+
+      <details className="min-w-0 rounded-xl border border-white/10 bg-black/15">
+        <summary className="cursor-pointer p-4 text-xs font-semibold text-stone-300">
+          Session recovery & privacy metadata · advanced
+        </summary>
+        <div className="px-3 pb-3">
+                <section className="rounded-xl border border-white/10 bg-black/20 p-4" data-testid="agent-journal-history">
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-semibold">Recovered lifecycle metadata</h3>
           <div className="flex flex-wrap gap-3">
@@ -361,8 +457,15 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           {!journal.length && <p className="text-stone-500">{journalBusy ? "Loading..." : "No retained lifecycle events for this workspace."}</p>}
         </div>
       </section>
+        </div>
+      </details>
 
-      <section className="rounded-xl border border-amber-400/20 bg-black/20 p-4">
+      <details className="min-w-0 rounded-xl border border-white/10 bg-black/15">
+        <summary className="cursor-pointer p-4 text-xs font-semibold text-stone-300">
+          Hardware approval policy · no provider installed
+        </summary>
+        <div className="px-3 pb-3">
+                <section className="rounded-xl border border-amber-400/20 bg-black/20 p-4">
         <h3 className="flex items-center gap-2 font-semibold"><ShieldAlert size={16}/>Protected operations · fail-closed approval broker</h3>
         <p className="mt-1 text-xs text-stone-400">Motion, power, flashing and release always require an independent device-side lease provider. Recording human acknowledgement here never enables hardware I/O.</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -379,6 +482,8 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         {approvalMessage && <p role="status" className="mt-2 text-xs text-amber-300">{approvalMessage}</p>}
         <p className="mt-2 text-xs text-stone-500">No hardware provider is installed or bundled. Default decision: DENY.</p>
       </section>
+        </div>
+      </details>
     </div>
   );
 }
