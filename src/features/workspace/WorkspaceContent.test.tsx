@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 const terminalLifecycle = vi.hoisted(() => ({ mounts: vi.fn(), unmounts: vi.fn() }));
+const githubLifecycle = vi.hoisted(() => ({ mounts: vi.fn(), unmounts: vi.fn() }));
 vi.mock("@/features/terminal/TerminalWorkspace", () => ({
   TerminalWorkspace: ({ cwd, visible }: { cwd: string; visible: boolean }) => {
     useEffect(() => {
@@ -17,12 +18,46 @@ vi.mock("@/features/execution/ProcessRunner", () => ({
   ProcessRunner: () => <div data-testid="runner-mock" />,
 }));
 vi.mock("@/features/github/GithubPanel", () => ({
-  GithubPanel: () => <div data-testid="github-mock" />,
+  GithubPanel: ({ workspaceRoot }: { workspaceRoot: string }) => {
+    useEffect(() => {
+      githubLifecycle.mounts(workspaceRoot);
+      return () => githubLifecycle.unmounts(workspaceRoot);
+    }, []);
+    return <div data-testid="github-mock" data-root={workspaceRoot} />;
+  },
 }));
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceContent } from "./WorkspaceContent";
 
 describe("WorkspaceContent navigation", () => {
+  it("keeps the GitHub tab mounted across navigation but isolates different workspaces", () => {
+    githubLifecycle.mounts.mockClear();
+    githubLifecycle.unmounts.mockClear();
+    const props = { profileRepositoryRoot: "D:/repo", isPreview: true, onTabChange: vi.fn() };
+    const first = { ...PREVIEW_SNAPSHOT, root: "D:/repo" };
+    const second = { ...PREVIEW_SNAPSHOT, root: "D:/other" };
+    const view = render(<WorkspaceContent {...props} snapshot={first} tab="overview" />);
+    expect(githubLifecycle.mounts).not.toHaveBeenCalled();
+
+    view.rerender(<WorkspaceContent {...props} snapshot={first} tab="github" />);
+    expect(githubLifecycle.mounts).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("github-mock")).toHaveAttribute("data-root", "D:/repo");
+    for (const tab of ["changes", "overview", "history"] as const) {
+      view.rerender(<WorkspaceContent {...props} snapshot={first} tab={tab} />);
+      expect(screen.getByTestId("github-mock").parentElement).toHaveAttribute("hidden");
+    }
+    view.rerender(<WorkspaceContent {...props} snapshot={first} tab="github" />);
+    expect(githubLifecycle.mounts).toHaveBeenCalledTimes(1);
+    expect(githubLifecycle.unmounts).not.toHaveBeenCalled();
+    expect(screen.getByTestId("github-mock").parentElement).not.toHaveAttribute("hidden");
+
+    view.rerender(<WorkspaceContent {...props} snapshot={second} tab="overview" />);
+    expect(githubLifecycle.unmounts).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("github-mock")).not.toBeInTheDocument();
+    view.rerender(<WorkspaceContent {...props} snapshot={second} tab="github" />);
+    expect(githubLifecycle.mounts).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("github-mock")).toHaveAttribute("data-root", "D:/other");
+  });
   it("keeps overview panels responsive and tab navigation independently scrollable", () => {
     const { container } = render(
       <WorkspaceContent

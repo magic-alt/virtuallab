@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   Activity,
   Bot,
@@ -84,6 +85,15 @@ export function WorkspaceContent({
   onNewReviewWorkspace,
   onTabChange,
 }: Props) {
+  // Keep the GitHub pane mounted after its first visit so tab navigation does
+  // not restart gh requests or discard the selected PR. Changing workspaces
+  // still unmounts the previous pane and prevents cross-repository leakage.
+  const currentGithubRoot = workspaceKey(snapshot.root);
+  const [mountedGithubRoot, setMountedGithubRoot] = useState<string | null>(null);
+  useEffect(() => {
+    if (tab === "github") setMountedGithubRoot(currentGithubRoot);
+  }, [tab, currentGithubRoot]);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <nav className="vl-tabs scrollbar-thin flex h-11 min-w-0 shrink-0 items-end gap-1 overflow-x-auto overflow-y-hidden border-b px-2 sm:px-5">
@@ -141,15 +151,17 @@ export function WorkspaceContent({
             gitMutationPending={gitMutationPending}
           />
         )}
-        {tab === "github" && (
-          <GithubPanel
-            key={workspaceKey(snapshot.root)}
-            snapshot={snapshot}
-            workspaceRoot={snapshot.root}
-            enabled={!isPreview && isDesktopRuntime()}
-            onNewReviewWorkspace={onNewReviewWorkspace}
-            onRefreshForRereview={onRefreshForRereview}
-          />
+        {(tab === "github" || mountedGithubRoot === currentGithubRoot) && (
+          <div hidden={tab !== "github"} aria-hidden={tab !== "github"} className="min-w-0">
+            <GithubPanel
+              key={currentGithubRoot}
+              snapshot={snapshot}
+              workspaceRoot={snapshot.root}
+              enabled={!isPreview && isDesktopRuntime()}
+              onNewReviewWorkspace={onNewReviewWorkspace}
+              onRefreshForRereview={onRefreshForRereview}
+            />
+          </div>
         )}
         {tab === "agents" && (
           <AgentWorkspace key={workspaceKey(snapshot.root)} workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
