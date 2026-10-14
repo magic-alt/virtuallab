@@ -1,6 +1,7 @@
 import {
   Cloud,
   CloudOff,
+  FolderOpen,
   GitBranch,
   RefreshCw,
   Sparkles,
@@ -16,6 +17,7 @@ interface Props {
   loading: boolean;
   gitBusy: boolean;
   onRefresh: () => void;
+  onOpenFolder: () => void;
   onFetch: () => void;
   onPull: () => void;
 }
@@ -26,6 +28,7 @@ export function WorkspaceHeader({
   loading,
   gitBusy,
   onRefresh,
+  onOpenFolder,
   onFetch,
   onPull,
 }: Props) {
@@ -69,6 +72,16 @@ export function WorkspaceHeader({
         </div>
 
         <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button
+            disabled={isPreview || loading}
+            onClick={onOpenFolder}
+            variant="outline"
+            size="sm"
+            title="Open this worktree in the system file manager"
+          >
+            <FolderOpen size={13} />
+            Open folder
+          </Button>
           <Button
             disabled={isPreview || loading || gitBusy || !snapshot.remoteUrl}
             onClick={onFetch}
