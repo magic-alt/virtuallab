@@ -190,6 +190,7 @@ pub fn agent_cli_session_start(
         turn_counter: AtomicU64::new(1),
         stopped: AtomicBool::new(false),
     }));
+    emit(&app, "agent.session_started", &binding, None, None);
     Ok(binding)
 }
 fn session(manager: &CliAgentManager, root: &str, thread_id: &str) -> Result<Arc<CliSession>, String> {
@@ -356,7 +357,7 @@ pub fn agent_cli_turn_interrupt(state: State<'_, CliAgentManager>, request: CliI
     result
 }
 #[tauri::command]
-pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, owner: State<'_, AgentOwnership>, workspace_root: String) -> Result<(), String> {
+pub fn agent_cli_session_stop(app: AppHandle, state: State<'_, CliAgentManager>, owner: State<'_, AgentOwnership>, workspace_root: String) -> Result<(), String> {
     let mut sessions = state.sessions.lock().map_err(err_lock)?;
     if let Some(entry) = sessions.get(&key(&workspace_root)).cloned() {
         let mut active = entry.active.lock().map_err(err_lock)?;
@@ -366,7 +367,10 @@ pub fn agent_cli_session_stop(state: State<'_, CliAgentManager>, owner: State<'_
         }
         *active = None;
         sessions.remove(&key(&workspace_root));
-        if let Ok(binding) = entry.binding.lock() { owner.release(&workspace_root, &binding.harness); }
+        if let Ok(binding) = entry.binding.lock() {
+            emit(&app, "agent.session_stopped", &binding, None, None);
+            owner.release(&workspace_root, &binding.harness);
+        }
     }
     Ok(())
 }

@@ -17,6 +17,40 @@ export interface AgentJournalEntry {
   redactionStatus: "payload_omitted";
 }
 
+/** Native replay never resumes or re-executes a historical task. */
+export interface RecoveredAgentTurn {
+  turnKey: string;
+  state: "completed" | "failed" | "cancelled" | "unverified" | "in_flight_unverified";
+  lastSequence: number;
+  harness: AgentJournalEntry["harness"];
+}
+
+export interface AgentRecoverySnapshot {
+  workspaceId: string;
+  nativeSessionRegistered: boolean;
+  turns: RecoveredAgentTurn[];
+  retainedEvents: number;
+}
+
+export async function agentJournalRecover(workspaceRoot: string): Promise<AgentRecoverySnapshot> {
+  if (!isDesktopRuntime()) {
+    return { workspaceId: "", nativeSessionRegistered: false, turns: [], retainedEvents: 0 };
+  }
+  if (!workspaceRoot.trim()) throw new Error("Workspace path is required for journal recovery");
+  return invoke<AgentRecoverySnapshot>("agent_journal_recover", { workspaceRoot });
+}
+
+/** Destructive privacy action: caller MUST obtain a native human confirmation. */
+export async function agentJournalPurgeAll(): Promise<void> {
+  if (!isDesktopRuntime()) throw new Error("The native desktop runtime is required");
+  return invoke("agent_journal_purge_all");
+}
+
+export function unverifiedRecoveredTurns(recovery: AgentRecoverySnapshot | null): RecoveredAgentTurn[] {
+  return recovery?.turns.filter((turn) => turn.state === "unverified" ||
+    turn.state === "in_flight_unverified") ?? [];
+}
+
 export async function agentJournalRecent(workspaceRoot: string, limit = 100): Promise<AgentJournalEntry[]> {
   if (!isDesktopRuntime()) return [];
   if (!workspaceRoot.trim()) throw new Error("Workspace path is required for journal history");

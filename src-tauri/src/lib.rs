@@ -35,7 +35,7 @@ use agent::{
     agent_turn_start, agent_turn_steer, AgentManager,
 };
 use agent_ownership::AgentOwnership;
-use agent_journal::{agent_journal_recent, AgentJournal};
+use agent_journal::{agent_journal_recent, agent_journal_recover, agent_journal_purge_all, AgentJournal};
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
 use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
 use execution::{
@@ -101,6 +101,8 @@ pub fn run() {
             watch_start,
             watch_stop,
             agent_journal_recent,
+            agent_journal_recover,
+            agent_journal_purge_all,
             agent_harness_capabilities,
             agent_session_start,
             agent_session_stop,

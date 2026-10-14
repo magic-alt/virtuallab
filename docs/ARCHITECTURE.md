@@ -281,3 +281,14 @@ The Changes workspace provides `StashAll`, `DiscardTrackedAll`, `DiscardTrackedS
 
 `stash push --include-untracked` is the preferred reversible route for dirty user workspaces, including KiCad untracked history. `restore --source=HEAD --staged --worktree` changes only tracked scopes; `git clean -f -d` is reserved for one explicitly selected untracked path, with an immediate dry-run guard, never repository-wide `clean -fdx`. Tracked-only restore preserves untracked content by default. Pull continues to use `--ff-only` and rejects tracked modifications, but lets Git preserve non-conflicting untracked files; Git refuses checkout collisions itself. No arbitrary shell string is executed. A GUI background refresh invalidates previous review content and opens the Pull button when the tracked dirty count clears.
 
+
+
+## V0.6-A · Restart-safe Agent journal interpretation (candidate)
+
+The native `agent_journal.rs` records only a fixed structural event allowlist. Per-workspace/thread/turn identifiers are SHA-256 hashes and raw provider prompts, tool messages and stderr are never persisted by default. Bounded two-segment JSONL retention supports torn trailing-record recovery and rejects damaged interior records.
+
+`agent_journal_recover` serializes access with native journal writes and replays retained events by **turn identity**. Codex records the authoritative turn ID after a successful `turn/start` RPC; CLI harnesses record both session attach/stop and turn events. Duplicate start notifications do not re-open a completed turn. Process exit or explicit session stop without a matching successful completion marks incomplete turns `unverified`, never `completed`. If no native Agent runtime owns a workspace, unmatched retained starts receive an idempotent durable `recovery.unverified` marker. A GUI refresh never automatically resumes or reruns a previous turn.
+
+`agent_journal_purge_all` deletes only VirtualLab's own application-metadata segments after an explicit frontend **native confirmation**. It neither deletes provider threads nor stops processes. The recovered-state pane shows whether the **current app process** has an Agent runtime registered. That is not proof that the provider's last task passed verification.
+
+Limits: Recovery inspects only the retained journal window and cannot resurrect a process/OS Job Object. No task DAG, exactly-once external side-effect execution, provider-verified completion or immutable release approval is implied. Authenticated cross-platform desktop testing remains separate from mock/unit CI.

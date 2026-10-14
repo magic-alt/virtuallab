@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unresolvedJournalTurns, type AgentJournalEntry } from "./agentJournal";
+import { unresolvedJournalTurns, unverifiedRecoveredTurns, type AgentJournalEntry, type AgentRecoverySnapshot } from "./agentJournal";
 
 function row(sequence: number, eventKind: string, turnKey: string | null): AgentJournalEntry {
   return {
@@ -10,6 +10,18 @@ function row(sequence: number, eventKind: string, turnKey: string | null): Agent
 }
 
 describe("native journal recovery interpretation", () => {
+  it("never upgrades an unverified native recovery result into PASS", () => {
+    const recovered: AgentRecoverySnapshot = {
+      workspaceId: "opaque-id", nativeSessionRegistered: false, retainedEvents: 3,
+      turns: [
+        { turnKey: "private-a", state: "unverified", lastSequence: 2, harness: "codex" },
+        { turnKey: "private-b", state: "completed", lastSequence: 3, harness: "claude" },
+      ],
+    };
+    expect(unverifiedRecoveredTurns(recovered).map((turn) => turn.turnKey)).toEqual(["private-a"]);
+    expect(unverifiedRecoveredTurns(null)).toEqual([]);
+  });
+
   it("does not treat a started but unfinished turn as verified running", () => {
     expect(unresolvedJournalTurns([row(1, "turn.started", "turn-a")])).toEqual(["turn-a"]);
   });
