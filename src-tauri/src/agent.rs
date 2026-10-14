@@ -208,6 +208,7 @@ impl CodexProcess {
 struct AgentRuntime {
     process: Arc<CodexProcess>,
     binding: AgentSessionBinding,
+    executable_path: String,
 }
 
 #[derive(Clone, Default)]
@@ -318,6 +319,7 @@ fn start_session(
         return Err(format!("Agent workspace is not a directory: {}", request.workspace_root));
     }
     let key = workspace_key(root);
+    let selected_executable = selected_codex_executable(request.executable_path.as_deref())?;
     let existing = manager
         .runtimes
         .lock()
@@ -334,12 +336,20 @@ fn start_session(
                 return Err("Workspace already has a different active agent thread.".into());
             }
             if existing.binding.harness != request.harness { return Err("Stop the current harness before switching providers.".into()); }
+            let same_executable = if cfg!(windows) {
+                existing.executable_path.eq_ignore_ascii_case(&selected_executable)
+            } else {
+                existing.executable_path == selected_executable
+            };
+            if !same_executable {
+                return Err("Codex executable changed while this workspace runtime is active. Stop runtime, then attach again.".into());
+            }
             return Ok(existing.binding.clone());
         }
         manager.runtimes.lock().map_err(lock_error)?.remove(&key);
     }
 
-    let process = spawn_codex(&app, root, &request.harness, request.executable_path.as_deref())?;
+    let process = spawn_codex(&app, root, &request.harness, &selected_executable)?;
     if let Err(error) = initialize_codex(&process) {
         let _ = process.stop();
         return Err(error);
@@ -395,6 +405,7 @@ fn start_session(
         Arc::new(AgentRuntime {
             process,
             binding: binding.clone(),
+            executable_path: selected_executable,
         }),
     );
     crate::agent_journal::emit_agent_event(&app, Some(&request.harness),
@@ -537,9 +548,8 @@ fn initialize_codex(process: &CodexProcess) -> Result<(), String> {
     process.notify("initialized")
 }
 
-fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: Option<&str>) -> Result<Arc<CodexProcess>, String> {
-    let executable = selected_codex_executable(executable_path)?;
-    let mut command = crate::execution::process_command(&executable);
+fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str) -> Result<Arc<CodexProcess>, String> {
+    let mut command = crate::execution::process_command(executable_path);
     command.arg("app-server").arg("--listen").arg("stdio://");
     if harness == "deepseek" {
         if std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
