@@ -13,7 +13,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 const READER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -154,6 +154,8 @@ pub async fn verification_run(
 ) -> Result<EvidenceManifest, String> {
     validate_id(&request.run_id)?;
     validate_profile(&request.profile)?;
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_start(&request.workspace_root)?;
     let manager = manager.inner().clone();
     let token = Arc::new(AtomicBool::new(false));
     {
