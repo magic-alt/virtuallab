@@ -883,8 +883,8 @@ impl TerminalManager {
         }
         let key = crate::workspace_identity::key(path);
         for session in sessions.values() {
-            let cwd = &session.lock().map_err(|_| "Terminal session lock poisoned")?.cwd;
-            if crate::workspace_identity::key(cwd) == key { return Ok(true); }
+            let cwd = session.lock().map_err(|_| "Terminal session lock poisoned")?.cwd.clone();
+            if crate::workspace_identity::key(&cwd) == key { return Ok(true); }
         }
         Ok(false)
     }
