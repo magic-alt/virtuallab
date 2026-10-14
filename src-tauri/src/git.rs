@@ -2017,6 +2017,30 @@ mod tests {
     }
 
     #[test]
+    fn switch_never_overwrites_ignored_local_data() {
+        let (sandbox, repo) = init_fixture_repo("switch-ignored-guard");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        fs::write(repo.join(".gitignore"), "private.txt\n").unwrap();
+        git_ok(&repo, &["add", ".gitignore"]);
+        git_ok(&repo, &["commit", "-m", "ignore private files"]);
+        git_ok(&repo, &["switch", "-c", "feature"]);
+        git_ok(&repo, &["switch", "main"]);
+        fs::write(repo.join("private.txt"), "tracked on main").unwrap();
+        git_ok(&repo, &["add", "-f", "private.txt"]);
+        git_ok(&repo, &["commit", "-m", "main tracks private"]);
+        git_ok(&repo, &["switch", "feature"]);
+        fs::write(repo.join("private.txt"), "irreplaceable local data").unwrap();
+
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("ignored local files must never be overwritten");
+        assert!(error.contains("overwritten") || error.contains("untracked"), "{error}");
+        assert_eq!(fs::read_to_string(repo.join("private.txt")).unwrap(), "irreplaceable local data");
+        assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "feature");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
     fn fetch_prunes_stale_origin_refs_without_deleting_local_branches() {
         let (sandbox, repo) = init_fixture_repo("fetch-prune");
         let origin = sandbox.join("origin.git");
