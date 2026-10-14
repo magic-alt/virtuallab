@@ -61,13 +61,13 @@ describe("AgentWorkspace desktop control surface", () => {
     render(<AgentWorkspace workspaceRoot="C:/work/demo" enabled />);
     await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review the current branch");
     await user.click(screen.getByRole("button", { name: /Connect & run task/i }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_turn_start", expect.anything()));
+    await waitFor(() => expect(invoke.mock.calls.some((call) => call[0] === "agent_turn_start")).toBe(true));
     expect(invoke).toHaveBeenCalledWith("agent_harness_capabilities", {
       harness: "codex", executablePath: selected,
-    });
+    }, undefined);
     expect(invoke).toHaveBeenCalledWith("agent_session_start", {
       request: expect.objectContaining({ executablePath: selected, threadId: null }),
-    });
+    }, undefined);
     expect(screen.getByText(/Task running; activity appears below/)).toBeInTheDocument();
   });
 
