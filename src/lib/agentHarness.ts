@@ -13,7 +13,7 @@ import type {
 
 export interface HarnessAdapter {
   readonly kind: AgentHarnessKind;
-  capabilities(): Promise<AgentHarnessCapabilities>;
+  capabilities(executablePath?: string): Promise<AgentHarnessCapabilities>;
   startOrResumeSession(request: AgentSessionStartRequest): Promise<AgentSessionBinding>;
   startTurn(request: AgentTurnStartRequest): Promise<AgentTurnStartResult>;
   steerTurn(request: AgentTurnSteerRequest): Promise<void>;
@@ -30,10 +30,11 @@ function requireDesktop() {
 export class CodexAppServerAdapter implements HarnessAdapter {
   readonly kind: AgentHarnessKind = "codex";
 
-  async capabilities(): Promise<AgentHarnessCapabilities> {
+  async capabilities(executablePath?: string): Promise<AgentHarnessCapabilities> {
     requireDesktop();
     return invoke<AgentHarnessCapabilities>("agent_harness_capabilities", {
       harness: this.kind,
+      executablePath: executablePath || null,
     });
   }
 
@@ -71,9 +72,8 @@ export class CodexAppServerAdapter implements HarnessAdapter {
 
 export class DeepSeekCodexAdapter extends CodexAppServerAdapter {
   override readonly kind: AgentHarnessKind = "deepseek";
-  override async capabilities(): Promise<AgentHarnessCapabilities> {
-    requireDesktop();
-    return invoke<AgentHarnessCapabilities>("agent_harness_capabilities", { harness: this.kind });
+  override async capabilities(executablePath?: string): Promise<AgentHarnessCapabilities> {
+    return super.capabilities(executablePath);
   }
   override async startOrResumeSession(request: AgentSessionStartRequest): Promise<AgentSessionBinding> {
     requireDesktop();
