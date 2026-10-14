@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   currentBranch: "codex/pr-15",
   inspect: vi.fn(),
   switchBranch: vi.fn(),
+  stashChanges: vi.fn(),
   deleteOriginBranch: vi.fn(),
   removeWorktree: vi.fn(),
   watchStart: vi.fn(),
@@ -29,6 +30,8 @@ vi.mock("@/lib/backend", () => ({
   }),
   inspectRepository: harness.inspect,
   gitSwitchBranch: harness.switchBranch,
+  resolveLocalChangesAfterConfirmation: harness.stashChanges,
+  openWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
   gitFetchOrigin: vi.fn(),
   gitPullCurrent: vi.fn(),
   deleteLocalBranchAfterConfirmation: vi.fn(),
@@ -108,6 +111,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.currentBranch = "codex/pr-15";
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
+    harness.stashChanges.mockReset().mockResolvedValue(true);
     harness.deleteOriginBranch.mockReset();
     harness.removeWorktree.mockReset();
     harness.watchStart.mockReset();
@@ -373,6 +377,87 @@ describe("workbench branch switching with untracked artifacts", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument());
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
     expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
+  });
+
+  it("safely stashes tracked edits before switching, but never auto-applies them to the target branch", async () => {
+    const user = userEvent.setup();
+    harness.inspect.mockImplementation(async () => ({
+      ...snapshot(), dirtyCount: 1, stagedCount: 0, unstagedCount: 1, untrackedCount: 0,
+      changes: [{ path: "src/app.ts", indexStatus: " ", worktreeStatus: "M", kind: "modified" }],
+    }));
+    render(<WorkbenchShell />);
+    const button = await screen.findByRole("button", { name: "Switch to main" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    await waitFor(() => expect(harness.stashChanges).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryRoot: repoRoot, workspaceRoot: repoRoot, action: "stashAll",
+      expectedBranch: "codex/pr-15", path: null,
+    })));
+    await waitFor(() => expect(harness.switchBranch).toHaveBeenCalledWith(repoRoot, repoRoot, "main"));
+    expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
+  });
+
+  it("does not change branches when the user cancels the stash confirmation", async () => {
+    const user = userEvent.setup();
+    harness.stashChanges.mockResolvedValueOnce(false);
+    harness.inspect.mockImplementation(async () => ({
+      ...snapshot(), dirtyCount: 1, stagedCount: 0, unstagedCount: 1, untrackedCount: 0,
+      changes: [{ path: "changes.txt", indexStatus: " ", worktreeStatus: "M", kind: "modified" }],
+    }));
+    render(<WorkbenchShell />);
+    const button = await screen.findByRole("button", { name: "Switch to main" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    await waitFor(() => expect(harness.stashChanges).toHaveBeenCalledTimes(1));
+    expect(harness.switchBranch).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
+  });
+
+  it("reports a failed checkout after stashing and preserves recovery instructions", async () => {
+    const user = userEvent.setup();
+    harness.inspect.mockImplementation(async () => ({
+      ...snapshot(), dirtyCount: 1, stagedCount: 0, unstagedCount: 1, untrackedCount: 0,
+      changes: [{ path: "src/app.ts", indexStatus: " ", worktreeStatus: "M", kind: "modified" }],
+    }));
+    harness.switchBranch.mockRejectedValueOnce(new Error("ignored files would be overwritten"));
+    render(<WorkbenchShell />);
+    const button = await screen.findByRole("button", { name: "Switch to main" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(await screen.findByText(/Your local edits are preserved in Git stash/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
+  });
+
+  it("does not let a late inspection from repository A replace repository B", async () => {
+    const user = userEvent.setup();
+    let resolveFirst!: (value: RepositorySnapshot) => void;
+    harness.inspect.mockImplementation((path: string) => {
+      if (path === repoRoot) {
+        return new Promise<RepositorySnapshot>((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve({
+        ...snapshot(), root: "/fixtures/other", name: "second-repo",
+        currentBranch: "main",
+        worktrees: [{ path: "/fixtures/other", head: "aaaaaaaaaa", branch: "main", detached: false }],
+        branches: [{ name: "main", local: true, remote: false, worktreePath: "/fixtures/other" }],
+      });
+    });
+    useWorkbenchStore.setState({
+      repositories: [
+        { id: "repo-1", name: "virtuallab", path: repoRoot, lastOpenedAt: 1 },
+        { id: "repo-2", name: "second-repo", path: "/fixtures/other", lastOpenedAt: 2 },
+      ],
+      activeRepositoryId: "repo-1",
+    });
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(harness.inspect).toHaveBeenCalledWith(repoRoot));
+    await user.click(screen.getByRole("button", { name: /^second-repo /i }));
+    await waitFor(() => expect(screen.getByText("second-repo", { selector: "h1" })).toBeInTheDocument());
+    resolveFirst(snapshot());
+    await waitFor(() => expect(useWorkbenchStore.getState().workspaceStates["repo-2"]?.activeWorktreePath).toBe("/fixtures/other"));
+    expect(screen.getByText("second-repo", { selector: "h1" })).toBeInTheDocument();
+    expect(useWorkbenchStore.getState().activeRepositoryId).toBe("repo-2");
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).not.toBe("/fixtures/other");
   });
 
 });

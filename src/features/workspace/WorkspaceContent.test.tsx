@@ -124,4 +124,32 @@ describe("WorkspaceContent navigation", () => {
     expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(3);
   });
 
+  it("lazily creates panes and disposes only the removed repository/worktree", () => {
+    terminalLifecycle.mounts.mockClear();
+    terminalLifecycle.unmounts.mockClear();
+    const first = { ...PREVIEW_SNAPSHOT, root: "D:/repo" };
+    const second = { ...PREVIEW_SNAPSHOT, root: "D:/other" };
+    const base = { isPreview: true, onTabChange: vi.fn() };
+    const view = render(<WorkspaceContent {...base} snapshot={first} profileRepositoryRoot="D:/repo"
+      terminalRepositoryId="repo-a" registeredRepositoryIds={["repo-a", "repo-b"]} tab="overview" />);
+    expect(screen.queryByTestId("terminal-mock")).not.toBeInTheDocument();
+    view.rerender(<WorkspaceContent {...base} snapshot={first} profileRepositoryRoot="D:/repo"
+      terminalRepositoryId="repo-a" registeredRepositoryIds={["repo-a", "repo-b"]} tab="terminal" />);
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(1);
+    view.rerender(<WorkspaceContent {...base} snapshot={second} profileRepositoryRoot="D:/other"
+      terminalRepositoryId="repo-b" registeredRepositoryIds={["repo-a", "repo-b"]} tab="terminal" />);
+    expect(terminalLifecycle.mounts).toHaveBeenCalledTimes(2);
+    expect(terminalLifecycle.unmounts).not.toHaveBeenCalled();
+
+    view.rerender(<WorkspaceContent {...base} snapshot={second} profileRepositoryRoot="D:/other"
+      terminalRepositoryId="repo-b" registeredRepositoryIds={["repo-b"]} tab="terminal" />);
+    expect(terminalLifecycle.unmounts).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("terminal-mock")).toHaveAttribute("data-cwd", "D:/other");
+
+    view.rerender(<WorkspaceContent {...base} snapshot={second} profileRepositoryRoot="D:/other"
+      terminalRepositoryId="repo-b" registeredRepositoryIds={["repo-b"]} tab="terminal"
+      retiredTerminal={{ path: "d:\\other\\", sequence: 1 }} />);
+    expect(terminalLifecycle.unmounts).toHaveBeenCalledTimes(2);
+  });
+
 });

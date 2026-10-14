@@ -41,6 +41,16 @@ describe("workbench persisted store", () => {
     expect(raw).toContain("repo-1");
   });
 
+  it("keeps POSIX case-distinct repositories but deduplicates Windows spelling variants", () => {
+    const store = useWorkbenchStore.getState();
+    store.addRepository({ id: "unix-A", name: "A", path: "/tmp/Servo", lastOpenedAt: 1 });
+    store.addRepository({ id: "unix-b", name: "b", path: "/tmp/servo", lastOpenedAt: 2 });
+    store.addRepository({ id: "windows-A", name: "Windows", path: "D:\\Projects\\Servo", lastOpenedAt: 3 });
+    store.addRepository({ id: "windows-reopened", name: "Windows copy", path: "d:/projects/servo/", lastOpenedAt: 4 });
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(3);
+    expect(useWorkbenchStore.getState().activeRepositoryId).toBe("windows-A");
+  });
+
   it("persists the active worktree and tab per repository", () => {
     useWorkbenchStore.getState().saveWorkspaceState({
       repositoryId: "repo-1",

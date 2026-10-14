@@ -1221,16 +1221,53 @@ fn git_switch_branch_blocking(repository_root: String, workspace_root: String, b
     require_no_tracked_changes(&workspace)?;
     let local_ref = format!("refs/heads/{branch}");
     if git_read(&workspace, &["show-ref", "--verify", "--quiet", local_ref.as_str()]).is_ok() {
-        git(&workspace, &["switch", branch])?;
+        git(&workspace, &["switch", "--no-overwrite-ignore", branch])?;
     } else {
         let remote_ref = format!("refs/remotes/origin/{branch}");
         if git_read(&workspace, &["show-ref", "--verify", "--quiet", remote_ref.as_str()]).is_err() {
             return Err(format!("Branch '{branch}' is not available locally or on origin. Fetch origin first."));
         }
         let tracking = format!("origin/{branch}");
-        git(&workspace, &["switch", "--track", "-c", branch, tracking.as_str()])?;
+        git(&workspace, &["switch", "--no-overwrite-ignore", "--track", "-c", branch, tracking.as_str()])?;
     }
     Ok(())
+}
+
+/// Open only a registered Git worktree in the OS file manager.
+/// On Windows explorer.exe is a GUI process (no terminal window); do not
+/// invoke a command shell or interpolate a user-controlled path.
+#[tauri::command]
+pub async fn open_workspace_directory(
+    repository_root: String,
+    workspace_root: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (_, workspace) = resolve_git_workspace(&repository_root, &workspace_root)?;
+        if !Path::new(&workspace).is_dir() {
+            return Err(format!("Workspace directory no longer exists: {workspace}"));
+        }
+        #[cfg(target_os = "windows")]
+        let mut command = background_command("explorer.exe");
+        #[cfg(target_os = "macos")]
+        let mut command = background_command("open");
+        #[cfg(target_os = "linux")]
+        let mut command = background_command("xdg-open");
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        return Err("Opening folders is unsupported on this operating system".into());
+
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            // Do not pass untrusted paths to cmd.exe, sh, or AppleScript.
+            #[cfg(target_os = "macos")]
+            command.arg("--");
+            let mut child = command.arg(&workspace).spawn()
+                .map_err(|e| format!("Cannot open workspace folder: {e}"))?;
+            std::thread::spawn(move || { let _ = child.wait(); });
+            Ok(())
+        }
+    })
+    .await
+    .map_err(|error| format!("Open workspace folder task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1977,6 +2014,30 @@ mod tests {
         assert!(error.contains("Commit or stash"), "{error}");
         assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "codex/pr-15");
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn switch_never_overwrites_ignored_local_data() {
+        let (sandbox, repo) = init_fixture_repo("switch-ignored-guard");
+        let root = repo.to_string_lossy().to_string();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        fs::write(repo.join(".gitignore"), "private.txt\n").unwrap();
+        git_ok(&repo, &["add", ".gitignore"]);
+        git_ok(&repo, &["commit", "-m", "ignore private files"]);
+        git_ok(&repo, &["switch", "-c", "feature"]);
+        git_ok(&repo, &["switch", "main"]);
+        fs::write(repo.join("private.txt"), "tracked on main").unwrap();
+        git_ok(&repo, &["add", "-f", "private.txt"]);
+        git_ok(&repo, &["commit", "-m", "main tracks private"]);
+        git_ok(&repo, &["switch", "feature"]);
+        fs::write(repo.join("private.txt"), "irreplaceable local data").unwrap();
+
+        let error = git_switch_branch_blocking(root.clone(), root.clone(), "main".to_string())
+            .expect_err("ignored local files must never be overwritten");
+        assert!(error.contains("overwritten") || error.contains("untracked"), "{error}");
+        assert_eq!(fs::read_to_string(repo.join("private.txt")).unwrap(), "irreplaceable local data");
+        assert_eq!(inspect_repository_blocking(root).unwrap().current_branch, "feature");
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     #[test]

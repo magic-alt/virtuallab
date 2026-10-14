@@ -23,6 +23,8 @@ function props() {
     onAdd: vi.fn(),
     onSelect: vi.fn(),
     onRemove: vi.fn(),
+    onOpenRepositoryFolder: vi.fn(),
+    onOpenWorkspaceFolder: vi.fn(),
     onNewWorkspace: vi.fn(),
     onSelectWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
@@ -47,6 +49,8 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /^sample-beta D:\/Work\/sample-beta$/i }));
     expect(p.onSelect).toHaveBeenCalledWith("repo-2");
+    await user.click(screen.getByRole("button", { name: "Open repository folder sample-beta" }));
+    expect(p.onOpenRepositoryFolder).toHaveBeenCalledWith("D:/Work/sample-beta");
 
     await user.click(screen.getByRole("button", { name: /remove sample-beta/i }));
     expect(p.onRemove).toHaveBeenCalledWith("repo-2");
@@ -56,6 +60,8 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /^feat\/sample-workspace/i }));
     expect(p.onSelectWorkspace).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /open workspace folder feat\/sample-workspace/i }));
+    expect(p.onOpenWorkspaceFolder).toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
     expect(p.onRemoveWorkspace).toHaveBeenCalled();
@@ -115,6 +121,7 @@ describe("ProjectSidebar controls", () => {
     expect(screen.queryByText("sample-alpha")).not.toBeInTheDocument();
     expect(screen.getByText("sample-beta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add repository/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open repository folder sample-beta" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^new$/i })).toBeDisabled();
     rerender(
       <ProjectSidebar
