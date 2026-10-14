@@ -36,6 +36,7 @@ describe("WorkspaceHeader", () => {
   it("allows a safe Pull when only untracked files remain", async () => {
     const user = userEvent.setup();
     const onPull = vi.fn();
+    const onOpenFolder = vi.fn();
     const onlyUntracked = {
       ...PREVIEW_SNAPSHOT, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
       changes: [{ path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const }],
