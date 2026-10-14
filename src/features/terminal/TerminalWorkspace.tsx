@@ -118,8 +118,8 @@ export function TerminalWorkspace({
       disposed = true;
       outputUnlisten?.();
       eventUnlisten?.();
-      // This cleanup is only for teardown/real workspace changes, not tab
-      // navigation: WorkspaceContent keeps the terminal mounted.
+      // WorkspaceTerminals keeps this instance mounted during navigation.
+      // Cleanup runs when the workbench is torn down.
       for (const item of sessionsRef.current) {
         if (item.status === "running" || item.status === "starting") {
           void terminalStop(item.id).catch(() => undefined);
