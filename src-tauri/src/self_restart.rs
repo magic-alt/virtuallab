@@ -9,13 +9,18 @@ use tauri::AppHandle;
 
 // v2 avoids reusing Tauri build-script caches containing empty core ACLs
 // generated when CARGO_TARGET_DIR had a Windows verbatim prefix.
+#[cfg(windows)]
 const STAGING_DIR: &str = "self-build-stage-v2";
+#[cfg(windows)]
 const HELPER_FLAG: &str = "--virtuallab-apply-self-build";
 
 pub(crate) struct SelfBuildPlan {
     pub(crate) target_dir: PathBuf,
+    #[cfg(windows)]
     staged_exe: PathBuf,
+    #[cfg(windows)]
     running_exe: PathBuf,
+    #[cfg(windows)]
     root: PathBuf,
 }
 

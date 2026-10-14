@@ -19,10 +19,11 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub(crate) fn background_command(program: impl AsRef<OsStr>) -> Command {
+    #[cfg(not(target_os = "macos"))]
     #[allow(unused_mut)] // Windows creation_flags mutates the command.
     let mut command = Command::new(program.as_ref());
     #[cfg(target_os = "macos")]
-    { command = command_in_gui_paths(program.as_ref(), &macos_cli_directories()); }
+    let command = command_in_gui_paths(program.as_ref(), &macos_cli_directories());
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
@@ -217,13 +218,17 @@ fn gui_fallback_launches_env_interpreter_with_space_and_unicode_paths() {
     use std::os::unix::fs::PermissionsExt;
     let root = std::env::temp_dir().join(format!("virtuallab GUI 中文 {}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    std::fs::copy("/bin/sh", root.join("fixture-interpreter")).unwrap();
+    // Execute the original system shell through our PATH fixture. macOS can
+    // kill copied system executables before they run; a symlink keeps this
+    // test focused on interpreter lookup, including spaces and Unicode.
+    std::os::unix::fs::symlink("/bin/sh", root.join("fixture-interpreter")).unwrap();
     let script = root.join("fixture-cli");
     std::fs::write(&script, "#!/usr/bin/env fixture-interpreter\nprintf 'gui-cli-ok'\n").unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     let directories = [std::path::PathBuf::from("/usr/bin"), root.clone()];
     let output = command_in_gui_paths(OsStr::new("fixture-cli"), &directories).output().unwrap();
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"gui-cli-ok");
     std::fs::remove_dir_all(root).unwrap();
+    assert!(output.status.success(), "GUI CLI failed: status={}, stderr={}",
+        output.status, String::from_utf8_lossy(&output.stderr));
+    assert_eq!(output.stdout, b"gui-cli-ok");
 }
