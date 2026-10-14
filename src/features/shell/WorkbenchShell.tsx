@@ -27,6 +27,7 @@ import {
   gitSwitchBranch,
   inspectRepository,
   isDesktopRuntime,
+  openWorkspaceDirectory,
   removeWorktreeAfterConfirmation,
   resolveLocalChangesAfterConfirmation,
   watchStart,
@@ -93,10 +94,16 @@ export function WorkbenchShell() {
   const snapshotLoadsRef = useRef(new Map<string, Promise<RepositorySnapshot>>());
   const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
   const latestSnapshotRequestRef = useRef<string | null>(null);
+  const [retiredTerminal, setRetiredTerminal] = useState<{ path: string; sequence: number } | null>(null);
+  const retiredTerminalSequence = useRef(0);
 
   const loadSnapshot = useCallback((path: string, requireFresh = false): Promise<RepositorySnapshot> => {
     const key = normalizePath(path);
+    const ownerId = useWorkbenchStore.getState().activeRepositoryId;
     latestSnapshotRequestRef.current = key;
+    const ownsSelection = () =>
+      latestSnapshotRequestRef.current === key &&
+      useWorkbenchStore.getState().activeRepositoryId === ownerId;
 
     const existing = snapshotLoadsRef.current.get(key);
     if (existing) {
@@ -109,7 +116,7 @@ export function WorkbenchShell() {
       // An older request may have lost ownership of the UI when the user
       // switched worktrees. Re-selecting its path must commit its snapshot.
       return existing.then((next) => {
-        if (latestSnapshotRequestRef.current === key) {
+        if (ownsSelection()) {
           activePathRef.current = next.root;
           setSnapshot(next);
           setSnapshotRevision((revision) => revision + 1);
@@ -136,7 +143,7 @@ export function WorkbenchShell() {
     const request = inspectRepository(path)
       .then((next) => {
         snapshotCacheRef.current.set(key, next);
-        if (latestSnapshotRequestRef.current === key) {
+        if (ownsSelection()) {
           activePathRef.current = next.root;
           setSnapshot(next);
           setSnapshotRevision((revision) => revision + 1);
@@ -144,7 +151,7 @@ export function WorkbenchShell() {
         return next;
       })
       .catch((err) => {
-        if (latestSnapshotRequestRef.current === key) {
+        if (ownsSelection()) {
           const message =
             err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
           setError(message);
@@ -153,9 +160,9 @@ export function WorkbenchShell() {
       })
       .finally(() => {
         snapshotLoadsRef.current.delete(key);
-        if (snapshotLoadsRef.current.size === 0) {
-          setLoading(false);
-        }
+        // A slow inspection of another repository must never keep the
+        // currently selected workspace in a permanent loading state.
+        if (ownsSelection()) setLoading(false);
       });
 
     snapshotLoadsRef.current.set(key, request);
@@ -167,29 +174,42 @@ export function WorkbenchShell() {
       latestSnapshotRequestRef.current = null;
       activePathRef.current = null;
       setSnapshot(PREVIEW_SNAPSHOT);
+      setLoading(false);
       setError(null);
       return;
     }
-    const saved = useWorkbenchStore.getState().workspaceStates[activeRepository.id];
+
+    let cancelled = false;
+    const repositoryId = activeRepository.id;
+    const saved = useWorkbenchStore.getState().workspaceStates[repositoryId];
     const preferredPath = saved?.activeWorktreePath || activeRepository.path;
     const preferredTab = saved?.activeTab ?? "overview";
+    const stillSelected = (path: string) =>
+      !cancelled &&
+      useWorkbenchStore.getState().activeRepositoryId === repositoryId &&
+      latestSnapshotRequestRef.current === normalizePath(path);
 
     setTab(preferredTab);
     void loadSnapshot(preferredPath)
       .then((next) => {
+        // A delayed response must not undo a worktree/repository/tab change.
+        if (!stillSelected(preferredPath)) return;
         saveWorkspaceState({
-          repositoryId: activeRepository.id,
+          repositoryId,
           activeWorktreePath: next.root,
-          activeTab: preferredTab,
+          activeTab: useWorkbenchStore.getState().workspaceStates[repositoryId]?.activeTab ?? preferredTab,
           updatedAt: Date.now(),
         });
       })
       .catch(() => {
-        if (preferredPath === activeRepository.path) return;
+        if (cancelled || useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||
+            preferredPath === activeRepository.path ||
+            latestSnapshotRequestRef.current !== normalizePath(preferredPath)) return;
         void loadSnapshot(activeRepository.path)
           .then((next) => {
+            if (!stillSelected(activeRepository.path)) return;
             saveWorkspaceState({
-              repositoryId: activeRepository.id,
+              repositoryId,
               activeWorktreePath: next.root,
               activeTab: "overview",
               updatedAt: Date.now(),
@@ -198,6 +218,7 @@ export function WorkbenchShell() {
           })
           .catch(() => undefined);
       });
+    return () => { cancelled = true; };
   }, [activeRepository, loadSnapshot, saveWorkspaceState]);
 
   useEffect(() => {
@@ -206,7 +227,8 @@ export function WorkbenchShell() {
       !activeRepository ||
       !snapshot.root ||
       !activePathRef.current ||
-      normalizePath(activePathRef.current) !== normalizePath(snapshot.root)
+      normalizePath(activePathRef.current) !== normalizePath(snapshot.root) ||
+      !snapshot.worktrees.some((tree) => normalizePath(tree.path) === normalizePath(activeRepository.path))
     ) {
       return;
     }
@@ -215,9 +237,9 @@ export function WorkbenchShell() {
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
 
-    void watchStart(watchId, snapshot.root).catch((err) => {
-      if (!disposed) setError(err instanceof Error ? err.message : String(err));
-    });
+    void watchStart(watchId, snapshot.root)
+      .then(() => { if (disposed) void watchStop(watchId).catch(() => undefined); })
+      .catch((err) => { if (!disposed) setError(err instanceof Error ? err.message : String(err)); });
 
     void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
       if (payload.eventType !== "fs.changed" || payload.id !== watchId) return;
@@ -245,7 +267,10 @@ export function WorkbenchShell() {
       const path = await chooseRepositoryDirectory();
       if (!path) return;
 
-      const next = await loadSnapshot(path);
+      // Inspect before registering a new repository: a failed dialog or an
+      // invalid folder must not modify the current repository's selection.
+      const next = await inspectRepository(path);
+      snapshotCacheRef.current.set(normalizePath(next.root), next);
       const id =
         globalThis.crypto?.randomUUID?.() ??
         `repo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -262,6 +287,10 @@ export function WorkbenchShell() {
         activeTab: "overview",
         updatedAt: Date.now(),
       });
+      latestSnapshotRequestRef.current = normalizePath(next.root);
+      activePathRef.current = next.root;
+      setLoading(false);
+      setError(null);
       setSnapshot(next);
       setTab("overview");
     } catch (err) {
@@ -281,7 +310,10 @@ export function WorkbenchShell() {
       baseRef,
       targetPath,
     );
+    if (useWorkbenchStore.getState().activeRepositoryId !== activeRepository.id) return;
     const next = await loadSnapshot(created.path);
+    if (useWorkbenchStore.getState().activeRepositoryId !== activeRepository.id ||
+        latestSnapshotRequestRef.current !== normalizePath(created.path)) return;
     if (reviewIntent) {
       // A source PR/issue is only a reference: never silently check out remote code.
       setGithubReference(next.root, reviewIntent.reference);
@@ -300,7 +332,10 @@ export function WorkbenchShell() {
 
   const refreshForRereview = async (workspaceRoot: string) => {
     if (!activeRepository || normalizePath(workspaceRoot) !== normalizePath(snapshot.root)) return;
+    const repositoryId = activeRepository.id;
     await loadSnapshot(workspaceRoot);
+    if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||
+        latestSnapshotRequestRef.current !== normalizePath(workspaceRoot)) return;
     setReviewPhase(workspaceRoot, "needs_rereview");
     setTab("changes");
     saveWorkspaceState({
@@ -325,6 +360,8 @@ export function WorkbenchShell() {
       if (!removed) return;
 
       snapshotCacheRef.current.delete(normalizePath(path));
+      setRetiredTerminal({ path, sequence: ++retiredTerminalSequence.current });
+      if (useWorkbenchStore.getState().activeRepositoryId !== activeRepository.id) return;
       const wasActive = normalizePath(activePathRef.current ?? snapshot.root) === normalizePath(path);
       const remainingPath = wasActive
         ? activeRepository.path
@@ -347,23 +384,32 @@ export function WorkbenchShell() {
 
   const runGitMutation = async (action: () => Promise<void | boolean>): Promise<boolean> => {
     if (!activeRepository || gitMutationInFlightRef.current || loading) return false;
+    const repositoryId = activeRepository.id;
+    const selectedPath = activePathRef.current ?? activeRepository.path;
+    const stillSelected = () =>
+      useWorkbenchStore.getState().activeRepositoryId === repositoryId &&
+      normalizePath(activePathRef.current ?? "") === normalizePath(selectedPath);
     gitMutationInFlightRef.current = true;
     setGitBusy(true);
     setError(null);
+    let succeeded = false;
     try {
-      // A cancelled native confirmation must not mutate or refresh.
-      if (await action() !== false) {
-        await loadSnapshot(activePathRef.current ?? activeRepository.path, true);
-        return true;
-      }
-      return false;
+      succeeded = await action() !== false;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return false;
+      if (stillSelected()) setError(err instanceof Error ? err.message : String(err));
     } finally {
+      // Even a failed operation can have changed the worktree (e.g. a stash
+      // succeeded but checkout encountered a collision). Refresh its owner,
+      // not whatever repository the user navigated to in the meantime.
+      snapshotCacheRef.current.delete(normalizePath(selectedPath));
+      if (stillSelected()) {
+        try { await loadSnapshot(selectedPath, true); }
+        catch { /* loadSnapshot already reports the error for this selection. */ }
+      }
       gitMutationInFlightRef.current = false;
       setGitBusy(false);
     }
+    return succeeded;
   };
 
   const resolveLocalChanges = async (action: LocalChangesAction, path?: string): Promise<boolean> => {
@@ -381,26 +427,57 @@ export function WorkbenchShell() {
   };
 
   const selectBranch = async (name: string) => {
-    if (!activeRepository || gitBusy || loading) return;
-    const occupied = snapshot.branches.find((branch) => branch.name === name)?.worktreePath;
-    if (occupied && normalizePath(occupied) !== normalizePath(snapshot.root)) {
-      // Git will not check out the same branch into two worktrees. Navigate
-      // to the existing owner instead of forcing the checkout.
+    if (!activeRepository || gitBusy || loading || gitMutationInFlightRef.current) return;
+    const repositoryId = activeRepository.id;
+    const selected = snapshot;
+    if (name === selected.currentBranch) return;
+    const occupied = selected.branches.find((branch) => branch.name === name)?.worktreePath;
+    if (occupied && normalizePath(occupied) !== normalizePath(selected.root)) {
+      // Navigation to an existing worktree never stashes or transfers edits.
       try {
         setError(null);
         const next = await loadSnapshot(occupied, true);
+        if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||
+            latestSnapshotRequestRef.current !== normalizePath(occupied)) return;
         saveWorkspaceState({
-          repositoryId: activeRepository.id,
+          repositoryId,
           activeWorktreePath: next.root,
           activeTab: tab,
           updatedAt: Date.now(),
         });
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (useWorkbenchStore.getState().activeRepositoryId === repositoryId) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
       }
       return;
     }
-    await runGitMutation(() => gitSwitchBranch(activeRepository.path, snapshot.root, name));
+    await runGitMutation(async () => {
+      let stashed = false;
+      if (selected.stagedCount > 0 || selected.unstagedCount > 0) {
+        // The existing native confirmation and Rust HEAD/branch/status guards
+        // form a safe, one-click Stash & Switch workflow. Stashes are never
+        // popped onto a different branch automatically.
+        stashed = await resolveLocalChangesAfterConfirmation({
+          repositoryRoot: activeRepository.path,
+          workspaceRoot: selected.root,
+          expectedBranch: selected.currentBranch,
+          expectedHeadSha: selected.headSha,
+          expectedChanges: selected.changes,
+          action: "stashAll",
+          path: null,
+        });
+        if (!stashed) return false;
+      }
+      try {
+        await gitSwitchBranch(activeRepository.path, selected.root, name);
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(stashed
+          ? `Switch to "${name}" failed: ${detail}. Your local edits are preserved in Git stash (git stash list); they were NOT restored automatically.`
+          : detail);
+      }
+    });
   };
 
   const deleteLocalBranch = async (name: string) => {
@@ -419,8 +496,31 @@ export function WorkbenchShell() {
     await runGitMutation(() => deleteOriginBranchAfterConfirmation(activeRepository.path, name));
   };
 
-  const isPreview = !activeRepository;
+  // The store switches immediately, but a native inspection can finish later.
+  // Never render actionable controls against the previous repository's HEAD.
+  const workspaceReady = Boolean(activeRepository && activePathRef.current &&
+    normalizePath(activePathRef.current) === normalizePath(snapshot.root) &&
+    snapshot.worktrees.some((tree) => normalizePath(tree.path) === normalizePath(activeRepository.path)));
+  const isPreview = !workspaceReady;
+  const visibleSnapshot = workspaceReady ? snapshot : PREVIEW_SNAPSHOT;
   const native = isDesktopRuntime();
+
+  const openFolder = async (path: string, repositoryPath: string) => {
+    try {
+      await openWorkspaceDirectory(repositoryPath, path);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const selectRepository = (id: string) => {
+    if (id === activeRepositoryId) return;
+    latestSnapshotRequestRef.current = null;
+    activePathRef.current = null;
+    setLoading(true);
+    setError(null);
+    setActiveRepository(id);
+  };
 
   const switchTab = (nextTab: WorkspaceTab) => {
     setTab(nextTab);
@@ -492,22 +592,27 @@ export function WorkbenchShell() {
         <ProjectSidebar
           repositories={repositories}
           activeRepositoryId={activeRepositoryId}
-          snapshot={snapshot}
+          snapshot={visibleSnapshot}
           isPreview={isPreview}
           onAdd={addLocalRepository}
           filterQuery={searchQuery}
           repositoryActionsEnabled={native}
-          onSelect={(id) => {
-            setActiveRepository(id);
-          }}
+          onSelect={selectRepository}
           onRemove={removeRepository}
+          onOpenRepositoryFolder={(path) => void openFolder(path, path)}
+          onOpenWorkspaceFolder={(path) => {
+            if (activeRepository && workspaceReady) void openFolder(path, activeRepository.path);
+          }}
           onNewWorkspace={() => { setReviewIntent(null); setWorkspaceDialog(true); }}
           onSelectWorkspace={(path) => {
-            if (!activeRepository || gitMutationInFlightRef.current || loading) return;
+            if (!activeRepository || !workspaceReady || gitMutationInFlightRef.current || loading) return;
+            const repositoryId = activeRepository.id;
             void loadSnapshot(path)
               .then((next) => {
+                if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||
+                    latestSnapshotRequestRef.current !== normalizePath(path)) return;
                 saveWorkspaceState({
-                  repositoryId: activeRepository.id,
+                  repositoryId,
                   activeWorktreePath: next.root,
                   activeTab: tab,
                   updatedAt: Date.now(),
@@ -516,8 +621,8 @@ export function WorkbenchShell() {
               .catch(() => undefined);
           }}
           onRemoveWorkspace={(path) => void deleteWorkspace(path)}
-          workspaceActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
-          branchActionsEnabled={native && Boolean(activeRepository) && !loading && !gitBusy}
+          workspaceActionsEnabled={native && workspaceReady && !loading && !gitBusy}
+          branchActionsEnabled={native && workspaceReady && !loading && !gitBusy}
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
           onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
@@ -525,7 +630,7 @@ export function WorkbenchShell() {
 
         <section className="vl-stage flex min-h-0 min-w-0 flex-1 flex-col">
           <WorkspaceHeader
-            snapshot={snapshot}
+            snapshot={visibleSnapshot}
             isPreview={isPreview}
             loading={loading}
             gitBusy={gitBusy}
@@ -535,6 +640,9 @@ export function WorkbenchShell() {
             onPull={() => {
               if (activeRepository) void runGitMutation(() => gitPullCurrent(activeRepository.path, snapshot.root));
             }}
+            onOpenFolder={() => {
+              if (activeRepository && workspaceReady) void openFolder(snapshot.root, activeRepository.path);
+            }}
             onRefresh={() => {
               setError(null);
               const path = activePathRef.current;
@@ -543,16 +651,19 @@ export function WorkbenchShell() {
           />
 
           <WorkspaceContent
-            snapshot={snapshot}
-            profileRepositoryRoot={activeRepository?.path ?? snapshot.root}
+            snapshot={visibleSnapshot}
+            profileRepositoryRoot={activeRepository?.path ?? visibleSnapshot.root}
+            terminalRepositoryId={workspaceReady ? activeRepository?.id ?? null : null}
+            registeredRepositoryIds={repositories.map((item) => item.id)}
+            retiredTerminal={retiredTerminal}
             tab={tab}
             isPreview={isPreview}
             snapshotRevision={snapshotRevision}
             onRefreshForRereview={refreshForRereview}
             onResolveLocalChanges={resolveLocalChanges}
-            gitMutationPending={gitBusy || loading}
+            gitMutationPending={gitBusy || loading || !workspaceReady}
             onNewReviewWorkspace={(intent) => {
-              if (!activeRepository || !native) return;
+              if (!activeRepository || !native || !workspaceReady) return;
               setReviewIntent(intent);
               setWorkspaceDialog(true);
             }}
@@ -581,7 +692,7 @@ export function WorkbenchShell() {
         />
       )}
 
-      {workspaceDialog && activeRepository && (
+      {workspaceDialog && activeRepository && workspaceReady && (
         <NewWorkspaceDialog
           defaultBaseRef={reviewIntent ? selectedReviewBase(snapshot.headSha) : snapshot.currentBranch || "HEAD"}
           defaultBranch={reviewIntent ? suggestedReviewBranch(reviewIntent) : ""}
