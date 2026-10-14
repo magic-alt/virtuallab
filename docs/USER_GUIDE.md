@@ -267,7 +267,13 @@ PR/Issue 可用于创建预填的 Review Worktree，但**不会自动检出远�
 | Claude Code | CLI plan/read-only | 能力依赖本机 provider |
 | OpenCode | CLI plan/read-only | 能力依赖本机 provider |
 
-从 **Agents → Check availability → Attach/resume → Role/Skills → Start turn** 发起任务，再检查事件时间线。必要时 Interrupt 或 Stop runtime。
+**推荐操作（新版简化界面）**：选择要执行任务的仓库与 Worktree → 打开 **Agents** → 在 **Provider** 选择 Codex（或其他已配置的 CLI）→ 在 **Describe the task** 中写任务 → 点击 **Connect & run task**。首次点击会自动检测 CLI、连接/恢复这个 Worktree 的 thread，并开始一个 turn；结果在 **Agent activity** 中显示。任务结束后可继续点击 **Send next task**。不需要预先逐个操作 Check、Attach、Role、Skills。
+
+**按钮说明**：`Check availability` 只调用本机版本检测，不连接模型也不验证账户登录；`Attach / resume` 只连接/恢复线程、不发起任务；`Interrupt task` 中断当前 turn；`Stop runtime` 停止工作区中的 Agent 进程但保留线程关联；`Forget saved thread` 在确认后停止运行时并删除本地关联。Role/Skills、完整 JSON 事件、恢复日志及硬件审批演示已折叠到高级设置。一次仅允许一个 Agent harness 占用同一个 Worktree；并发工作应使用不同 Worktree。
+
+**Codex 版本检测不一致（例如终端 0.162、Agents 0.157.1）**：桌面应用继承的 PATH 可能比 PowerShell/终端旧，或 Windows `where` 先找到旧版 `codex.cmd`。点击 Check availability 后查看 **Detected executable** 绝对路径，与 PowerShell 中的 `Get-Command codex -All` / `where.exe codex` 比较。若不同，展开 **CLI diagnostics · executable selection**，点击 **Choose Codex executable**，选择较新版本的真实 `codex.exe` 或 `codex.cmd`，重新检测。此设置只保存在本机，Codex/DeepSeek 共用，检测及 app-server 会使用同一可执行文件。替换/切换路径前请先 Stop runtime；若要恢复桌面自动搜索，点 **Use automatic PATH**。安装新 CLI 本身并不保证已经打开的 VirtualLab GUI 会获取新的 PATH，必要时重启桌面程序。
+
+**安全与局限**：Codex/DeepSeek 采用 `workspace-write` + `approvalPolicy=never`，允许在当前 Worktree 中修改文件，但并非任意可信环境的强隔离；Claude/OpenCode 以 plan 模式启动。始终先在 Changes 查看 diff 再考虑合并。工作区事件流仅留在内存中（最多 300 条），重启后保留的是脱敏生命周期元数据，不是完整聊天记录。
 
 > **重要安全边界**：人类 acknowledgement 仅记录软件决策，并非物理设备授权。VirtualLab 不包含硬件 backend；motion/power/flash/release 必须由独立硬件联锁、安全看门狗、资源授权与安全状态恢复机制实现。CLI provider 权限模式不等于 OS 沙箱。
 

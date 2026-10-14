@@ -3,7 +3,6 @@ mod app_build;
 #[path = "../build_metadata_test.rs"]
 mod build_metadata_tests;
 mod bounded_lines;
-#[cfg(any(target_os = "macos", test))]
 mod cli_path;
 #[cfg(unix)]
 mod terminal_process;

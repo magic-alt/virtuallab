@@ -12,6 +12,8 @@ export interface AgentHarnessCapabilities {
   harness: AgentHarnessKind;
   available: boolean;
   version?: string | null;
+  /** Absolute launcher used for detection; pass this same path to session start. */
+  executablePath?: string | null;
   detail: string;
   features: AgentHarnessFeatures;
 }
@@ -28,6 +30,7 @@ export interface AgentSessionStartRequest {
   workspaceRoot: string;
   harness: AgentHarnessKind;
   threadId?: string | null;
+  executablePath?: string | null;
 }
 
 export interface AgentTurnStartRequest {

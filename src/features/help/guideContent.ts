@@ -245,7 +245,7 @@ export const guidePages: GuidePage[] = [
     sections: [
       { id: "model", title: "Agent 是适配器，不是工程状态的所有者", blocks: [
         { type: "diagram", src: "/help/agent-safety.svg", alt: "工作区连接可选 Agent、命令执行与独立硬件保护边界的示意图", caption: "图 5 · Agent 工作线与安全边界。保护确认不等于设备授权。" },
-        { type: "text", text: "Agents 页可以检测 provider 可用性，Attach / resume 已配置的 harness，提交 turn、观察事件时间线并手动中断。Provider 需要用户自行安装与配置，不随 VirtualLab 自动下载或认证。" },
+        { type: "text", text: "Agents 页现在以工作区任务为主：选择 Provider → Describe the task → Connect & run task，首次执行自动检测、Attach/resume 并启动 turn，结果在 Agent activity 中显示。Provider 仍需用户安装与认证，Check availability 只是本机版本探测。Role/Skills、JSON 时间线、历史及硬件保护演示位于折叠的高级设置中。" },
         { type: "table", columns: ["Harness", "连接模式", "现阶段说明"], rows: [
           ["Codex", "App-server JSON-RPC", "按工作区关联 thread / turn"],
           ["DeepSeek", "通过 Codex + DeepSeek Responses API", "需额外配置 API，沿用 Codex 通信机制"],
@@ -256,10 +256,10 @@ export const guidePages: GuidePage[] = [
       { id: "configure", title: "附加一个 Agent", blocks: [
         { type: "steps", items: [
           { title: "配置外部工具", description: "先安装并完成对应 CLI/API 环境设置；不要把密钥写入角色或项目文件。" },
-          { title: "Check availability", description: "在 Agents 选择 Harness，确认 provider 已检测到且可用。" },
-          { title: "Attach / resume", description: "将当前 worktree 关联到 provider 线程，同一工作区同一时刻只附加一个运行时。" },
-          { title: "选择 Role / Skills", description: "使用通用或自定义角色；技能是可选的本地指令，不是自动提升权限。" },
-          { title: "发起并检查结果", description: "输入任务 Start turn，查看 structured event timeline，必要时 Interrupt 或 Stop runtime。" },
+          { title: "选择当前 Worktree 与 Provider", description: "先确认顶部选中正确的工作区，Agents 的任务、thread、角色均绑定这个目录。" },
+          { title: "Describe the task", description: "输入具体任务，点击 Connect & run task 即可自动检测并关联 provider thread，不必先点 Attach。" },
+          { title: "Agent activity", description: "观察任务进度与输出；长任务可以 Interrupt，结束后可继续发下一轮。" },
+          { title: "高级设置", description: "需要定制角色或技能时展开 Role & optional skills；Codex 版本与终端不同时在 CLI diagnostics 选择新版本的可执行文件。Stop 保留 thread，Forget 删除保存的关联。" },
         ] },
       ] },
       { id: "safety", title: "代理执行限制", blocks: [
