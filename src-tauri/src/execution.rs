@@ -153,6 +153,7 @@ pub async fn terminal_spawn(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>().begin_start(&cwd)?;
     let manager = state.inner().clone();
     {
         let mut pending = manager.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?;
@@ -423,6 +424,7 @@ pub async fn process_spawn(
     let root = std::fs::canonicalize(&spec.cwd).map_err(|e| format!("Cannot resolve process workspace: {e}"))?;
     let mut spec = spec;
     spec.cwd = root.to_string_lossy().into_owned();
+    let _start = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>().begin_start(&spec.cwd)?;
     app.state::<RunRegistry>().begin(&spec.id, &spec.cwd, &spec.program, false, spec.presentation.clone())?;
     let id = spec.id.clone();
     let registry_app = app.clone();
