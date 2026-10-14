@@ -90,6 +90,12 @@ struct CliSession {
 pub struct CliAgentManager {
     sessions: Arc<Mutex<HashMap<String, Arc<CliSession>>>>,
 }
+
+impl CliAgentManager {
+    pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
+        Ok(self.sessions.lock().map_err(err_lock)?.contains_key(&key(path)))
+    }
+}
 fn key(root: &str) -> String {
     crate::workspace_identity::key(root)
 }
