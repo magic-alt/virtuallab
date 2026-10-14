@@ -292,3 +292,14 @@ The native `agent_journal.rs` records only a fixed structural event allowlist. P
 `agent_journal_purge_all` deletes only VirtualLab's own application-metadata segments after an explicit frontend **native confirmation**. It neither deletes provider threads nor stops processes. The recovered-state pane shows whether the **current app process** has an Agent runtime registered. That is not proof that the provider's last task passed verification.
 
 Limits: Recovery inspects only the retained journal window and cannot resurrect a process/OS Job Object. No task DAG, exactly-once external side-effect execution, provider-verified completion or immutable release approval is implied. Authenticated cross-platform desktop testing remains separate from mock/unit CI.
+
+
+## V0.6-B · Native Workspace lifecycle reservations (candidate)
+
+`WorkspaceLifecycle` is a process-local control-plane lock keyed by the same canonical worktree identity as native Agent ownership. `begin_start` returns an RAII startup lease, obtained **before** terminal, process, build workflow, verification and Agent registrations. `begin_retirement` atomically excludes all new starts on the requested paths. A failed owner preflight or failed Git action drops the reservation without changing execution state.
+
+`remove_worktree` holds a retirement lease across its entire asynchronous Git removal. A second force-removal confirmation remains mandatory for dirty worktrees and is still bound to the last inspected HEAD/status. The two confirmation requests are independent, and each native call rechecks registration and active owners.
+
+`repository_detach` obtains the authoritative `git worktree list --porcelain` inventory, atomically reserves **all** paths (including worktrees outside the primary checkout), checks each path against active Agent, PTY, Run/Build and Verification ownership, and only then commits a native detached state. The UI removes its repository record only after this native commit succeeds. Native starts against detached worktrees remain disabled until a validated explicit `repository_restore` during re-import. No files or Git refs are deleted by detach. A cancellation, active owner, or startup race leaves the repository in the UI and releases pending reservations.
+
+The lifecycle store is intentionally memory-only: application exit terminates local process ownership, and reopened repositories re-register against real Git inventory. This does **not** provide an OS sandbox, crash-surviving process lease, or filesystem containment. Approval for remote Git/GitHub/destructive changes is unchanged.
