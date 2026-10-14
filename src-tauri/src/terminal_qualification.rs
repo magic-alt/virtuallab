@@ -200,6 +200,54 @@ fn windows_startup_cursor_reply_survives_stop_before_ui_attachment() {
 }
 
 #[test]
+fn windows_terminal_fixture_entry() {
+    // A native helper preserves console inheritance. Node/libuv puts its
+    // ordinary Windows children in a kill-on-parent-exit Job, which would
+    // invalidate the descendant-survives-leader regression before Stop runs.
+    let Some(role) = std::env::var_os("VIRTUALLAB_PTY_FIXTURE_ROLE") else { return; };
+    let pid_file = std::path::PathBuf::from(
+        std::env::var_os("VIRTUALLAB_PTY_FIXTURE_PID").expect("fixture PID path"));
+    if role == "descendant" {
+        // Deliberately exceed the previous Node fixture's eight-second exit
+        // timer, so startup tolerance is exercised by every Windows CI run.
+        thread::sleep(Duration::from_secs(9));
+        let pending = pid_file.with_extension("pending");
+        std::fs::write(&pending, std::process::id().to_string()).unwrap();
+        std::fs::rename(pending, &pid_file).unwrap();
+        loop { thread::sleep(Duration::from_secs(1)); }
+    }
+    assert_eq!(role, "leader");
+    // Test-only interactive child: do not apply background_command's
+    // CREATE_NO_WINDOW flag, detach it, or start a new console.
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "execution::qualification::windows_terminal_fixture_entry", "--nocapture"])
+        .env("VIRTUALLAB_PTY_FIXTURE_ROLE", "descendant")
+        .env("VIRTUALLAB_PTY_FIXTURE_PID", &pid_file)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn().expect("spawn native fixture descendant");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            let _ = child.wait();
+            panic!("Fixture descendant exited before leader: {status}");
+        }
+        if pid_file.is_file() {
+            // Intentionally leave the descendant and its inherited PTY alive;
+            // only the outer test's TerminalSession cleanup may terminate it.
+            std::process::exit(0);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("Fixture descendant did not publish readiness within 30 seconds");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{
         OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_TERMINATE,
@@ -207,10 +255,10 @@ fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     let root = std::env::temp_dir().join(format!("vl terminal qualification 中文 {} {}", std::process::id(), now_ms()));
     std::fs::create_dir_all(&root).unwrap();
     let pid_file = root.join("descendant.pid");
-    let script = root.join("terminal-process.cjs");
-    std::fs::write(&script, include_str!("../test-fixtures/terminal-process.cjs")).unwrap();
-    let mut command = CommandBuilder::new("node.exe");
-    command.arg(&script).arg("--leader").arg(&pid_file);
+    let mut command = CommandBuilder::new(std::env::current_exe().unwrap());
+    command.args(["--exact", "execution::qualification::windows_terminal_fixture_entry", "--nocapture"]);
+    command.env("VIRTUALLAB_PTY_FIXTURE_ROLE", "leader");
+    command.env("VIRTUALLAB_PTY_FIXTURE_PID", &pid_file);
     let mut fixture = Fixture::start(command);
     let deadline = Instant::now() + Duration::from_secs(40);
     while !pid_file.is_file() && Instant::now() < deadline {
@@ -235,7 +283,10 @@ fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     while fixture.session.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
-    assert!(fixture.session.child.try_wait().unwrap().is_some(), "fixture leader must exit first");
+    let leader_status = fixture.session.child.try_wait().unwrap().expect("fixture leader must exit first");
+    assert!(leader_status.success(), "fixture leader failed: {leader_status:?}");
+    assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, 0x0000_0102,
+        "descendant must still be alive after its leader exits");
     fixture.session.terminate().unwrap();
     let exited = unsafe { WaitForSingleObject(handle, 1000) } == 0;
     // Always clean the fixture even when the regression assertion fails.
@@ -245,7 +296,6 @@ fn windows_terminal_reaps_descendants_when_leader_exits_first() {
     drop(fixture);
     drained.recv_timeout(Duration::from_secs(10)).unwrap();
     std::fs::remove_file(pid_file).unwrap();
-    std::fs::remove_file(script).unwrap();
     std::fs::remove_dir(root).unwrap();
     assert!(exited, "an exited terminal leader must not leave a live descendant holding the PTY");
 }
