@@ -124,10 +124,26 @@ struct VerificationEvent {
     detail: String,
 }
 
+#[derive(Clone)]
+struct ActiveVerification {
+    workspace_root: String,
+    cancel: Arc<AtomicBool>,
+}
+
 #[derive(Clone, Default)]
 pub struct VerificationManager {
-    active: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    active: Arc<Mutex<HashMap<String, ActiveVerification>>>,
     artifact_write: Arc<Mutex<()>>,
+}
+
+impl VerificationManager {
+    /// Verification writes evidence under its owning worktree: never delete it
+    /// while a gate is still in progress or cancellation is pending.
+    pub fn owns_workspace(&self, root: &str) -> Result<bool, String> {
+        let key = crate::workspace_identity::key(root);
+        Ok(self.active.lock().map_err(lock_err)?.values().any(|run|
+            crate::workspace_identity::key(&run.workspace_root) == key))
+    }
 }
 
 #[tauri::command]
@@ -145,7 +161,10 @@ pub async fn verification_run(
         if active.contains_key(&request.run_id) {
             return Err("Verification run id is already active.".into());
         }
-        active.insert(request.run_id.clone(), token.clone());
+        active.insert(request.run_id.clone(), ActiveVerification {
+            workspace_root: request.workspace_root.clone(),
+            cancel: token.clone(),
+        });
     }
     let run_id = request.run_id.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
@@ -167,7 +186,7 @@ pub fn verification_cancel(
     let token = active
         .get(&run_id)
         .ok_or_else(|| "Verification run is not active.".to_string())?;
-    token.store(true, Ordering::Release);
+    token.cancel.store(true, Ordering::Release);
     Ok(())
 }
 
