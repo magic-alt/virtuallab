@@ -178,6 +178,14 @@ pub async fn terminal_spawn(
     result
 }
 
+fn configure_terminal_command(command: &mut CommandBuilder, cwd: &str) {
+    command.cwd(cwd);
+    // This PTY is rendered by xterm.js, regardless of the launching app's
+    // environment. Finder/Dock may omit TERM; inherited TERM may describe a
+    // different terminal. Both can break shell cursor movement and erasure.
+    command.env("TERM", "xterm-256color");
+}
+
 fn terminal_spawn_blocking(
     app: AppHandle,
     state: TerminalManager,
@@ -210,7 +218,7 @@ fn terminal_spawn_blocking(
     for arg in shell_args {
         command.arg(arg);
     }
-    command.cwd(&cwd);
+    configure_terminal_command(&mut command, &cwd);
 
     let mut reader = pair
         .master
@@ -752,6 +760,75 @@ mod tests {
     fn default_shell_is_defined() {
         let (shell, _) = default_shell();
         assert!(!shell.trim().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_terminal_backspace_erases_and_arrow_keys_edit_without_inherited_term() {
+        assert_macos_terminal_editing(None);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_terminal_backspace_erases_and_arrow_keys_edit_with_inherited_dumb_term() {
+        assert_macos_terminal_editing(Some("dumb"));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn assert_macos_terminal_editing(inherited_term: Option<&str>) {
+        use std::sync::mpsc;
+        use std::time::Instant;
+
+        let pair = native_pty_system().openpty(PtySize::default()).unwrap();
+        let mut command = CommandBuilder::new("/bin/zsh");
+        command.args(["-f", "-i"]);
+        command.env_remove("TERM"); // Finder/Dock launches need not supply TERM.
+        if let Some(term) = inherited_term { command.env("TERM", term); }
+        command.env("PS1", "VL_READY> ");
+        command.env("RPS1", "");
+        configure_terminal_command(&mut command, std::env::temp_dir().to_str().unwrap());
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+        let mut child = pair.slave.spawn_command(command).unwrap();
+        drop(pair.slave);
+        let (tx, rx) = mpsc::channel();
+        let reader_thread = thread::spawn(move || {
+            let mut chunk = [0; 4096];
+            while let Ok(size) = reader.read(&mut chunk) {
+                if size == 0 || tx.send(chunk[..size].to_vec()).is_err() { break; }
+            }
+        });
+        let collect_until = |needle: &[u8]| {
+            let mut output = Vec::new();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(50)) {
+                    output.extend_from_slice(&chunk);
+                    if output.windows(needle.len()).any(|bytes| bytes == needle) { break; }
+                }
+            }
+            output
+        };
+        let prompt = collect_until(b"VL_READY> ");
+        // xterm sends DEL for Backspace. The shell must erase the cell as well
+        // as moving the cursor; merely executing the shortened line is not enough.
+        writer.write_all(b"abc\x7f").unwrap();
+        writer.flush().unwrap();
+        let editing = collect_until(b"\x08 \x08");
+        writer.write_all(b"\x15print -r -- ac\x1b[Db\x1b[CZ\r").unwrap();
+        writer.flush().unwrap();
+        let result = collect_until(b"\r\nabcZ\r\n");
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(writer);
+        drop(pair.master);
+        reader_thread.join().unwrap();
+
+        assert!(prompt.windows(10).any(|bytes| bytes == b"VL_READY> "), "shell prompt missing");
+        assert!(editing.windows(3).any(|bytes| bytes == b"\x08 \x08"),
+            "Backspace must visibly erase a character: {editing:?}");
+        assert!(result.windows(8).any(|bytes| bytes == b"\r\nabcZ\r\n"),
+            "left/right arrows must edit the command: {result:?}");
     }
 
     #[cfg(windows)]
