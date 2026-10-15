@@ -50,7 +50,7 @@ describe("GitHub merge readiness", () => {
     expect(getPrMergeBlockers({ ...ready, checks: { ...ready.checks, pending: 1 } }))
       .toContain("1 CI check(s) are still pending.");
     expect(getPrMergeBlockers({ ...ready, isDraft: true }))
-      .toContain("Draft PRs cannot be merged.");
+      .toContain('Draft PR: select "Ready for review" before merging.');
     expect(getPrMergeBlockers({ ...ready, reviewDecision: "CHANGES_REQUESTED" }))
       .toContain("Review decision: CHANGES_REQUESTED.");
   });

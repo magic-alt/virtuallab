@@ -53,6 +53,7 @@ export function GithubPanel({
   const [pullRequests, setPullRequests] = useState<GithubPullRequest[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [merging, setMerging] = useState(false);
+  const [readying, setReadying] = useState(false);
   const [mergeMethod, setMergeMethod] = useState<GithubMergeMethod>("squash");
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [postingId, setPostingId] = useState<string | null>(null);
@@ -102,7 +103,7 @@ export function GithubPanel({
   }, [enabled, workspaceRoot]);
 
   const loadContext = async (selectedReference = reference) => {
-    if (!enabled) return;
+    if (!enabled || readying || merging) return;
     setLoading(true);
     setError(null);
     setContext(null); // Never enable actions against a stale selection.
@@ -128,7 +129,7 @@ export function GithubPanel({
   };
 
   const refreshPrList = async () => {
-    if (!enabled || listLoading) return;
+    if (!enabled || listLoading || readying || merging) return;
     setListLoading(true);
     setError(null);
     try {
@@ -214,8 +215,50 @@ export function GithubPanel({
     }
   };
 
+  const readyForReview = async () => {
+    if (!pr || !pr.isDraft || pr.state !== "OPEN" || !capabilities?.repository
+      || readying || merging || loading || listLoading) return;
+    if (actionPending.current) return;
+    actionPending.current = true;
+    const expectedContext = liveContext.current;
+    let confirmed = false;
+    try {
+      confirmed = await confirmNativeAction(
+        `Mark GitHub PR #${pr.number} as Ready for review?\n\n` +
+        `Repository: ${capabilities.repository}\nHead: ${pr.headSha}\n\n` +
+        "This publishes the PR for review. It does NOT approve or merge it.",
+      );
+    } finally {
+      actionPending.current = false;
+    }
+    if (!confirmed || liveContext.current !== expectedContext) return;
+
+    setReadying(true);
+    setError(null);
+    setMergeResult(null);
+    try {
+      const updated = await githubAdapter.markReadyForReview({
+        workspaceRoot,
+        repository: capabilities.repository,
+        prNumber: pr.number,
+        expectedHeadSha: pr.headSha,
+      });
+      if (liveContext.current !== expectedContext) return;
+      setContext((previous) => previous?.pullRequest?.number === pr.number
+        ? { ...previous, pullRequest: updated }
+        : previous);
+      setPullRequests((previous) => previous.map((item) =>
+        item.number === pr.number ? updated : item));
+      setMergeResult(`PR #${pr.number} is now ready for review. Confirm CI and approvals before merging.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReadying(false);
+    }
+  };
+
   const mergePr = async () => {
-    if (!pr || !capabilities?.repository || merging || loading || mergeBlockers.length) return;
+    if (!pr || !capabilities?.repository || merging || readying || loading || listLoading || mergeBlockers.length) return;
     if (actionPending.current) return;
     actionPending.current = true;
     const expectedContext = liveContext.current;
@@ -289,7 +332,7 @@ export function GithubPanel({
                 {capabilities.mode === "connected" ? "connected" : "local only"}
               </Badge>
             )}
-            <Button disabled={loading || listLoading} onClick={() => void refreshPrList()} size="sm" variant="ghost">
+            <Button disabled={loading || listLoading || readying || merging} onClick={() => void refreshPrList()} size="sm" variant="ghost">
               <RefreshCw size={12} className={loading || listLoading ? "animate-spin" : undefined} />
               Refresh
             </Button>
@@ -328,7 +371,7 @@ export function GithubPanel({
                     onChange={(event) => setReference(event.target.value)}
                   />
                 </label>
-                <Button disabled={loading} onClick={() => void loadContext()} size="sm">
+                <Button disabled={loading || listLoading || readying || merging} onClick={() => void loadContext()} size="sm">
                   {loading ? <LoaderCircle className="animate-spin" size={13} /> : <GitPullRequest size={13} />}
                   Load
                 </Button>
@@ -370,7 +413,7 @@ export function GithubPanel({
                   type="button"
                   key={item.number}
                   aria-label={`Open PR #${item.number}`}
-                  disabled={loading || merging}
+                  disabled={loading || merging || readying || listLoading}
                   onClick={() => void loadContext(`pr:${item.number}`)}
                   className={`min-w-0 border p-3 text-left transition-colors hover:border-orange-400/40 hover:bg-white/[0.03] disabled:opacity-50 ${
                     pr?.number === item.number ? "border-orange-400/50 bg-orange-400/[0.07]" : "border-white/[0.07]"
@@ -402,10 +445,10 @@ export function GithubPanel({
 
       {(pr || context?.issue) && (
         <div className="flex flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-4 py-3 text-[11px]">
-          <span className="font-medium text-slate-300">Review loop</span>
+          <span className="font-medium text-slate-300">Local review loop</span>
           <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
           <span className="text-slate-500">
-            Inspect → Review → Fix → Refresh → Re-review
+            Inspect → Review → Fix → Refresh → Re-review · local status, not the GitHub Draft state
           </span>
           <Button size="sm" variant="outline"
             onClick={() => setReviewPhase(workspaceRoot,"fix")}>
@@ -430,7 +473,9 @@ export function GithubPanel({
               {headRelation === "head" ? "HEAD match" : headRelation === "base" ? "At PR base" :
                 headRelation === "unknown" ? "HEAD unknown" : "HEAD mismatch"}
             </Badge>
-            <Badge tone="neutral">{pr.state}</Badge>
+            <Badge tone={pr.state === "OPEN" ? (pr.isDraft ? "amber" : "green") : "neutral"}>
+              {pr.state === "OPEN" ? (pr.isDraft ? "Draft" : "Ready for review") : pr.state}
+            </Badge>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 border-b border-white/[0.06] p-4">
@@ -524,10 +569,17 @@ export function GithubPanel({
                 GitHub: {pr.mergeStateStatus ?? "unknown"} · Review: {pr.reviewDecision ?? "not required"}
               </span>
               <div className="ml-auto flex flex-wrap items-center gap-2">
+                {pr.isDraft && pr.state === "OPEN" && (
+                  <Button disabled={readying || merging || loading || listLoading}
+                    onClick={() => void readyForReview()} size="sm" variant="outline">
+                    {readying ? <LoaderCircle size={13} className="animate-spin" /> : <GitPullRequest size={13} />}
+                    Ready for review
+                  </Button>
+                )}
                 <select
                   aria-label="Merge method"
                   className="field min-w-[110px] py-1 text-xs"
-                  disabled={merging}
+                  disabled={merging || readying}
                   value={mergeMethod}
                   onChange={(event) => setMergeMethod(event.target.value as GithubMergeMethod)}
                 >
@@ -535,12 +587,25 @@ export function GithubPanel({
                   <option value="merge">Merge commit</option>
                   <option value="rebase">Rebase</option>
                 </select>
-                <Button disabled={mergeBlockers.length > 0 || merging || loading} onClick={() => void mergePr()} size="sm">
+                <Button disabled={mergeBlockers.length > 0 || merging || readying || loading || listLoading} onClick={() => void mergePr()} size="sm">
                   {merging ? <LoaderCircle size={13} className="animate-spin" /> : <GitMerge size={13} />}
                   Merge PR
                 </Button>
               </div>
             </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+              <span>1 · {pr.isDraft ? "Draft PR" : "Ready for review"}</span>
+              <span aria-hidden>→</span>
+              <span>2 · CI checks and review approvals</span>
+              <span aria-hidden>→</span>
+              <span>3 · Merge</span>
+            </div>
+            {pr.isDraft && pr.state === "OPEN" && (
+              <p className="mt-2 text-[11px] text-amber-200">
+                This PR is a draft. Choose Ready for review above and confirm. This does not approve
+                the PR or bypass required checks; Merge PR will stay disabled until they pass.
+              </p>
+            )}
             {mergeBlockers.length > 0 ? (
               <ul className="mt-3 space-y-1 text-[11px] text-amber-200">
                 {mergeBlockers.map((reason) => <li key={reason}>• {reason}</li>)}

@@ -101,6 +101,15 @@ pub struct GithubMergeRequest {
     merge_method: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubReadyForReviewRequest {
+    workspace_root: String,
+    repository: String,
+    pr_number: u64,
+    expected_head_sha: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GithubMergeResponse {
@@ -169,6 +178,15 @@ pub async fn github_merge_pull_request(request: GithubMergeRequest) -> Result<Gi
     tauri::async_runtime::spawn_blocking(move || github_merge_pull_request_blocking(request))
         .await
         .map_err(|error| format!("GitHub merge task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn github_mark_ready_for_review(
+    request: GithubReadyForReviewRequest,
+) -> Result<GithubPullRequest, String> {
+    tauri::async_runtime::spawn_blocking(move || github_mark_ready_for_review_blocking(request))
+        .await
+        .map_err(|error| format!("GitHub ready-for-review task failed: {error}"))?
 }
 
 #[tauri::command]
@@ -391,6 +409,62 @@ fn github_merge_pull_request_blocking(
         merged: true,
         sha: response.get("sha").and_then(Value::as_str).map(ToOwned::to_owned),
     })
+}
+
+// This transition does not approve reviews or override CI/branch protection.
+// GitHub authorizes the actual action; the native preflight binds it to the
+// currently selected workspace origin and the HEAD that the user inspected.
+fn github_mark_ready_for_review_blocking(
+    request: GithubReadyForReviewRequest,
+) -> Result<GithubPullRequest, String> {
+    let capabilities = github_capabilities_blocking(&request.workspace_root);
+    if capabilities.mode != "connected" {
+        return Err(capabilities.detail);
+    }
+    let repository = capabilities.repository.as_deref()
+        .ok_or_else(|| "Workspace origin is not a GitHub repository".to_string())?;
+    if !repository.eq_ignore_ascii_case(request.repository.trim()) {
+        return Err("Ready-for-review target no longer matches this workspace's origin".to_string());
+    }
+    let latest = load_pull_request(&request.workspace_root, repository, Some(request.pr_number))?;
+    ensure_ready_transition(&latest, &request.expected_head_sha)?;
+
+    // No --admin or bypass: gh enforces the authenticated user's permissions.
+    let number = request.pr_number.to_string();
+    let output = background_command("gh")
+        .args(["pr", "ready", number.as_str(), "--repo", repository])
+        .current_dir(&request.workspace_root)
+        .output()
+        .map_err(|error| format!("Failed to launch gh pr ready: {error}"))?;
+    if !output.status.success() {
+        return Err(failure_detail(&output, "GitHub rejected the ready-for-review transition"));
+    }
+
+    let updated = load_pull_request(&request.workspace_root, repository, Some(request.pr_number))
+        .map_err(|error| format!("PR marked ready; refresh its state: {error}"))?;
+    if updated.state != "OPEN" || updated.is_draft {
+        return Err("GitHub has not confirmed Ready for review; refresh the PR".to_string());
+    }
+    if updated.head_sha != request.expected_head_sha {
+        return Err("PR marked ready, but HEAD changed; refresh before taking further action".to_string());
+    }
+    Ok(updated)
+}
+
+fn ensure_ready_transition(pr: &GithubPullRequest, expected_sha: &str) -> Result<(), String> {
+    if expected_sha.len() != 40 || !expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Expected PR HEAD must be a full 40-character SHA".to_string());
+    }
+    if pr.head_sha != expected_sha {
+        return Err("PR HEAD changed since it was inspected; refresh before changing draft status".to_string());
+    }
+    if pr.state != "OPEN" {
+        return Err("Only an open PR can be marked ready for review".to_string());
+    }
+    if !pr.is_draft {
+        return Err("PR is already ready for review; refresh its state".to_string());
+    }
+    Ok(())
 }
 
 fn ensure_merge_ready(pr: &GithubPullRequest) -> Result<(), String> {
@@ -1022,6 +1096,26 @@ mod tests {
         assert!(ensure_merge_ready(&pr).is_ok());
         pr.is_draft = true;
         assert!(ensure_merge_ready(&pr).is_err());
+    }
+
+    #[test]
+    fn draft_transition_requires_open_pr_and_matching_full_sha() {
+        let mut pr = parse_pull_request(&json!({
+            "number": 13, "title": "Draft", "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/13",
+            "baseRefName": "main", "headRefName": "feature",
+            "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "isDraft": true, "statusCheckRollup": []
+        })).unwrap();
+        let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(ensure_ready_transition(&pr, sha).is_ok());
+        assert!(ensure_ready_transition(&pr, "short").is_err());
+        assert!(ensure_ready_transition(&pr, &"b".repeat(40)).is_err());
+        pr.is_draft = false;
+        assert!(ensure_ready_transition(&pr, sha).is_err());
+        pr.is_draft = true;
+        pr.state = "MERGED".to_string();
+        assert!(ensure_ready_transition(&pr, sha).is_err());
     }
 
     #[test]

@@ -326,6 +326,14 @@ export interface GithubMergeResponse {
   sha?: string | null;
 }
 
+/** Draft -> Ready for review, scoped to the workspace origin and inspected PR HEAD. */
+export interface GithubReadyForReviewRequest {
+  workspaceRoot: string;
+  repository: string;
+  prNumber: number;
+  expectedHeadSha: string;
+}
+
 export interface GithubIssue {
   number: number;
   title: string;

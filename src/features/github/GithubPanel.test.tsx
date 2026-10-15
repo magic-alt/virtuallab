@@ -14,6 +14,7 @@ vi.mock("@/lib/github", async (importOriginal) => ({
     loadContext: vi.fn(),
     listPullRequests: vi.fn(),
     mergePullRequest: vi.fn(),
+    markReadyForReview: vi.fn(),
     postReviewComment: vi.fn(),
   },
 }));
@@ -52,6 +53,7 @@ describe("GithubPanel", () => {
     adapter.loadContext.mockReset();
     adapter.listPullRequests.mockReset();
     adapter.mergePullRequest.mockReset();
+    adapter.markReadyForReview.mockReset();
     adapter.postReviewComment.mockReset();
     adapter.capabilities.mockResolvedValue(connected);
     adapter.listPullRequests.mockImplementation(async () => ({
@@ -321,6 +323,39 @@ describe("GithubPanel", () => {
     }));
     expect(await screen.findByRole("status")).toHaveTextContent("PR #77 merged");
     expect(screen.getByRole("button", { name: "Merge PR" })).toBeDisabled();
+    confirmSpy.mockRestore();
+  });
+
+  it("converts a draft to Ready for review only after confirmation, without merging", async () => {
+    const draftPr = { ...readyPr, isDraft: true };
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [draftPr] });
+    adapter.loadContext.mockResolvedValue({
+      capabilities: connected, reference: "pr:77", pullRequest: draftPr, issue: null,
+    });
+    adapter.markReadyForReview.mockResolvedValue(readyPr);
+    const confirmSpy = vi.spyOn(backend, "confirmNativeAction").mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot="D:/repo" enabled />);
+    await user.click(await screen.findByRole("button", { name: "Open PR #77" }));
+    expect(await screen.findByText(/#77 Make PR dashboard/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge PR" })).toBeDisabled();
+    const readyButton = screen.getByRole("button", { name: "Ready for review" });
+    expect(readyButton).toBeEnabled();
+
+    await user.click(readyButton);
+    expect(adapter.markReadyForReview).not.toHaveBeenCalled();
+    confirmSpy.mockResolvedValue(true);
+    await user.click(readyButton);
+    await waitFor(() => expect(adapter.markReadyForReview).toHaveBeenCalledWith({
+      workspaceRoot: "D:/repo",
+      repository: "example-org/sample-repo",
+      prNumber: 77,
+      expectedHeadSha: readyPr.headSha,
+    }));
+    expect(await screen.findByRole("status")).toHaveTextContent("ready for review");
+    expect(screen.queryByRole("button", { name: "Ready for review" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge PR" })).toBeEnabled();
+    expect(adapter.mergePullRequest).not.toHaveBeenCalled();
     confirmSpy.mockRestore();
   });
 
