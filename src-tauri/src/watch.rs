@@ -310,6 +310,33 @@ mod tests {
     }
 
     #[test]
+    fn linked_worktree_watches_its_external_gitdir_and_shared_refs() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let sandbox = std::env::temp_dir().join(format!(
+            "virtuallab-watch-linked-{}-{nonce}", std::process::id(),
+        ));
+        let linked = sandbox.join("linked");
+        let common = sandbox.join("primary").join(".git");
+        let worktree_git = common.join("worktrees").join("linked");
+        std::fs::create_dir_all(&linked).unwrap();
+        std::fs::create_dir_all(common.join("refs").join("heads")).unwrap();
+        std::fs::create_dir_all(&worktree_git).unwrap();
+        std::fs::write(linked.join(".git"), format!("gitdir: {}", worktree_git.display())).unwrap();
+        std::fs::write(worktree_git.join("commondir"), "../..").unwrap();
+
+        let roots = resolve_git_directories(&linked);
+        assert_eq!(roots.len(), 2);
+        assert!(roots.contains(&worktree_git.canonicalize().unwrap()));
+        assert!(roots.contains(&common.canonicalize().unwrap()));
+        assert_eq!(classify_watch_path(&worktree_git.canonicalize().unwrap().join("HEAD"), &roots),
+            Some("git.changed"));
+        assert_eq!(classify_watch_path(&common.canonicalize().unwrap().join("refs/heads/new"), &roots),
+            Some("git.changed"));
+        std::fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
     fn generated_directories_are_ignored() {
         for path in [
             "repo/.git/index",
