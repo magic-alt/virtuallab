@@ -18,7 +18,7 @@ VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元�
 | Local repositories | **Add repository** 导入现有本地 Git 项目 | 需要桌面运行时 |
 | Workspace lanes | 创建、导航 Git worktree | 工作目录互相独立 |
 | Git branches | 切换与删除 local/origin 分支 | 不可绕过分支保护 |
-| 工作区头部 | HEAD、remote、dirty；Fetch + prune / Pull / Refresh | Pull 仅快进 |
+| 工作区头部 | HEAD、remote、dirty；Open in IDE、Fetch + prune / Pull / Refresh | 可直接用外部编辑器打开当前 Worktree；Pull 仅快进 |
 | 功能标签 | Overview、Changes、GitHub、Agents、Terminal、Run、Checks、History | 按当前 worktree 执行；文档不在标签栏中 |
 | 底部状态栏 | 本地执行边界、程序版本 | 不代替正式验收记录 |
 
@@ -88,6 +88,17 @@ git status --short
 4. **受锁定 / 非注册 / 主 Worktree**：仍由 Git 与 Rust 拒绝；不会绕过锁定或清理其他仓库的目录。
 
 **数据丢失警告**：Force remove 会永久删除目标 Worktree 目录的未提交修改、未跟踪文件，也可能删除忽略的构建产物。即使是干净的 Worktree，忽略文件也可能随目录被删除。建议先 Commit、Stash 或手动备份。删除 Worktree **不等于**删除 local/origin 分支，且不会自动清理终端中仍在运行的任务。
+
+### 使用 Zed、VS Code 或 Cursor 打开整个工程
+
+1. 在目标 **Workspace lane** 或左侧已检出的 **Git branch** 点击代码编辑器图标（或先进入该 Workspace，再点击工作区顶部 **Open in IDE**）。
+2. 工作区顶部 **Preferred editor** 可选择 **Auto-detect**、**Zed**、**VS Code** 或 **Cursor**。选择会保存在本地；每一个侧边栏入口都会使用该选择。
+3. 如果选择 Auto-detect，VirtualLab 首先识别 `VISUAL` / `EDITOR` 指向的受支持 IDE；否则按 Zed → VS Code → Cursor 查找可用的应用。Windows 上会额外检查标准安装位置（包括 Zed 专用的 `%LOCALAPPDATA%\\Programs\\Zed\\bin\\zed.exe`），macOS 也检查常用 .app CLI 位置。
+4. 编辑器会把**选中的整个 Worktree 目录**作为单独项目窗口打开（Zed `--new`、VS Code/Cursor `--new-window`）。在另一个 Worktree 中检出的同名项目仍使用自己的路径。文件管理器 **Open folder** 与 **Open in IDE** 是两个不同的操作。
+
+**分支对应目录的边界：** Git branch 本身只是提交引用。没有被 Worktree 检出的 branch 并不存在专属工程目录，因此不会显示“直接在 IDE 打开”操作。先检出/创建 Worktree 再打开。该按钮不执行 Git checkout、Stash、Commit 或任何文件复制，也不会关闭已有编辑器或终端。外部 IDE 的修改仍由 VirtualLab 的文件监听器检测，可在 Changes / Refresh 中查看。
+
+**常见问题：** 若提示找不到编辑器，请安装对应 IDE，或将其 CLI 加入 PATH。Windows 的“文件夹默认打开方式”往往是资源管理器，并不是代码编辑器，因此 Auto-detect 依据受支持的编辑器环境变量及可执行文件，而不是使用系统的文件夹关联来冒充 IDE。浏览器预览模式不支持原生启动。
 
 ### 切换和删除分支
 
