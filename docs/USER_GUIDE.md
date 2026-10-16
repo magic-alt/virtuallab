@@ -60,6 +60,8 @@ npm run tauri:dev
 
 > **提醒**：本机执行的构建脚本和 Agent 可能拥有本地系统权限。不要把导入仓库理解为项目安全认证；首次运行前需要审查构建脚本与依赖。
 
+工作区采用**静默增量刷新**：Terminal / Coding Agent 持续修改源码时，只更新工作区的文件修改状态和 Changes 数量，不会让左侧 Git branches 列表反复进入 Loading 或使操作按钮闪烁。执行 `git add` 后会更新暂存状态；通过 Terminal 执行提交、创建分支、切换分支等 Git 元数据操作时，才会更新完整分支与 Worktree 列表。持续写入会自动合并刷新请求，手动点击 **Refresh** 仍可强制重新检查全部 Git 信息。
+
 ## 03 · Git Worktree 与分支管理
 
 ### 创建隔离开发工作区
