@@ -4,10 +4,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
+  Minus,
   Plus,
   Square,
-  X,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -19,6 +20,13 @@ import {
 } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { workspaceKey } from "@/lib/workspaceKey";
+import {
+  DEFAULT_TERMINAL_FONT_SIZE,
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+  setTerminalFontSize,
+  useTerminalFontSize,
+} from "./terminalAppearance";
 import type { TerminalOutput, WorkbenchEvent } from "@/types/workbench";
 
 interface Session {
@@ -46,6 +54,7 @@ export function TerminalWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
   const scope = workspaceKey(cwd);
+  const fontSize = useTerminalFontSize();
   const handles = useRef(new Map<string, TerminalHandle>());
   const pending = useRef(new Map<string, number[][]>());
   const sessionsRef = useRef<Session[]>([]);
@@ -213,7 +222,7 @@ export function TerminalWorkspace({
   }, []);
 
   return (
-    <div className="vl-editor-surface mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] shadow-[4px_4px_0_rgba(58,16,0,0.55)]">
+    <div className="vl-editor-surface vl-terminal-workspace mx-auto flex h-full min-h-[520px] max-w-[1320px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] shadow-[4px_4px_0_rgba(58,16,0,0.55)]">
       <div className="flex h-11 shrink-0 items-center border-b border-orange-400/10 bg-[#120b06] px-2">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {sessions.map((session) => (
@@ -244,6 +253,39 @@ export function TerminalWorkspace({
               />
             </button>
           ))}
+        </div>
+
+        <div role="group" aria-label="Terminal font size" className="ml-2 flex shrink-0 items-center gap-0.5 border-l border-orange-400/15 pl-2">
+          <button
+            type="button"
+            aria-label="Decrease terminal font size"
+            title="Decrease terminal font size"
+            disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
+            onClick={() => setTerminalFontSize(fontSize - 1)}
+            className="flex size-7 items-center justify-center rounded text-orange-200 hover:bg-orange-400/10 disabled:opacity-35"
+          >
+            <Minus size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label="Reset terminal font size"
+            title="Reset terminal font size"
+            disabled={fontSize === DEFAULT_TERMINAL_FONT_SIZE}
+            onClick={() => setTerminalFontSize(DEFAULT_TERMINAL_FONT_SIZE)}
+            className="min-w-11 rounded px-1 py-1 text-xs tabular-nums text-orange-100 hover:bg-orange-400/10 disabled:opacity-70"
+          >
+            {fontSize}px
+          </button>
+          <button
+            type="button"
+            aria-label="Increase terminal font size"
+            title="Increase terminal font size"
+            disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
+            onClick={() => setTerminalFontSize(fontSize + 1)}
+            className="flex size-7 items-center justify-center rounded text-orange-200 hover:bg-orange-400/10 disabled:opacity-35"
+          >
+            <Plus size={14} />
+          </button>
         </div>
 
         <Button disabled={!enabled || !listenersReady || sessions.length >= 8} onClick={start} size="sm" variant="ghost">
@@ -294,6 +336,7 @@ export function TerminalWorkspace({
               id={session.id}
               active={session.id === activeId}
               visible={visible}
+              fontSize={fontSize}
               // ConPTY can request cursor position (CSI 6n) before the spawn
               // acknowledgement. xterm must be able to answer CSI 1;1R while
               // the session is still 'starting', or PowerShell stalls.
@@ -326,6 +369,7 @@ function TerminalSurface({
   id,
   active,
   visible,
+  fontSize,
   enabled,
   onAttach,
   onDetach,
@@ -334,6 +378,7 @@ function TerminalSurface({
   id: string;
   active: boolean;
   visible: boolean;
+  fontSize: number;
   enabled: boolean;
   onAttach: (id: string, handle: TerminalHandle) => void;
   onDetach: (id: string) => void;
@@ -351,24 +396,40 @@ function TerminalSurface({
   // before an effect would run when the shell enters "starting".
   enabledRef.current = enabled;
 
+  const fitAndResize = useCallback(() => {
+    const handle = terminalHandle.current;
+    if (!handle || !activeRef.current || !visibleRef.current) return;
+    try {
+      handle.fit.fit();
+      if (enabledRef.current) {
+        void terminalResize(id, handle.terminal.cols, handle.terminal.rows)
+          .catch(() => undefined);
+      }
+    } catch {
+      // The host can temporarily be unmeasurable during navigation.
+    }
+  }, [id]);
+
   useEffect(() => {
     if (!host.current) return;
 
     const terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
-      fontFamily: '"Cascadia Code", "JetBrains Mono", Consolas, monospace',
-      fontSize: 12,
-      lineHeight: 1.25,
+      fontFamily: '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Microsoft YaHei UI", monospace',
+      fontSize,
+      lineHeight: 1.3,
+      letterSpacing: 0,
+      minimumContrastRatio: 4.5,
       scrollback: 8000,
       theme: {
         background: "#090704",
-        foreground: "#d9d3ca",
+        foreground: "#ebe3d8",
         cursor: "#fb923c",
         cursorAccent: "#090704",
         selectionBackground: "#7c2d1255",
         black: "#111827",
-        brightBlack: "#6b7280",
+        brightBlack: "#a1a1aa",
         red: "#fb7185",
         green: "#6ee7b7",
         yellow: "#fcd34d",
@@ -395,17 +456,7 @@ function TerminalSurface({
       // Fitting display:none panes can collapse ConPTY to a 2-column terminal.
       if (!activeRef.current || !visibleRef.current) return;
       window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(() => {
-        if (!activeRef.current || !visibleRef.current) return;
-        try {
-          fit.fit();
-          if (enabledRef.current) {
-            void terminalResize(id, terminal.cols, terminal.rows).catch(() => undefined);
-          }
-        } catch {
-          // Ignore geometry changes during transitions.
-        }
-      }, 80);
+      resizeTimer = window.setTimeout(fitAndResize, 80);
     });
     resize.observe(host.current);
 
@@ -417,27 +468,33 @@ function TerminalSurface({
       terminalHandle.current = null;
       terminal.dispose();
     };
-  }, [id, onAttach, onDetach, onInputError]);
+  // Font changes update the existing instance below: never recreate the PTY
+  // or discard its scrollback merely because the appearance changed.
+  }, [id, onAttach, onDetach, onInputError, fitAndResize]);
 
   useEffect(() => {
     if (!active || !visible) return;
     // Re-fit and focus after a hidden tab becomes measurable again.
     const timer = window.setTimeout(() => {
-      const handle = terminalHandle.current;
-      if (!handle) return;
-      try {
-        handle.fit.fit();
-        if (enabled) {
-          void terminalResize(id, handle.terminal.cols, handle.terminal.rows)
-            .catch(() => undefined);
-        }
-        handle.terminal.focus();
-      } catch {
-        // The host may briefly have no measurable geometry on teardown.
-      }
+      fitAndResize();
+      terminalHandle.current?.terminal.focus();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [id, active, visible, enabled]);
+  }, [active, visible, enabled, fitAndResize]);
+
+  useEffect(() => {
+    const handle = terminalHandle.current;
+    if (!handle || handle.terminal.options.fontSize === fontSize) return;
+    handle.terminal.options.fontSize = fontSize;
+    // Hidden workspaces retain their buffers and apply the new geometry when
+    // visited again; never resize a hidden ConPTY to a near-zero column count.
+    if (!active || !visible) return;
+    const timer = window.setTimeout(() => {
+      fitAndResize();
+      handle.terminal.focus();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fontSize, active, visible, fitAndResize]);
 
   return (
     <div

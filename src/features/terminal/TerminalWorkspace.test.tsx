@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
+import { setTerminalFontSize } from "./terminalAppearance";
 
 const backend = vi.hoisted(() => ({
   isDesktopRuntime: vi.fn(() => true),
@@ -22,11 +23,13 @@ const events = vi.hoisted(() => ({
 
 const xterm = vi.hoisted(() => ({
   instances: [] as Array<{
+    options: { fontSize: number };
     write: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
     onInput?: (data: string) => void;
   }>,
+  fits: [] as Array<ReturnType<typeof vi.fn>>,
 }));
 
 vi.mock("@/lib/backend", () => backend);
@@ -44,11 +47,13 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
-    fit() {}
+    fit = vi.fn();
+    constructor() { xterm.fits.push(this.fit); }
   },
 }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
+    options: { fontSize: number };
     cols = 120;
     rows = 32;
     write = vi.fn();
@@ -61,7 +66,8 @@ vi.mock("@xterm/xterm", () => ({
       this.onInput = callback;
       return { dispose: vi.fn() };
     }
-    constructor() {
+    constructor(options: { fontSize: number }) {
+      this.options = { fontSize: options.fontSize };
       xterm.instances.push(this);
     }
   },
@@ -73,6 +79,7 @@ beforeEach(() => {
   events.holdOutputListener = false;
   events.resolveOutputListener = null;
   xterm.instances.length = 0;
+  xterm.fits.length = 0;
   for (const method of Object.values(backend)) method.mockReset().mockResolvedValue(undefined);
   backend.isDesktopRuntime.mockReset().mockReturnValue(true);
 });
@@ -86,6 +93,64 @@ async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("TerminalWorkspace native PTY lifecycle", () => {
+  it("starts with legible text and zooms existing xterm buffers without respawning PTYs", async () => {
+    const user = userEvent.setup();
+    render(<TerminalWorkspace cwd="D:/workspace" enabled />);
+    const id = await startTerminal(user);
+    const first = xterm.instances[0];
+    expect(first.options.fontSize).toBe(15);
+    expect(screen.getByRole("button", { name: "Reset terminal font size" })).toHaveTextContent("15px");
+
+    const priorFits = xterm.fits[0].mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Increase terminal font size" }));
+    await waitFor(() => expect(first.options.fontSize).toBe(16));
+    await waitFor(() => expect(xterm.fits[0].mock.calls.length).toBeGreaterThan(priorFits));
+    expect(localStorage.getItem("virtuallab.terminal.fontSize")).toBe("16");
+    expect(backend.terminalSpawn).toHaveBeenCalledTimes(1);
+    expect(first.dispose).not.toHaveBeenCalled();
+
+    // Codex slash commands still reach the same native process after zoom.
+    act(() => { first.onInput?.("/model"); });
+    await waitFor(() =>
+      expect(backend.terminalWrite).toHaveBeenCalledWith(id, new TextEncoder().encode("/model")),
+    );
+
+    await user.click(screen.getByRole("button", { name: /new terminal/i }));
+    await waitFor(() => expect(xterm.instances[1]?.options.fontSize).toBe(16));
+    expect(first.dispose).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Reset terminal font size" }));
+    await waitFor(() => {
+      expect(first.options.fontSize).toBe(15);
+      expect(xterm.instances[1].options.fontSize).toBe(15);
+    });
+    expect(localStorage.getItem("virtuallab.terminal.fontSize")).toBe("15");
+    expect(backend.terminalSpawn).toHaveBeenCalledTimes(2);
+  });
+
+  it("remembers zoom on a new visit and does not resize hidden ConPTY sessions", async () => {
+    const user = userEvent.setup();
+    const view = render(<TerminalWorkspace cwd="D:/workspace" enabled visible />);
+    await startTerminal(user);
+    await waitFor(() => expect(xterm.instances[0]?.focus).toHaveBeenCalled());
+    view.rerender(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} />);
+    const previousResizes = backend.terminalResize.mock.calls.length;
+
+    act(() => { setTerminalFontSize(19); });
+    await waitFor(() => expect(xterm.instances[0].options.fontSize).toBe(19));
+    expect(backend.terminalResize).toHaveBeenCalledTimes(previousResizes);
+    expect(xterm.instances[0].dispose).not.toHaveBeenCalled();
+
+    view.rerender(<TerminalWorkspace cwd="D:/workspace" enabled visible />);
+    await waitFor(() => expect(backend.terminalResize.mock.calls.length).toBeGreaterThan(previousResizes));
+    view.unmount();
+
+    render(<TerminalWorkspace cwd="D:/another" enabled />);
+    await startTerminal(user);
+    expect(xterm.instances.at(-1)?.options.fontSize).toBe(19);
+    expect(screen.getByRole("button", { name: "Reset terminal font size" })).toHaveTextContent("19px");
+  });
+
   it("waits for both subscriptions before it permits spawning a fast shell", async () => {
     events.holdOutputListener = true;
     const user = userEvent.setup();

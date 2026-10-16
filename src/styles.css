@@ -79,7 +79,8 @@ textarea:focus-visible {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  /* Decoration sits beneath dialogs and the crisp terminal surface. */
+  z-index: 1;
   pointer-events: none;
   opacity: 0.08;
   background:
@@ -209,6 +210,21 @@ textarea:focus-visible {
 
 .vl-editor-surface {
   background: #130b06 !important;
+}
+
+/* Render the PTY above the decorative scanlines, but below dialogs (z-50).
+   The inherited pixel-style text shadow makes 12–15px terminal glyphs look
+   doubled, especially for Codex slash-command menus in the DOM renderer. */
+.vl-terminal-workspace {
+  position: relative;
+  z-index: 2;
+  text-shadow: none !important;
+}
+
+.vl-terminal-workspace .xterm {
+  text-shadow: none !important;
+  text-rendering: auto;
+  font-synthesis: none;
 }
 
 .surface-grid {
