@@ -49,6 +49,7 @@ import type {
 } from "@/types/workbench";
 
 const WATCH_ID = "active-workspace";
+const WATCH_METADATA_QUIET_MS = 400;
 const WATCH_REFRESH_QUIET_MS = 850;
 const WATCH_REFRESH_MAX_WAIT_MS = 2600;
 
@@ -95,6 +96,7 @@ export function WorkbenchShell() {
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
+  const metadataRefreshTimer = useRef<number | undefined>(undefined);
   const firstWatchChangeAtRef = useRef<number | null>(null);
   const fullInspectionEpochRef = useRef(0);
   const statusLoadsRef = useRef(new Map<string, Promise<void>>());
@@ -326,7 +328,20 @@ export function WorkbenchShell() {
       .catch((err) => { if (!disposed) setError(err instanceof Error ? err.message : String(err)); });
 
     void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
-      if (payload.eventType !== "fs.changed" || payload.id !== watchId) return;
+      if (disposed || payload.id !== watchId) return;
+      if (payload.eventType === "git.changed") {
+        // HEAD, branch refs and worktree inventories are inexpensive to
+        // refresh only when Git metadata actually changes.
+        window.clearTimeout(metadataRefreshTimer.current);
+        metadataRefreshTimer.current = window.setTimeout(() => {
+          if (!gitMutationInFlightRef.current) {
+            void loadSnapshot(snapshot.root, true, activeRepository.id, true).catch(() => undefined);
+          }
+        }, WATCH_METADATA_QUIET_MS);
+        return;
+      }
+      if (payload.eventType !== "fs.changed" &&
+          payload.eventType !== "git.status_changed") return;
       const now = Date.now();
       if (firstWatchChangeAtRef.current === null) firstWatchChangeAtRef.current = now;
       // Coalesce write bursts; the max wait prevents continuous Agent output
@@ -348,11 +363,12 @@ export function WorkbenchShell() {
     return () => {
       disposed = true;
       window.clearTimeout(refreshTimer.current);
+      window.clearTimeout(metadataRefreshTimer.current);
       firstWatchChangeAtRef.current = null;
       unlisten?.();
       void watchStop(watchId).catch(() => undefined);
     };
-  }, [activeRepository, refreshWorkingTree, snapshot.root]);
+  }, [activeRepository, loadSnapshot, refreshWorkingTree, snapshot.root]);
 
   const addLocalRepository = async () => {
     try {
