@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   Boxes,
   FolderGit2,
@@ -64,19 +65,18 @@ export function ProjectSidebar({
     : repositories;
   // Always keep the active branch and main in easy reach, even in repositories
   // with dozens of old local / origin refs.
-  const visibleBranches = snapshot.branches
+  const visibleBranches = useMemo(() => snapshot.branches
     .filter((branch) => !query || branch.name.toLowerCase().includes(query))
     .sort((left, right) => {
       const priority = (name: string) =>
         name === snapshot.currentBranch ? 0 : name === "main" ? 1 : 2;
       return priority(left.name) - priority(right.name) || left.name.localeCompare(right.name);
-    });
-  const visibleWorktrees = (query
+    }), [snapshot.branches, snapshot.currentBranch, query]);
+  const visibleWorktrees = useMemo(() => query
     ? snapshot.worktrees.filter((worktree) =>
         `${worktree.branch ?? ""} ${worktree.path}`.toLowerCase().includes(query),
       )
-    : snapshot.worktrees
-  );
+    : snapshot.worktrees, [snapshot.worktrees, query]);
 
   return (
     <aside className="vl-sidebar flex min-h-0 w-[clamp(220px,20vw,286px)] shrink-0 flex-col border-r">
