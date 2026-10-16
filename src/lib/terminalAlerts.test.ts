@@ -25,6 +25,7 @@ describe("terminal agent notification framing", () => {
   it("distinguishes Codex requests from ordinary turn completion and uses per-launch overrides", () => {
     expect(classifyOsc9("Approval requested: git status")).toBe("attention");
     expect(classifyOsc9("Plan mode prompt: choose a task")).toBe("attention");
+    expect(classifyOsc9("Question: choose a strategy")).toBe("attention");
     expect(classifyOsc9("Completed the code changes")).toBe("complete");
     expect(MONITORED_CODEX_COMMAND).toContain("notification_method=osc9");
     expect(MONITORED_CODEX_COMMAND).toContain("notification_condition=always");
