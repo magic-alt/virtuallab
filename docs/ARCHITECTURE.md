@@ -52,7 +52,16 @@ worktree root and editor enum to `open_workspace_in_editor` in
 validator from `git.rs` before looking up the editor binary and spawning a
 non-interactive OS process with a fixed `--new` / `--new-window` argument
 vector. Zed on Windows must use its `bin/zed.exe` CLI shim, not the GUI
-binary in the installation root. Auto selects only recognized executable
+binary in the installation root. macOS Zed uses the app bundle's
+`Contents/MacOS/cli`; its GUI executable does not accept `--new`.
+Windows desktop launch arguments convert Git's forward-slash paths to native
+backslashes and remove extended-length drive/UNC prefixes for Explorer/IDE
+compatibility, after registered-worktree validation. Git identity paths are
+unchanged. Editor startup checks early exit status for up to 750 ms and returns
+failures to the UI instead of silently reporting a successful spawn. A launcher
+still running after that interval is reaped in the background without taking
+ownership of the editor; later failures are outside this startup check.
+Auto selects only recognized executable
 families from `VISUAL` / `EDITOR`; environment strings are never evaluated
 as shell commands. Path arguments remain distinct, including spaces and
 Unicode. Unsupported/unavailable launchers return actionable errors.
