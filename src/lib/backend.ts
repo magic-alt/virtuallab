@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppBuildInfo } from "@/types/appBuild";
+import type { ExternalEditor } from "@/lib/externalEditor";
 import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
   BuildSuggestion,
@@ -56,6 +57,16 @@ export async function inspectWorktreeStatus(path: string): Promise<WorktreeStatu
 export async function openWorkspaceDirectory(repositoryRoot: string, workspaceRoot: string): Promise<void> {
   requireDesktop();
   return invoke("open_workspace_directory", { repositoryRoot, workspaceRoot });
+}
+
+/** Open a registered worktree as its own external IDE project without switching Git branches. */
+export async function openWorkspaceInEditor(
+  repositoryRoot: string,
+  workspaceRoot: string,
+  editor: ExternalEditor,
+): Promise<void> {
+  requireDesktop();
+  return invoke("open_workspace_in_editor", { repositoryRoot, workspaceRoot, editor });
 }
 
 export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: string, branch: string): Promise<void> {
