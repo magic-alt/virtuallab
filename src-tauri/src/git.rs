@@ -27,6 +27,19 @@ pub struct RepositorySnapshot {
     recent_commits: Vec<CommitSummary>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeStatus {
+    root: String,
+    current_branch: String,
+    head_sha: String,
+    dirty_count: usize,
+    staged_count: usize,
+    unstaged_count: usize,
+    untracked_count: usize,
+    changes: Vec<ChangeEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeEntry {
@@ -63,6 +76,23 @@ pub struct CommitSummary {
     timestamp: i64,
 }
 
+/// Lightweight worktree state for high-frequency source-file notifications.
+#[tauri::command]
+pub async fn inspect_worktree_status(path: String) -> Result<WorktreeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_worktree_status_blocking(path))
+        .await
+        .map_err(|error| format!("Worktree status inspection task failed: {error}"))?
+}
+
+fn inspect_worktree_status_blocking(path: String) -> Result<WorktreeStatus, String> {
+    let root = git_read(&path, &["rev-parse", "--show-toplevel"])?;
+    let root = root.trim();
+    if root.is_empty() {
+        return Err("Git returned an empty repository root".to_string());
+    }
+    read_worktree_status(root)
+}
+
 #[tauri::command]
 pub async fn inspect_repository(path: String) -> Result<RepositorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || inspect_repository_blocking(path))
@@ -84,18 +114,7 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         .unwrap_or("repository")
         .to_string();
 
-    let branch = git_read(&root, &["branch", "--show-current"])?
-        .trim()
-        .to_string();
-    let head_sha = git_read(&root, &["rev-parse", "--short=10", "HEAD"])?
-        .trim()
-        .to_string();
-
-    let current_branch = if branch.is_empty() {
-        format!("detached@{head_sha}")
-    } else {
-        branch
-    };
+    let status = read_worktree_status(&root)?;
 
     let remote_url = git_read_optional(&root, &["remote", "get-url", "origin"])
         .map(|value| value.trim().to_string())
@@ -108,11 +127,53 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
     )
     .and_then(|name| name.trim().strip_prefix("origin/").map(str::to_string));
 
+    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    let branches = read_branches(&root, &worktrees)?;
+    let recent_commits = parse_commits(&git_read(
+        &root,
+        &["log", "-n", "8", "--format=%h%x1f%s%x1f%ct"],
+    )?);
+
+    Ok(RepositorySnapshot {
+        root,
+        name,
+        current_branch: status.current_branch,
+        head_sha: status.head_sha,
+        remote_url,
+        origin_default_branch,
+        dirty_count: status.dirty_count,
+        staged_count: status.staged_count,
+        unstaged_count: status.unstaged_count,
+        untracked_count: status.untracked_count,
+        changes: status.changes,
+        worktrees,
+        branches,
+        recent_commits,
+    })
+}
+
+
+/// Shared status parser: a file edit must not re-enumerate all branches,
+/// worktrees or recent commits.
+fn read_worktree_status(root: &str) -> Result<WorktreeStatus, String> {
+    let branch = git_read(root, &["branch", "--show-current"])?
+        .trim()
+        .to_string();
+    let head_sha = git_read(root, &["rev-parse", "--short=10", "HEAD"])?
+        .trim()
+        .to_string();
+
+    let current_branch = if branch.is_empty() {
+        format!("detached@{head_sha}")
+    } else {
+        branch
+    };
+
     // Porcelain -z keeps spaces/Unicode lossless and reports rename/copy paths
     // as separate NUL-delimited fields. "normal" avoids recursively expanding
     // every file under large untracked directories.
     let status = git_read(
-        &root,
+        root,
         &[
             "status",
             "--porcelain=v1",
@@ -149,31 +210,18 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         });
     }
 
-    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
-    let branches = read_branches(&root, &worktrees)?;
-    let recent_commits = parse_commits(&git_read(
-        &root,
-        &["log", "-n", "8", "--format=%h%x1f%s%x1f%ct"],
-    )?);
 
-    Ok(RepositorySnapshot {
-        root,
-        name,
+    Ok(WorktreeStatus {
+        root: root.to_string(),
         current_branch,
         head_sha,
-        remote_url,
-        origin_default_branch,
         dirty_count: changes.len(),
         staged_count,
         unstaged_count,
         untracked_count,
         changes,
-        worktrees,
-        branches,
-        recent_commits,
     })
 }
-
 
 #[derive(Debug, PartialEq, Eq)]
 struct ParsedStatusEntry {
@@ -1721,6 +1769,26 @@ mod tests {
         assert!(status.success(), "git command failed: {args:?}");
     }
 
+
+    #[test]
+    fn worktree_status_matches_full_snapshot_without_loading_branch_inventory() {
+        let (sandbox, repo) = init_fixture_repo("status-fast-path");
+        fs::write(repo.join("README.md"), "modified file").unwrap();
+        fs::write(repo.join("new file.txt"), "untracked").unwrap();
+        git_ok(&repo, &["add", "README.md"]);
+        let root = repo.to_string_lossy().to_string();
+        let status = inspect_worktree_status_blocking(root.clone()).unwrap();
+        let full = inspect_repository_blocking(root.clone()).unwrap();
+        assert_eq!(status.root, full.root);
+        assert_eq!(status.current_branch, full.current_branch);
+        assert_eq!(status.head_sha, full.head_sha);
+        assert_eq!(status.dirty_count, full.dirty_count);
+        assert_eq!(status.staged_count, full.staged_count);
+        assert_eq!(status.unstaged_count, full.unstaged_count);
+        assert_eq!(status.untracked_count, full.untracked_count);
+        assert_eq!(status.changes, full.changes);
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 
     fn recovery_request(root: &str, action: LocalChangesAction, path: Option<&str>) -> LocalChangesRequest {
         let snapshot = inspect_repository_blocking(root.to_string()).unwrap();
