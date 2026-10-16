@@ -66,7 +66,8 @@ export function WorkspaceTerminals({
         aria-hidden={!active}
         data-testid="terminal-pane"
       >
-        <TerminalWorkspace cwd={workspace.cwd} enabled={workspace.enabled} visible={active} />
+        <TerminalWorkspace cwd={workspace.cwd} enabled={workspace.enabled} visible={active}
+          repositoryId={workspace.repositoryId} />
       </div>
     );
   });

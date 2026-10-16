@@ -40,6 +40,8 @@ import { workspaceKey } from "@/lib/workspaceKey";
 import { readPreferredEditor, savePreferredEditor, type ExternalEditor } from "@/lib/externalEditor";
 import { mergeWorktreeStatus } from "@/lib/worktreeStatus";
 import { useAgentTimeline } from "@/stores/agentTimeline";
+import { NotificationCenter } from "@/features/notifications/NotificationCenter";
+import { noticeForAgentEvent, publishTaskNotice, useTaskNotifications, type TaskNotice } from "@/stores/taskNotifications";
 import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
@@ -73,18 +75,24 @@ export function WorkbenchShell() {
   );
 
   const appendAgentEvent = useAgentTimeline((s) => s.append);
+  const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
+  const [tab, setTab] = useState<WorkspaceTab>("overview");
+  const viewed = useRef({ path: snapshot.root, tab });
+  viewed.current = { path: snapshot.root, tab };
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
-    void listen<AgentEvent>("agent://event", (event) => appendAgentEvent(event.payload))
-      .then((stop) => { if (cancelled) stop(); else unlisten = stop; })
+    void listen<AgentEvent>("agent://event", ({ payload }) => {
+      appendAgentEvent(payload);
+      const notice = noticeForAgentEvent(payload);
+      if (notice) publishTaskNotice(notice,
+        document.hasFocus() && viewed.current.tab === "agents" &&
+        workspaceKey(viewed.current.path) === workspaceKey(notice.workspaceRoot));
+    }).then((stop) => { if (cancelled) stop(); else unlisten = stop; })
       .catch(() => undefined);
     return () => { cancelled = true; unlisten?.(); };
   }, [appendAgentEvent]);
-
-  const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
-  const [tab, setTab] = useState<WorkspaceTab>("overview");
   const [guideOpen, setGuideOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
@@ -473,6 +481,7 @@ export function WorkbenchShell() {
       if (!removed) return;
 
       snapshotCacheRef.current.delete(normalizePath(path));
+      useTaskNotifications.getState().discardWorkspace(path);
       setRetiredTerminal({ path, sequence: ++retiredTerminalSequence.current });
       if (useWorkbenchStore.getState().activeRepositoryId !== activeRepository.id) return;
       const wasActive = normalizePath(activePathRef.current ?? snapshot.root) === normalizePath(path);
@@ -666,6 +675,37 @@ export function WorkbenchShell() {
     });
   };
 
+  const navigateToNotice = (notice: TaskNotice) => {
+    const pathKey = workspaceKey(notice.workspaceRoot);
+    const state = useWorkbenchStore.getState();
+    const repository = (notice.repositoryId
+      ? state.repositories.find((item) => item.id === notice.repositoryId)
+      : null) ?? [...state.repositories]
+      .filter((item) =>
+        pathKey === workspaceKey(item.path) ||
+        pathKey.startsWith(workspaceKey(item.path) + "/") ||
+        (state.workspaceStates[item.id] &&
+          workspaceKey(state.workspaceStates[item.id].activeWorktreePath) === pathKey) ||
+        snapshotCacheRef.current.get(workspaceKey(item.path))?.worktrees.some(
+          (tree) => workspaceKey(tree.path) === pathKey))
+      .sort((a, b) => workspaceKey(b.path).length - workspaceKey(a.path).length)[0];
+    if (!repository) return; // Workspace was removed; never reopen an unrelated path.
+    const destination: WorkspaceTab = notice.source === "terminal" ? "terminal" : "agents";
+    saveWorkspaceState({
+      repositoryId: repository.id,
+      activeWorktreePath: notice.workspaceRoot,
+      activeTab: destination,
+      updatedAt: Date.now(),
+    });
+    if (notice.terminalId) useTaskNotifications.getState().focusTerminal(notice.workspaceRoot, notice.terminalId);
+    if (repository.id !== useWorkbenchStore.getState().activeRepositoryId) {
+      selectRepository(repository.id); // Existing restore path loads the target worktree.
+    } else {
+      setTab(destination);
+      void loadSnapshot(notice.workspaceRoot).catch(() => undefined);
+    }
+  };
+
   return (
     <div className="pixel-ui vl-workbench flex h-screen min-h-0 min-w-0 flex-col overflow-hidden text-slate-100">
       <div
@@ -698,6 +738,7 @@ export function WorkbenchShell() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <NotificationCenter onNavigate={navigateToNotice} />
           <Badge tone={native ? "green" : "amber"}>
             <Cpu size={11} />
             {native ? "Native" : "Web preview"}
@@ -731,7 +772,11 @@ export function WorkbenchShell() {
           filterQuery={searchQuery}
           repositoryActionsEnabled={native}
           onSelect={selectRepository}
-          onRemove={removeRepository}
+          onRemove={(id) => {
+            const repository = useWorkbenchStore.getState().repositories.find((item) => item.id === id);
+            if (repository) useTaskNotifications.getState().discardRepository(repository.path, id);
+            removeRepository(id);
+          }}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}
           editor={preferredEditor}
           onOpenRepositoryEditor={(path) => void openEditor(path, path)}

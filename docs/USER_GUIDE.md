@@ -233,6 +233,16 @@ args: -b Firmware.uvprojx -j0
 
 **Terminal** 是交互式 PTY，用于 Shell、人工调试、Ctrl+C；**Run** 用于重复运行结构化步骤。**Checks** 呈现本地定义的 readiness，不代表正式产品验收。
 
+### Codex 任务完成桌面提醒
+
+1. 打开目标 Worktree 的 **Terminal**，点击 **Start Codex with alerts**（或顶部 **Start Codex**）。这会创建独立终端并执行带 OSC 9 通知选项的 Codex；**不改写** `~/.codex/config.toml`、用户设置或其他终端的行为。
+2. 输入长时间 Coding 任务后可切到另一 Worktree、页面甚至其他桌面应用。Codex 本轮结束、要求审批或等待输入时会发送明确的终端通知；VirtualLab 在后台弹出**系统桌面通知**，不强制切换当前页面。
+3. 顶栏铃铛显示待查看数量。点击通知条目会回到原 Worktree、Terminal 和对应的终端会话。**Desktop alerts** 开关仅影响系统弹窗：关闭后仍保留应用内提醒。
+4. 如果系统通知被操作系统阻止，会在通知中心提示错误；请在 Windows/macOS 的系统通知权限中允许 VirtualLab。
+
+**技术边界**：手动在普通 Terminal 中输入 `codex`，Codex 可能采用 BEL（终端响铃）而不是 OSC 9，VirtualLab 仅提示「终端需要关注」，**不会把响铃当作任务完成**。使用 **Start Codex** 可为该次会话启用更明确的完成提醒；已经运行的 CLI 不会被强行重启。Claude/OpenCode 等工具如果主动发出 OSC 9，也能提示关注，但未提供结构化完成事件时不声称「任务完成」。Agents 页面通过 app-server / CLI 的结构化 turn 结束事件生成准确的完成/失败提醒，进程退出或长时间没有输出不等于任务成功。通知标题和正文不包含提示词、模型回复或终端日志，通知历史仅保留最近 50 条内存记录；任务与 PTY 生命周期保持相互独立。详见 [桌面通知专题](TERMINAL_NOTIFICATIONS.md)。
+
+
 ~~~bash
 git status --short
 git branch --show-current
