@@ -18,6 +18,12 @@ export function isDesktopRuntime() {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/** Native OS toast; failures are reflected in the in-app notification inbox. */
+export async function desktopNotify(title: string, body: string): Promise<void> {
+  requireDesktop();
+  return invoke("desktop_notify", { title, body });
+}
+
 /** Read compile-time application identity, independent of the selected repository. */
 export async function getAppBuildInfo(): Promise<AppBuildInfo> {
   requireDesktop();

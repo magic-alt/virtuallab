@@ -6,6 +6,7 @@ mod bounded_lines;
 mod cli_path;
 #[cfg(unix)]
 mod terminal_process;
+mod desktop_notifications;
 mod managed_process;
 mod workspace_identity;
 mod run_registry;
@@ -70,6 +71,7 @@ pub fn run() {
         .manage(CliAgentManager::default())
         .manage(VerificationManager::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             app_build::app_build_info,
             inspect_repository,
@@ -91,6 +93,7 @@ pub fn run() {
             github_post_review_comment,
             create_worktree,
             remove_worktree,
+            desktop_notifications::desktop_notify,
             terminal_spawn,
             terminal_write,
             terminal_resize,

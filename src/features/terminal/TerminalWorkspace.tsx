@@ -20,6 +20,8 @@ import {
 } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { workspaceKey } from "@/lib/workspaceKey";
+import { TerminalAlertParser, classifyOsc9, MONITORED_CODEX_COMMAND } from "@/lib/terminalAlerts";
+import { publishTaskNotice, useTaskNotifications } from "@/stores/taskNotifications";
 import {
   DEFAULT_TERMINAL_FONT_SIZE,
   MAX_TERMINAL_FONT_SIZE,
@@ -33,6 +35,7 @@ interface Session {
   id: string;
   title: string;
   status: "starting" | "running" | "stopped" | "error";
+  monitoredAgent?: "codex";
 }
 
 interface TerminalHandle {
@@ -58,7 +61,23 @@ export function TerminalWorkspace({
   const handles = useRef(new Map<string, TerminalHandle>());
   const pending = useRef(new Map<string, number[][]>());
   const sessionsRef = useRef<Session[]>([]);
+  const visibleRef = useRef(visible);
+  const activeIdRef = useRef(activeId);
+  const parsers = useRef(new Map<string, TerminalAlertParser>());
+  const lastBellAt = useRef(new Map<string, number>());
+  const alertSequence = useRef(0);
+  const target = useTaskNotifications((state) => state.terminalTarget);
+  const consumeTarget = useTaskNotifications((state) => state.consumeTerminalTarget);
   sessionsRef.current = sessions;
+  visibleRef.current = visible;
+  activeIdRef.current = activeId;
+
+  useEffect(() => {
+    if (!visible || !target || workspaceKey(target.workspaceRoot) !== scope) return;
+    if (!sessionsRef.current.some((session) => session.id === target.id)) return;
+    setActiveId(target.id);
+    consumeTarget(target.sequence);
+  }, [visible, scope, target, consumeTarget]);
 
   // Install both event subscriptions before enabling shell creation. Otherwise
   // a fast Windows ConPTY prompt can disappear before anyone is listening.
@@ -71,7 +90,42 @@ export function TerminalWorkspace({
     const connect = async () => {
       try {
         const stopOutput = await listen<TerminalOutput>("terminal://output", ({ payload }) => {
-          if (!sessionsRef.current.some((session) => session.id === payload.id)) return;
+          const session = sessionsRef.current.find((item) => item.id === payload.id);
+          if (!session) return;
+          const parser = parsers.current.get(payload.id);
+          if (parser) {
+            // PTY bytes are kept intact for xterm; only explicit control signals are
+            // inspected. A quiet/still-running CLI is never considered complete.
+            for (const signal of parser.feed(payload.data)) {
+              const focused = visibleRef.current && activeIdRef.current === payload.id && document.hasFocus();
+              const now = Date.now();
+              if (signal.kind === "bell") {
+                // A BEL may be an approval request or any application's bell.
+                // It is intentionally NEVER reported as a completed turn.
+                if (focused || now - (lastBellAt.current.get(payload.id) ?? 0) < 30000) continue;
+                lastBellAt.current.set(payload.id, now);
+                publishTaskNotice({
+                  id: "terminal:" + payload.id + ":bell:" + (++alertSequence.current),
+                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd,
+                  title: "Terminal needs attention",
+                  detail: session.title + " sent an alert. Open Terminal to review.",
+                  severity: "attention",
+                }, focused);
+              } else {
+                const kind = session.monitoredAgent ? classifyOsc9(signal.message) : "attention";
+                publishTaskNotice({
+                  id: "terminal:" + payload.id + ":osc9:" + (++alertSequence.current),
+                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd,
+                  title: session.monitoredAgent === "codex"
+                    ? (kind === "complete" ? "Codex task completed" : "Codex needs attention")
+                    : "Terminal notification",
+                  detail: session.title + (kind === "complete" ? " finished a Codex turn. Open Terminal to review."
+                    : " requested attention. Open Terminal to review."),
+                  severity: kind === "complete" ? "complete" : "attention",
+                }, focused);
+              }
+            }
+          }
           const handle = handles.current.get(payload.id);
           if (handle) {
             handle.terminal.write(new Uint8Array(payload.data));
@@ -145,12 +199,14 @@ export function TerminalWorkspace({
     }
     handles.current.clear();
     pending.current.clear();
+    parsers.current.clear();
+    lastBellAt.current.clear();
     setSessions([]);
     setActiveId(null);
     setError(null);
   }, [scope]);
 
-  const start = async () => {
+  const start = async (monitoredAgent: "codex" | null = null) => {
     if (!enabled || !listenersReady || sessionsRef.current.length >= 8) return;
 
     const id =
@@ -158,11 +214,14 @@ export function TerminalWorkspace({
       `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const title = `Terminal ${sessions.length + 1}`;
 
-    const next: Session[] = [...sessionsRef.current, { id, title, status: "starting" }];
+    const next: Session[] = [...sessionsRef.current, {
+      id, title, status: "starting", monitoredAgent: monitoredAgent ?? undefined,
+    }];
     sessionsRef.current = next;
     setSessions(next);
     setActiveId(id);
     pending.current.set(id, []);
+    parsers.current.set(id, new TerminalAlertParser());
     setError(null);
 
     try {
@@ -175,6 +234,10 @@ export function TerminalWorkspace({
             ? { ...item, status: "running" } : item,
         ),
       );
+      if (monitoredAgent === "codex" &&
+          sessionsRef.current.some((item) => item.id === id && item.status !== "stopped")) {
+        await terminalWrite(id, new TextEncoder().encode(MONITORED_CODEX_COMMAND));
+      }
     } catch (err) {
       if (!sessionsRef.current.some((item) => item.id === id)) return;
       setSessions((items) =>
@@ -200,6 +263,8 @@ export function TerminalWorkspace({
       const next = sessionsRef.current.filter((session) => session.id !== id);
       sessionsRef.current = next;
       pending.current.delete(id);
+      parsers.current.delete(id);
+      lastBellAt.current.delete(id);
       setSessions(next);
       setActiveId((current) => current === id ? next.at(-1)?.id ?? null : current);
     } catch (cause) { setError(String(cause)); }
@@ -288,9 +353,15 @@ export function TerminalWorkspace({
           </button>
         </div>
 
-        <Button disabled={!enabled || !listenersReady || sessions.length >= 8} onClick={start} size="sm" variant="ghost">
+        <Button disabled={!enabled || !listenersReady || sessions.length >= 8} onClick={() => void start()} size="sm" variant="ghost">
           <Plus size={14} />
           New terminal
+        </Button>
+        <Button disabled={!enabled || !listenersReady || sessions.length >= 8}
+          onClick={() => void start("codex")} size="sm" variant="ghost"
+          title="Launch Codex with OSC 9 turn completion and approval alerts, without changing global Codex settings">
+          <TerminalSquare size={14} />
+          Start Codex
         </Button>
 
         {activeId && <Button aria-label="Close terminal" onClick={() => void close(activeId)} size="sm" variant="ghost"><X size={12} /> Close</Button>}
@@ -323,10 +394,15 @@ export function TerminalWorkspace({
                 : "Native PTY execution is available in the Tauri desktop runtime. The web build remains a safe UI preview."}
             </div>
             {enabled && (
-              <Button className="mt-5" disabled={!listenersReady} onClick={start}>
-                <TerminalSquare size={14} />
-                Start terminal
-              </Button>
+              <div className="mt-5 flex items-center gap-2">
+                <Button disabled={!listenersReady} onClick={() => void start()}>
+                  <TerminalSquare size={14} />
+                  Start terminal
+                </Button>
+                <Button disabled={!listenersReady} onClick={() => void start("codex")} variant="ghost">
+                  Start Codex with alerts
+                </Button>
+              </div>
             )}
           </div>
         ) : (
