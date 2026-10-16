@@ -90,7 +90,7 @@ export class TerminalAlertParser {
 
 /** Codex OSC 9 uses a plain preview for completion, but labels approval prompts. */
 export function classifyOsc9(message: string): "attention" | "complete" {
-  return /^(approval requested|codex wants to edit|plan mode prompt|user input|permission requested|elicitation requested)/i
+  return /^(approval requested|codex wants to edit|plan mode prompt|question:|user input|permission requested|elicitation requested)/i
     .test(message) ? "attention" : "complete";
 }
 
