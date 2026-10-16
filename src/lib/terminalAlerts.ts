@@ -46,9 +46,13 @@ export class TerminalAlertParser {
             this.completeOsc(alerts);
             this.state = "text";
           } else {
-            this.append(27);
-            this.append(byte);
-            if (this.state !== "discard") this.state = "osc";
+            if (this.osc.length + 2 > MAX_OSC_BYTES) {
+              this.osc = [];
+              this.state = "discard";
+            } else {
+              this.osc.push(27, byte);
+              this.state = "osc";
+            }
           }
           break;
         case "discard":
