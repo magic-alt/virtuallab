@@ -1,10 +1,10 @@
 # VirtualLab architecture
 
-VirtualLab is a **local-first Engineering Workbench / Engineering Control Plane**. The durable abstraction is the workspace, not an AI chat session.
+VirtualLab is a **local-first AI Engineering Control Plane**, with the product promise **Verified Engineering Work**. Workspace remains the durable owner of repository context and execution resources; the planned user-facing workflow is organized around Tasks and Verified Results. An AI chat session never owns repository state. See [product strategy](PRODUCT_STRATEGY.md) and [delivery Roadmap](ROADMAP.md).
 
 ## Architecture principles
 
-1. **Workspace owns execution context.** Repository, branch/worktree, terminal, checks, diff and future agent sessions all hang from one workspace.
+1. **Workspace owns execution context.** Repository, branch/worktree, terminal, checks, diff and attached agent sessions all hang from one workspace. Planned Tasks reference this context without transferring ownership to an Agent.
 2. **AI is an adapter, not the product core.** Codex, DeepSeek-through-Codex, Claude Code, and OpenCode are optional harnesses attached to a worktree.
 3. **Native operations stay behind a narrow Rust boundary.** The frontend requests typed commands; Rust performs filesystem/process/Git operations.
 4. **Typed native operations.** Interactive PTYs are human-controlled; Git/GitHub/verification services use narrowly defined Tauri commands, not arbitrary agent-supplied shell strings.
@@ -92,7 +92,7 @@ Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff
 
 Git is intentionally CLI-backed at first. It matches developer machines, supports worktree semantics well and avoids prematurely coupling the product to libgit2 behavior.
 
-## Domain model
+## Domain model (implemented foundation)
 
 ```text
 Repository
@@ -107,6 +107,72 @@ Repository
 ```
 
 The workspace survives even when there is no agent attached.
+
+## Planned Task and Verified Result model (V0.7–V0.8)
+
+**Status: design direction, not implemented APIs or types.** This section supplements the implemented workspace model. It does not claim that the current runner, journal or GitHub panel already implements the delivery guarantees below. The [historical design review](MULTI_AGENT_DESIGN_REVIEW.md) remains useful for rationale; the [Roadmap](ROADMAP.md) supplies the revised sequencing.
+
+```text
+Repository
+  ├─ Workspace(s) ── own worktree, terminal, runs and attached harness
+  └─ TaskSpec(s) ── goal, accepted scope, dependency IDs, required Profile
+       └─ TaskAttempt(s) ── reference Workspace identity and candidate commit
+            ├─ structured native lifecycle events
+            ├─ Verification run(s) ── observed checks and artifact digests
+            └─ revision-bound review / readiness / human acceptance
+
+Implementation Task A ── fixed candidate A ──┐
+                                          ├─ Integration Task C
+Implementation Task B ── fixed candidate B ──┘    └─ final commit + fresh evidence
+```
+
+### Ownership and execution flow
+
+- `TaskSpec` records the operator-approved goal, same-repository dependencies, required verification Profile and capability/resource scope. `TaskAttempt` records a distinct execution, workspace identity, harness identity, candidate revision and observed lifecycle. A retry creates a new Attempt; it cannot overwrite previous evidence.
+- A bounded native scheduler validates dependencies and reserves canonical workspace/resource identities before starting work. Preserve one active harness and one controlled writer per worktree. Agent, integration, Fixer and Verifier phases on that worktree are sequential; read-only Reviewer access must not acquire write authority.
+- Workspace creation is a user-triggered action within the selected repository. The first flagship flow uses two implementation worktrees and a dedicated third integration worktree. Both predecessors must satisfy their accepted prerequisite checks and produce fixed commits before integration becomes eligible.
+- Native task persistence and a basic evidence index arrive in V0.7-A. They cannot depend on the ephemeral 300-event UI ring or reconstruct complete task history from the rotating Agent metadata journal. Crash recovery reconciles durable task/attempt records with observed native owners; unknown outcomes stay unverified, with no automatic mutation replay.
+- React feature surfaces consume typed wrappers in `src/lib/`. Rust owns persistence, process/Git operations, resource reservations and readiness transitions, emitting structured task/verification events. No component-supplied shell string or provider completion message can authorize those transitions.
+
+### Planned interface responsibilities
+
+These are capability contracts for subsequent implementation slices, not registered Tauri commands or a frozen wire schema.
+
+| Boundary | Inputs and result |
+| --- | --- |
+| Task service | Accept goal/scope/Profile/dependencies; create/query Task and Attempt identities; request cancel or explicit retry; expose durable structural state |
+| Integration preview/confirm | Preview repository identity, target worktree/HEAD, ordered fixed source commits and impact; confirm an unexpired one-use plan after native revalidation |
+| Verification/evidence service | Run approved structured software executors; bind independently observed results to Task/Attempt, integrated revision, Profile digest and toolchain observations; query indexed history |
+| Delivery decision service | Compute readiness and actionable blockers from current native Git/input state, evidence and required review; separately record explicit human acceptance bound to the result |
+
+Local integration requires a dedicated, registered same-repository target and a clean source state. Confirmation covers only the previewed local commits/order and target; it grants no remote or release authority. A stale source/target snapshot is rejected before mutation. A conflict or interrupted partial merge stops for human resolution/abort and native reconciliation. Never automatically stash, reset, clean, force-push, replay a merge or fetch/checkout a remote PR. The existing human-confirmed GitHub merge API remains a separate network boundary.
+
+### Evidence binding and freshness
+
+Extend the versioned `EvidenceManifest` contract beyond schema-v1 HEAD/check/artifact fields with Task/Attempt lineage, integrated source commits, exact tested revision, Profile content digest, observed runner/toolchain identity and explicit non-secret configuration. Use a new schema version for the expanded contract; retain v1 records for historical inspection without synthesizing missing provenance or promoting them to qualified delivery evidence.
+
+Formal readiness in the MVP requires committed, clean controlled source inputs. Dirty-workspace exploration remains provisional. Profile-declared build/evidence outputs are distinct from source inputs; broad ignored-directory rules must not conceal source changes. Recheck input identity and required toolchain/Profile observations before and after execution and before acceptance. Detect source changes during/after verification even if HEAD is unchanged; a change invalidates current readiness and acceptance while preserving the historical run. Unknown required provenance blocks qualification. Native reservations prevent VirtualLab-controlled writers during verification; external processes are outside that reservation and require freshness detection, not an OS-isolation claim.
+
+The basic V0.7 index associates immutable run identities with their manifests and Tasks; V0.8 hardens atomic persistence, integrity checking, migration/recovery, query/compare and retention. Index recovery must never manufacture PASS from an incomplete run. Hashes support tamper detection relative to a trusted digest; writable local files are not signed execution attestations and do not prove correctness or test sufficiency.
+
+Never inspect or retain sensitive environment-variable values or `.env` contents to fingerprint an environment. Do not hash such values as a substitute for disclosure. Record only allowed non-secret Profile configuration and bounded toolchain identity observations; credentials remain outside task/evidence/export contracts. Default durable Agent history remains structural metadata, without raw prompts/responses/tool output.
+
+### Execution, readiness and acceptance
+
+Keep four separate facts: Agent execution outcome, observed software-check outcome, current delivery readiness and human acceptance. The current `EvidenceStatus` remains a run/check status and is not itself an acceptance record.
+
+- **ready:** fresh qualified evidence satisfies all required checks and required review for the current integrated inputs; a user may then accept that exact result.
+- **warning:** required checks/review are satisfied but explicit policy leaves optional limitations; display these before a human decision and never silently treat them as clean ready.
+- **blocked:** a required check failed, dependencies/conflicts remain unresolved, or a known scope/policy violation prevents delivery. Human acceptance cannot override a failing required check.
+- **unverified:** execution/provenance is incomplete, missing, stale or unknown. Historical PASS does not turn this into ready.
+
+Acceptance is a separate native-validated, version-bound operator action. It does not merge a PR, publish a release or enable hardware. Later source/Profile/toolchain/review changes invalidate its applicability to the current result without erasing the historical decision. A policy change creates a new accepted task/Profile revision and requires evaluation again; it is not a way to relabel failed old evidence.
+
+### Baseline gap and release qualification
+
+At inspected `main@9523b3e` (2026-10-16), `TaskSpec`/`TaskAttempt`, scheduler, local integration executor and trusted delivery-readiness service remain planned. PR #63 is MERGED on GitHub, but commit `5ad98cd` is not an ancestor of this main and its `workspace_lifecycle.rs` is absent. Review/reintegrate that missing lifecycle capability and qualify it before parallel execution; the existing per-manager owner checks are not the planned shared atomic reservation.
+
+The first real workflow uses two independent Codex instances; other adapters keep explicit qualification status. CMake C++ is the primary project fixture, npm a general regression fixture, and Qt/Keil/cross-compilers follow on provisioned hosts. Three-platform automated checks do not qualify untested packaged GUIs or authenticated providers. No hardware executor, cross-repository Release Graph or cloud/team service is part of the MVP.
 
 ## Event model direction
 
