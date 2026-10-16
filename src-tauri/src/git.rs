@@ -175,6 +175,9 @@ fn read_worktree_status(root: &str) -> Result<WorktreeStatus, String> {
     let status = git_read(
         root,
         &[
+            // Git status may rewrite the index even during a read. Avoid
+            // generating our own git.status_changed watcher feedback loop.
+            "--no-optional-locks",
             "status",
             "--porcelain=v1",
             "-z",
