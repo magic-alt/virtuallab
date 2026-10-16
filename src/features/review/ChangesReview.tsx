@@ -62,6 +62,8 @@ export function ChangesReview({
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedReviewLine, setSelectedReviewLine] = useState<ReviewLineSelection | null>(null);
   const [draftBody, setDraftBody] = useState("");
+  const [advancedReview, setAdvancedReview] = useState(false);
+  const [manageChanges, setManageChanges] = useState(false);
   const [mode, setMode] = useState<DiffMode>("worktree");
   const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
   const [baseRef, setBaseRef] = useState("main");
@@ -272,42 +274,19 @@ export function ChangesReview({
     <div className="flex h-full min-h-[560px] w-full flex-col gap-3" data-testid="changes-review-root">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2.5">
         <div className="flex items-center gap-1">
-          {(["worktree", "index", "base"] as DiffMode[]).map((item) => (
+          {(["worktree", "index"] as DiffMode[]).map((item) => (
             <Button
               key={item}
               size="sm"
               variant={mode === item ? "primary" : "ghost"}
               onClick={() => changeMode(item)}
             >
-              {item === "index" ? "Staged" : item === "base" ? "Base" : "Worktree"}
+              {item === "index" ? "Staged" : "Worktree"}
             </Button>
           ))}
         </div>
 
-        {mode === "base" && (
-          <>
-            <input
-              aria-label="Base ref"
-              className="field ml-1 h-8 min-h-8 w-44"
-              value={baseRef}
-              onChange={(event) => setBaseRef(event.target.value)}
-              placeholder="main"
-            />
-            <Button
-              disabled={!enabled || !baseRef.trim() || loading}
-              onClick={() => void loadBaseFiles()}
-              size="sm"
-              variant="outline"
-            >
-              Load base files
-            </Button>
-          </>
-        )}
-
         <div className="ml-auto flex items-center gap-1 border-l border-white/[0.08] pl-2">
-          <Badge tone={drafts.some((draft) => draft.status === "stale") ? "amber" : "neutral"}>
-            {drafts.length} drafts
-          </Badge>
           <Button
             aria-pressed={layout === "unified"}
             size="sm"
@@ -325,6 +304,24 @@ export function ChangesReview({
             Side by side
           </Button>
         </div>
+        <Button size="sm" variant={advancedReview ? "primary" : "ghost"}
+          aria-label="Advanced review" aria-expanded={advancedReview} aria-controls="advanced-review"
+          onClick={() => {
+            if (advancedReview) {
+              if (mode === "base") changeMode("worktree");
+              setSelectedReviewLine(null);
+            }
+            setAdvancedReview(!advancedReview);
+          }}>
+          Advanced review{drafts.length > 0 ? ` (${drafts.length} drafts)` : ""}
+        </Button>
+        {onResolveLocalChanges && (
+          <Button size="sm" variant={manageChanges ? "primary" : "ghost"}
+            aria-expanded={manageChanges} aria-controls="manage-local-changes"
+            onClick={() => setManageChanges(!manageChanges)}>
+            Manage local changes
+          </Button>
+        )}
       </div>
 
       <div aria-label="Local change summary" className="text-[11px] text-slate-400">
@@ -332,8 +329,8 @@ export function ChangesReview({
         {" "}Untracked directories count as one entry.
       </div>
 
-      {onResolveLocalChanges && (
-        <div aria-label="Local change recovery" className="flex shrink-0 flex-wrap items-center gap-2 border border-amber-400/20 bg-[#15100c]/95 px-3 py-2 text-xs">
+      {onResolveLocalChanges && manageChanges && (
+        <div id="manage-local-changes" aria-label="Local change recovery" className="flex shrink-0 flex-wrap items-center gap-2 border border-amber-400/20 bg-[#15100c]/95 px-3 py-2 text-xs">
           <div className="min-w-[190px] flex-1 text-slate-400">
             Need to switch branches or Pull? Back up with Git stash (including untracked files),
             or explicitly discard changes. Deleting untracked files is permanent.
@@ -362,28 +359,50 @@ export function ChangesReview({
         </div>
       )}
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
-        <span className="text-slate-300">Review → Fix → Refresh → Re-review</span>
-        <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
-        <Button size="sm" variant="outline" onClick={() => setReviewPhase(workspaceRoot, "fix")}>
-          Mark fix in progress
-        </Button>
-        {onRefreshForRereview && (
-          <Button size="sm" variant="outline" disabled={!enabled || refreshing}
-            onClick={() => void requestRereview()}>
-            {refreshing ? "Refreshing…" : "Refresh and re-review"}
+      {advancedReview && (
+        <div id="advanced-review" className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2 text-[11px]">
+          <Button size="sm" variant={mode === "base" ? "primary" : "ghost"} onClick={() => changeMode("base")}>Base</Button>
+          {mode === "base" && (
+            <>
+              <input
+                aria-label="Base ref"
+                className="field ml-1 h-8 min-h-8 w-44"
+                value={baseRef}
+                onChange={(event) => setBaseRef(event.target.value)}
+                placeholder="main"
+              />
+              <Button
+                disabled={!enabled || !baseRef.trim() || loading}
+                onClick={() => void loadBaseFiles()}
+                size="sm"
+                variant="outline"
+              >
+                Load base files
+              </Button>
+            </>
+          )}
+          <span className="text-slate-300">Review → Fix → Re-review</span>
+          <Badge tone="neutral">{reviewState?.phase ?? "review"}</Badge>
+          <Button size="sm" variant="outline" onClick={() => setReviewPhase(workspaceRoot, "fix")}>
+            Mark fix in progress
           </Button>
-        )}
-        <Button size="sm" variant="outline" disabled={!result || loading || diffOutdated}
-          onClick={() => setReviewPhase(workspaceRoot, "reviewed", snapshot.headSha)}>
-          Mark reviewed
-        </Button>
-        {diffOutdated && (
-          <span className="text-amber-300">
-            Diff invalidated by workspace refresh; select a file or reload base files to re-review.
-          </span>
-        )}
-      </div>
+          {onRefreshForRereview && (
+            <Button size="sm" variant="outline" disabled={!enabled || refreshing}
+              onClick={() => void requestRereview()}>
+              {refreshing ? "Refreshing…" : "Refresh and re-review"}
+            </Button>
+          )}
+          <Button size="sm" variant="outline" disabled={!result || loading || diffOutdated}
+            onClick={() => setReviewPhase(workspaceRoot, "reviewed", snapshot.headSha)}>
+            Mark reviewed
+          </Button>
+        </div>
+      )}
+      {diffOutdated && (
+        <div role="status" className="shrink-0 text-[11px] text-amber-300">
+          Diff invalidated by workspace refresh; select a file or reload base files to re-review.
+        </div>
+      )}
 
       <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[minmax(240px,340px)_minmax(0,1fr)]" data-testid="changes-review-grid">
         <section className="flex min-h-0 flex-col overflow-hidden border border-white/[0.07] bg-[#15100c]/92">
@@ -425,51 +444,53 @@ export function ChangesReview({
             )}
           </div>
 
-          <div className="max-h-48 shrink-0 overflow-y-auto border-t border-white/[0.06]">
-            <div className="flex items-center justify-between px-3 py-2">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-                Local review drafts
-              </span>
-              <span className="mono text-[10px] text-slate-600">{drafts.length}</span>
-            </div>
-            {drafts.length === 0 ? (
-              <div className="px-3 pb-3 text-[10px] leading-4 text-slate-600">
-                Select a Monaco line to create a workspace-local draft.
+          {advancedReview && (
+            <div className="max-h-48 shrink-0 overflow-y-auto border-t border-white/[0.06]">
+              <div className="flex items-center justify-between px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  Local review drafts
+                </span>
+                <span className="mono text-[10px] text-slate-600">{drafts.length}</span>
               </div>
-            ) : (
-              drafts.map((draft) => (
-                <div key={draft.id} className="border-t border-white/[0.04] px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className="mono min-w-0 flex-1 truncate text-[10px] text-slate-400">
-                      {draft.path}:{draft.line} {draft.side}
-                    </span>
-                    <Badge
-                      tone={
-                        draft.status === "posted"
-                          ? "green"
-                          : draft.status === "stale"
-                            ? "amber"
-                            : "neutral"
-                      }
-                    >
-                      {draft.status}
-                    </Badge>
-                    <button
-                      aria-label={`Remove draft ${draft.path} line ${draft.line}`}
-                      className="text-slate-600 hover:text-rose-300"
-                      onClick={() => removeReviewDraft(workspaceRoot, draft.id)}
-                      type="button"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                  <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">
-                    {draft.body}
-                  </div>
+              {drafts.length === 0 ? (
+                <div className="px-3 pb-3 text-[10px] leading-4 text-slate-600">
+                  Select a Monaco line to create a workspace-local draft.
                 </div>
-              ))
-            )}
-          </div>
+              ) : (
+                drafts.map((draft) => (
+                  <div key={draft.id} className="border-t border-white/[0.04] px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="mono min-w-0 flex-1 truncate text-[10px] text-slate-400">
+                        {draft.path}:{draft.line} {draft.side}
+                      </span>
+                      <Badge
+                        tone={
+                          draft.status === "posted"
+                            ? "green"
+                            : draft.status === "stale"
+                              ? "amber"
+                              : "neutral"
+                        }
+                      >
+                        {draft.status}
+                      </Badge>
+                      <button
+                        aria-label={`Remove draft ${draft.path} line ${draft.line}`}
+                        className="text-slate-600 hover:text-rose-300"
+                        onClick={() => removeReviewDraft(workspaceRoot, draft.id)}
+                        type="button"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">
+                      {draft.body}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </section>
 
         <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
@@ -513,7 +534,7 @@ export function ChangesReview({
                   modified={result.modifiedText ?? ""}
                   path={result.path ?? selectedPath ?? "diff.txt"}
                   layout={layout}
-                  onReviewLineSelect={setSelectedReviewLine}
+                  onReviewLineSelect={advancedReview ? setSelectedReviewLine : undefined}
                 />
               </Suspense>
             ) : result ? (
@@ -529,7 +550,7 @@ export function ChangesReview({
             )}
           </div>
 
-          {selectedReviewLine && textualResult && (
+          {advancedReview && selectedReviewLine && textualResult && (
             <div className="shrink-0 border-t border-orange-400/15 bg-orange-400/[0.035] px-3 py-2">
               <div className="flex items-center gap-2">
                 <MessageSquarePlus size={13} className="text-orange-300" />

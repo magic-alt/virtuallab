@@ -71,7 +71,7 @@ describe("workbench persisted store", () => {
     expect(raw).toContain("changes");
   });
 
-  it("migrates the former Guide workspace tab without losing its worktree", async () => {
+  it.each(["guide", "checks", "history"])("migrates the retired %s workspace tab without losing its worktree", async (activeTab) => {
     window.localStorage.setItem("virtuallab-workbench-v2", JSON.stringify({
       state: {
         repositories: [{ id: "repo-1", name: "example", path: "D:/Work/example", lastOpenedAt: 1 }],
@@ -81,7 +81,7 @@ describe("workbench persisted store", () => {
           "repo-1": {
             repositoryId: "repo-1",
             activeWorktreePath: "D:/Work/example/.worktrees/feature",
-            activeTab: "guide",
+            activeTab,
             updatedAt: 123,
           },
         },
@@ -98,6 +98,8 @@ describe("workbench persisted store", () => {
       activeTab: "overview",
       updatedAt: 123,
     });
+    const saved = JSON.parse(window.localStorage.getItem("virtuallab-workbench-v2")!);
+    expect(saved.state.workspaceStates["repo-1"].activeTab).toBe("overview");
   });
 
   it("does not merge case-distinct Unix review draft workspaces", () => {

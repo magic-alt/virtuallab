@@ -16,8 +16,12 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 Bundled Help/Guide content is an application service, not a workspace tab or
 execution context. The GUI menu bar offers **Help → 使用文档** even without an
 active repository; it opens an overlay reader without changing the selected
-repository, worktree, tab, or persisted workspace state. A legacy persisted
-`guide` tab is normalized to `overview` while preserving its worktree path.
+repository, worktree, tab, or persisted workspace state. Workspace navigation exposes only Overview, Changes, GitHub, Agents, Terminal
+and Run. Overview retains recent commits; local readiness duplicates have no
+separate page. Run results and GitHub CI remain independent. Persisted state
+schema v7 accepts only current workspace tab values; invalid values normalize
+to `overview` while retaining repository/worktree selection, and migration
+writes the validated state back to storage. There are no legacy page aliases.
 
 ## Background agent and terminal notification boundary
 
@@ -294,13 +298,23 @@ The workflow UI output ring and process lifetime are ephemeral; worktree/profile
 
 The local Zustand store persists one workspace context per repository: active worktree path, active tab and update timestamp. Repository switching restores that context. If a remembered worktree no longer exists, VirtualLab falls back to the primary repository and Overview. Runtime PTY/process objects are deliberately not persisted.
 
-## V0.2 normalized checks
+## Normalized process results
 
-Repository readiness and process outcomes share a typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. V0.2 uses this for local readiness semantics; V0.4 now persists per-run manifests, hashes, and logs; history search and enforceable release gates are future work.
+Run outcomes use the typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. Repository readiness normalization was removed with the standalone Checks page; repository state remains visible in Overview. V0.4 persists verification manifests, hashes and logs; searchable evidence history and enforceable release gates are future work.
 
 ## V0.3 review boundary
 
 V0.3 starts read-oriented: Git diff retrieval and GitHub PR/check metadata are read-only adapters. Inline review drafts may be edited locally before network mutation. Posting comments, changing PR state and merge/release remain explicit user actions.
+
+Changes opens with the file list and read-only diff. Worktree/Staged and layout
+controls remain visible; Base comparison, review-phase controls, line selection
+for comments and saved drafts are opt-in under **Advanced review**. Closing
+advanced review hides the draft composer/list without deleting saved drafts;
+closing it from Base returns to Worktree and invalidates pending Base requests.
+**Manage local changes** reveals the existing typed stash/discard/delete actions
+without bypassing native confirmations. Merely expanding either section does
+not mutate Git. Diff invalidation notices remain visible with both sections
+closed, and fresh content must still be loaded after workspace refresh.
 
 The local change count includes tracked and untracked status entries. Changes/Worktree lists unstaged tracked changes and untracked files or grouped directories; Staged lists index changes, while Base lists committed changes against the chosen base. Untracked entries show their status and path without calling the tracked Git diff adapter or enabling line drafts / mark-reviewed. Directory grouping follows the native Git status snapshot, so one untracked directory is one counted entry. Selecting any entry invalidates a pending diff request to prevent an older response from replacing the selected state.
 

@@ -8,12 +8,9 @@ import {
   GitBranch,
   GitCommitHorizontal,
   GitPullRequest,
-  History,
-  ListChecks,
   MonitorDot,
   PlayCircle,
   TerminalSquare,
-  TriangleAlert,
   Workflow,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -24,7 +21,6 @@ import { GithubPanel } from "@/features/github/GithubPanel";
 import { WorkspaceTerminals } from "@/features/terminal/WorkspaceTerminals";
 import { isDesktopRuntime } from "@/lib/backend";
 import { workspaceKey } from "@/lib/workspaceKey";
-import { repositoryCheckResults } from "@/lib/checks";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
 import type {
   LocalChangesAction,
@@ -66,8 +62,6 @@ const tabs: Array<{
   { id: "agents", label: "Agents", icon: <Bot size={14} /> },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
-  { id: "checks", label: "Checks", icon: <ListChecks size={14} /> },
-  { id: "history", label: "History", icon: <History size={14} /> },
 ];
 
 export function WorkspaceContent({
@@ -182,8 +176,6 @@ export function WorkspaceContent({
             enabled={!isPreview && isDesktopRuntime()}
           />
         )}
-        {tab === "checks" && <Checks snapshot={snapshot} isPreview={isPreview} />}
-        {tab === "history" && <HistoryView snapshot={snapshot} />}
       </main>
     </div>
   );
@@ -303,101 +295,6 @@ function Overview({
             description="Codex, DeepSeek, Claude Code and OpenCode adapters are available from Agents when configured on this host."
             state="available"
           />
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function Checks({
-  snapshot,
-  isPreview,
-}: {
-  snapshot: RepositorySnapshot;
-  isPreview: boolean;
-}) {
-  const checks = repositoryCheckResults(snapshot, isPreview);
-
-  return (
-    <div className="mx-auto max-w-[980px]">
-      <Panel
-        title="Local readiness checks"
-        subtitle="Local repository readiness; the restricted native verification evidence pipeline is separate from these checks."
-        icon={<ListChecks size={16} />}
-      >
-        <div className="space-y-2">
-          {checks.map((check) => {
-            const passing = check.status === "pass";
-            const warning = check.status === "warn";
-            const failing = check.status === "fail";
-
-            return (
-              <div
-                key={check.id}
-                className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3"
-              >
-                <div
-                  className={cn(
-                    "flex size-8 shrink-0 items-center justify-center rounded-lg",
-                    passing
-                      ? "bg-emerald-400/10 text-emerald-300"
-                      : warning
-                        ? "bg-amber-400/10 text-amber-300"
-                        : failing
-                          ? "bg-rose-400/10 text-rose-300"
-                          : "bg-white/[0.04] text-slate-600",
-                  )}
-                >
-                  {passing ? <CheckCircle2 size={16} /> : <TriangleAlert size={16} />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs font-medium text-slate-200">{check.label}</div>
-                    <Badge
-                      tone={
-                        passing
-                          ? "green"
-                          : warning
-                            ? "orange"
-                            : failing
-                              ? "red"
-                              : "neutral"
-                      }
-                    >
-                      {check.status.replace("_", " ")}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 truncate text-[11px] text-slate-600" title={check.detail}>
-                    {check.detail}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function HistoryView({ snapshot }: { snapshot: RepositorySnapshot }) {
-  return (
-    <div className="mx-auto max-w-[980px]">
-      <Panel
-        title="Recent commits"
-        subtitle="Repository-local commit history."
-        icon={<History size={16} />}
-      >
-        <div className="divide-y divide-white/[0.055]">
-          {snapshot.recentCommits.map((commit) => (
-            <div key={commit.sha} className="flex items-center gap-4 py-3">
-              <div className="mono w-20 shrink-0 text-[11px] text-orange-300">{commit.sha}</div>
-              <div className="min-w-0 flex-1 truncate text-xs text-slate-300">{commit.subject}</div>
-              <div className="shrink-0 text-[10px] text-slate-600">
-                {formatCommitTime(commit.timestamp)}
-              </div>
-            </div>
-          ))}
         </div>
       </Panel>
     </div>

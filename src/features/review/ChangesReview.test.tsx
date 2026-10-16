@@ -71,6 +71,52 @@ describe("ChangesReview", () => {
     useWorkbenchStore.setState({ reviewStates: {} });
   });
 
+  it("keeps daily diffs accessible while advanced review and recovery are collapsed", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
+      enabled onResolveLocalChanges={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Advanced review" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Manage local changes" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Base" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard all tracked…" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await screen.findByTestId("monaco-review");
+    await user.click(screen.getByRole("button", { name: "Select review line" }));
+    expect(screen.queryByRole("textbox", { name: "Review draft body" })).not.toBeInTheDocument();
+  });
+
+  it("returns to local changes when advanced base review is closed", async () => {
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    await user.click(screen.getByRole("button", { name: "Base" }));
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    expect(screen.getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Load base files" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await screen.findByTestId("monaco-review");
+    expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "worktree" }));
+  });
+
+  it("ignores a late Base response after closing advanced review", async () => {
+    let finish!: (value: ReturnType<typeof response>) => void;
+    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    await user.click(screen.getByRole("button", { name: "Base" }));
+    await user.click(screen.getByRole("button", { name: "Load base files" }));
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    await act(async () => finish(response({
+      mode: "base", path: null, files: [{ path: "base-only.ts", status: "M" }],
+    })));
+    expect(screen.getByRole("button", { name: "src/a.ts" })).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    await user.click(screen.getByRole("button", { name: "Base" }));
+    expect(screen.queryByRole("button", { name: "base-only.ts" })).not.toBeInTheDocument();
+  });
+
   it("loads a typed worktree diff and renders Monaco", async () => {
     const user = userEvent.setup();
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
@@ -90,6 +136,7 @@ describe("ChangesReview", () => {
     const user = userEvent.setup();
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "src/a.ts" }));
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
     await user.click(await screen.findByRole("button", { name: "Select review line" }));
     await user.type(screen.getByRole("textbox", { name: "Review draft body" }), "Please tighten this guard.");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -107,6 +154,11 @@ describe("ChangesReview", () => {
         status: "active",
       }),
     );
+    expect(screen.getByText("Please tighten this guard.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
+    expect(screen.queryByText("Please tighten this guard.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Review draft body" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
     expect(screen.getByText("Please tighten this guard.")).toBeInTheDocument();
   });
 
@@ -156,13 +208,14 @@ describe("ChangesReview", () => {
     await user.click(screen.getByRole("button", { name: "new file.ts" }));
     expect(screen.getByText("Untracked file")).toBeInTheDocument();
     expect(backend.gitDiff).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Mark reviewed" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Mark reviewed" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "generated/" }));
     expect(screen.getByText("Untracked directory")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Staged" }));
     expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "generated/" })).not.toBeInTheDocument();
     expect(screen.queryByText("Untracked directory")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
     await user.click(screen.getByRole("button", { name: "Base" }));
     expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
   });
@@ -196,7 +249,7 @@ describe("ChangesReview", () => {
     await act(async () => { resolveDiff(response()); });
     expect(screen.getByText("Untracked file")).toBeInTheDocument();
     expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mark reviewed" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Mark reviewed" })).not.toBeInTheDocument();
   });
 
   it("discovers base files and sends rename identity", async () => {
@@ -212,6 +265,7 @@ describe("ChangesReview", () => {
       }));
     const user = userEvent.setup();
     render(<ChangesReview snapshot={{...snapshot, changes: [], dirtyCount: 0}} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
     await user.click(screen.getByRole("button", { name: "Base" }));
     await user.click(screen.getByRole("button", { name: "Load base files" }));
     await user.click(screen.getByRole("button", { name: "src/old.ts → src/new.ts" }));
@@ -259,6 +313,7 @@ describe("ChangesReview", () => {
     const onRefreshForRereview=vi.fn().mockResolvedValue(undefined);
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo"
       workspaceRoot="D:/repo" enabled onRefreshForRereview={onRefreshForRereview} />);
+    await user.click(screen.getByRole("button", { name: "Advanced review" }));
     await user.click(screen.getByRole("button",{name:"Mark fix in progress"}));
     expect(useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey("D:/repo")]?.phase).toBe("fix");
     await user.click(screen.getByRole("button",{name:"Refresh and re-review"}));
@@ -291,6 +346,7 @@ describe("ChangesReview", () => {
     ] };
     render(<ChangesReview snapshot={source} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Manage local changes" }));
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Stash all (safe)" }));
     expect(recover).toHaveBeenCalledWith("stashAll", undefined);
@@ -301,6 +357,7 @@ describe("ChangesReview", () => {
     const recover = vi.fn().mockResolvedValue(true);
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Manage local changes" }));
     await user.click(screen.getByRole("button", { name: "Staged" }));
     await user.click(screen.getByRole("button", { name: "src/b.ts" }));
     await user.click(screen.getByRole("button", { name: "Discard selected tracked…" }));
@@ -314,6 +371,7 @@ describe("ChangesReview", () => {
       changes: [{ path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const }] };
     render(<ChangesReview snapshot={source} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Manage local changes" }));
     expect(screen.queryByRole("button", { name: "Delete selected untracked…" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "hardware/.history/" }));
@@ -327,6 +385,7 @@ describe("ChangesReview", () => {
     const recover = vi.fn().mockImplementation(() => new Promise<boolean>((resolve) => { finish = resolve; }));
     render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Manage local changes" }));
     await user.click(screen.getByRole("button", { name: "Discard all tracked…" }));
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Working…" })).toBeDisabled();
@@ -335,10 +394,12 @@ describe("ChangesReview", () => {
     expect(screen.getByRole("button", { name: "Discard all tracked…" })).toBeEnabled();
   });
 
-  it("disables recovery when Git is busy or the native callback is unavailable", () => {
+  it("disables recovery when Git is busy or the native callback is unavailable", async () => {
+    const user = userEvent.setup();
     const recover = vi.fn();
     const view = render(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled gitMutationPending onResolveLocalChanges={recover} />);
+    await user.click(screen.getByRole("button", { name: "Manage local changes" }));
     expect(screen.getByRole("button", { name: "Stash all (safe)" })).toBeDisabled();
     view.rerender(<ChangesReview snapshot={snapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo"
       enabled={false} onResolveLocalChanges={recover} />);

@@ -42,7 +42,7 @@ describe("WorkspaceContent navigation", () => {
     view.rerender(<WorkspaceContent {...props} snapshot={first} tab="github" />);
     expect(githubLifecycle.mounts).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("github-mock")).toHaveAttribute("data-root", "D:/repo");
-    for (const tab of ["changes", "overview", "history"] as const) {
+    for (const tab of ["changes", "overview", "run"] as const) {
       view.rerender(<WorkspaceContent {...props} snapshot={first} tab={tab} />);
       expect(screen.getByTestId("github-mock").parentElement).toHaveAttribute("hidden");
     }
@@ -112,7 +112,9 @@ describe("WorkspaceContent navigation", () => {
       />,
     );
 
-    for (const tab of ["Overview", "Changes", "GitHub", "Agents", "Terminal", "Run", "Checks", "History"]) {
+    expect(screen.queryByRole("button", { name: "Checks" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
+    for (const tab of ["Overview", "Changes", "GitHub", "Agents", "Terminal", "Run"]) {
       await user.click(screen.getByRole("button", { name: new RegExp(tab, "i") }));
     }
 
@@ -123,8 +125,6 @@ describe("WorkspaceContent navigation", () => {
       "agents",
       "terminal",
       "run",
-      "checks",
-      "history",
     ]);
   });
   it("retains terminal mounts across tabs, worktrees and repositories", () => {
