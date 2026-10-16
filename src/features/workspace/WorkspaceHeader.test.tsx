@@ -5,20 +5,20 @@ import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 
 describe("WorkspaceHeader", () => {
-  it("runs refresh in native mode and disables it in preview", async () => {
+  it("runs Fetch and hides manual Refresh", async () => {
     const user = userEvent.setup();
-    const onRefresh = vi.fn();
     const onFetch = vi.fn();
     const onPull = vi.fn();
     const onOpenFolder = vi.fn();
     const { rerender } = render(
-      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0, stagedCount: 0, unstagedCount: 0, untrackedCount: 0, changes: [] }} isPreview={false} loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />,
+      <WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, dirtyCount: 0, stagedCount: 0, unstagedCount: 0, untrackedCount: 0, changes: [] }} isPreview={false} loading={false} gitBusy={false} onFetch={onFetch} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />,
     );
 
     expect(document.querySelector("header > div")).toHaveClass("flex-wrap");
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: /^fetch \+ prune$/i }));
+    expect(screen.queryByRole("button", { name: /^refresh$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^fetch$/i }))
+      .toHaveAttribute("title", "Fetch origin and prune deleted remote-tracking branches");
+    await user.click(screen.getByRole("button", { name: /^fetch$/i }));
     expect(onFetch).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("button", { name: /^pull$/i }));
     expect(onPull).toHaveBeenCalledTimes(1);
@@ -26,11 +26,11 @@ describe("WorkspaceHeader", () => {
     expect(onOpenFolder).toHaveBeenCalledTimes(1);
 
     rerender(
-      <WorkspaceHeader snapshot={PREVIEW_SNAPSHOT} isPreview loading={false} gitBusy={false} onRefresh={onRefresh} onFetch={onFetch} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />,
+      <WorkspaceHeader snapshot={PREVIEW_SNAPSHOT} isPreview loading={false} gitBusy={false} onFetch={onFetch} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />,
     );
     expect(screen.getByRole("button", { name: /open folder/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /refresh/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /^fetch \+ prune$/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^refresh$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^fetch$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^pull$/i })).toBeDisabled();
   });
   it("opens the exact selected workspace in the preferred IDE and updates the choice", async () => {
@@ -39,7 +39,7 @@ describe("WorkspaceHeader", () => {
     const onEditorChange = vi.fn();
     const props = {
       snapshot: PREVIEW_SNAPSHOT, isPreview: false, loading: false, gitBusy: false,
-      onRefresh: vi.fn(), onFetch: vi.fn(), onPull: vi.fn(), onOpenFolder: vi.fn(),
+      onFetch: vi.fn(), onPull: vi.fn(), onOpenFolder: vi.fn(),
       onOpenEditor, onEditorChange,
     };
     const { rerender } = render(<WorkspaceHeader {...props} editor="auto" />);
@@ -63,12 +63,12 @@ describe("WorkspaceHeader", () => {
       changes: [{ path: "hardware/.history/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" as const }],
     };
     const view = render(<WorkspaceHeader snapshot={onlyUntracked} isPreview={false}
-      loading={false} gitBusy={false} onRefresh={vi.fn()} onFetch={vi.fn()} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />);
+      loading={false} gitBusy={false} onFetch={vi.fn()} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Pull" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Pull" }));
     expect(onPull).toHaveBeenCalledTimes(1);
     view.rerender(<WorkspaceHeader snapshot={{ ...onlyUntracked, stagedCount: 1 }} isPreview={false}
-      loading={false} gitBusy={false} onRefresh={vi.fn()} onFetch={vi.fn()} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />);
+      loading={false} gitBusy={false} onFetch={vi.fn()} onPull={onPull} onOpenFolder={onOpenFolder} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Pull" })).toBeDisabled();
   });
 

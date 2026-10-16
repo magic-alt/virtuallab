@@ -4,7 +4,6 @@ import {
   Code2,
   FolderOpen,
   GitBranch,
-  RefreshCw,
   Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -18,7 +17,6 @@ interface Props {
   isPreview: boolean;
   loading: boolean;
   gitBusy: boolean;
-  onRefresh: () => void;
   onOpenFolder: () => void;
   editor: ExternalEditor;
   onEditorChange: (editor: ExternalEditor) => void;
@@ -32,7 +30,6 @@ export function WorkspaceHeader({
   isPreview,
   loading,
   gitBusy,
-  onRefresh,
   onOpenFolder,
   editor,
   onEditorChange,
@@ -122,7 +119,7 @@ export function WorkspaceHeader({
             title="Fetch origin and prune deleted remote-tracking branches"
           >
             <Cloud size={13} />
-            Fetch + prune
+            Fetch
           </Button>
           <Button
             disabled={
@@ -136,15 +133,6 @@ export function WorkspaceHeader({
           >
             <GitBranch size={13} />
             Pull
-          </Button>
-          <Button
-            disabled={isPreview || loading || gitBusy}
-            onClick={onRefresh}
-            variant="outline"
-            size="sm"
-          >
-            <RefreshCw size={13} className={loading ? "animate-spin" : undefined} />
-            Refresh
           </Button>
         </div>
       </div>

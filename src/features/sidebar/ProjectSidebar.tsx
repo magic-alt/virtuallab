@@ -242,7 +242,7 @@ export function ProjectSidebar({
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
           <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
-            Current branch and main are pinned first. Delete local and origin branches separately; Fetch + prune removes stale origin refs.
+            Current branch and main are pinned first. Delete local and origin branches separately; Fetch removes stale origin refs.
           </p>
           <div className="mt-2 space-y-1">
             {visibleBranches.map((branch) => {

@@ -1311,6 +1311,8 @@ pub async fn open_workspace_directory(
             // Do not pass untrusted paths to cmd.exe, sh, or AppleScript.
             #[cfg(target_os = "macos")]
             command.arg("--");
+            #[cfg(windows)]
+            let workspace = crate::process::windows_desktop_path(&workspace);
             let mut child = command.arg(&workspace).spawn()
                 .map_err(|e| format!("Cannot open workspace folder: {e}"))?;
             std::thread::spawn(move || { let _ = child.wait(); });

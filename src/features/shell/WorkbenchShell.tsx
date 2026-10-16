@@ -301,7 +301,7 @@ export function WorkbenchShell() {
         })
         .catch(() => {
           // A watcher read may race an external Git operation. Keep the last
-          // valid snapshot and leave diagnostic errors to explicit Refresh.
+          // valid snapshot; subsequent watcher events retry the inspection.
         })
         .finally(() => {
           statusLoadsRef.current.delete(key);
@@ -830,11 +830,6 @@ export function WorkbenchShell() {
             }}
             onOpenFolder={() => {
               if (activeRepository && workspaceReady) void openFolder(snapshot.root, activeRepository.path);
-            }}
-            onRefresh={() => {
-              setError(null);
-              const path = activePathRef.current;
-              if (path) void loadSnapshot(path).catch(() => undefined);
             }}
           />
 

@@ -232,3 +232,32 @@ fn gui_fallback_launches_env_interpreter_with_space_and_unicode_paths() {
         output.status, String::from_utf8_lossy(&output.stderr));
     assert_eq!(output.stdout, b"gui-cli-ok");
 }
+
+// Only OS launch adapters use this; Git/workspace identity remains unchanged.
+#[cfg(any(windows, test))]
+pub(crate) fn windows_desktop_path(path: &str) -> String {
+    // Explorer does not understand Git's forward-slash paths or Win32's
+    // extended-length namespace. Keep UNC shares intact when removing it.
+    let path = path.replace('/', "\\");
+    if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else if let Some(drive) = path.strip_prefix(r"\\?\") {
+        drive.to_owned()
+    } else {
+        path
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn windows_desktop_paths_preserve_drive_unc_spaces_and_unicode() {
+    for (input, expected) in [
+        ("C:/Users/测试/work tree", r"C:\Users\测试\work tree"),
+        ("//server/share/work tree", r"\\server\share\work tree"),
+        (r"\\?\C:\work tree\测试", r"C:\work tree\测试"),
+        (r"\\?\UNC\server\share\测试", r"\\server\share\测试"),
+        (r"D:\work tree\测试", r"D:\work tree\测试"),
+    ] {
+        assert_eq!(windows_desktop_path(input), expected);
+    }
+}

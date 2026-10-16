@@ -75,7 +75,9 @@ console.log("[ ] Add repository opens the native folder picker and loads the sel
 console.log("[ ] Search filters repository/workspace lanes; Ctrl+K focuses it; Escape/clear resets it.");
 console.log("[ ] New Workspace creates an isolated branch/worktree; selecting it changes active workspace.");
 console.log("[ ] Remove Workspace refuses the primary worktree; clean worktrees remove normally, while dirty worktrees require a second native Force remove confirmation. Cancel preserves files and selection; stale preflight is rejected.");
-console.log("[ ] Refresh reloads Git state.");
+console.log("[ ] Header shows Fetch (prunes stale origin refs by default) and no Refresh button. File edits, external Git metadata changes and in-app Git operations refresh local Git state automatically.");
+console.log("[ ] Open in IDE: Auto and each installed fixed editor open the selected repository/worktree in a new window. macOS Zed works without installing its CLI in PATH. Unavailable or immediately failing launchers show an error.");
+console.log("[ ] Windows Open folder opens the selected repository/worktree (not Documents), including paths with spaces/Unicode and UNC shares. Test both repository and worktree row actions.");
 console.log("[ ] Footer shows the running executable's Git commit/dirty marker. Click it to inspect full commit, branch, UTC build time and Debug/Release; workspace switches do not change this record. Browser preview and missing Git metadata are explicit.");
 console.log("[ ] Build identity freshness: rebuild after a branch-only switch, a tracked edit and a non-ignored untracked file; the new executable records each new state and build time. At 640x360 and with long branch names, details remain scrollable and closable.");
 console.log("[ ] Terminal: Start/New tab, tab switch, typing, Ctrl+C, resize and Stop all work.");

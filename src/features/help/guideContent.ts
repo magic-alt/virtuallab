@@ -77,7 +77,7 @@ export const guidePages: GuidePage[] = [
         { type: "table", columns: ["区域", "看到什么", "常见操作"], rows: [
           ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
           ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
-          ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch + prune、Pull、Refresh"],
+          ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch、Pull；Git 状态自动刷新"],
           ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
         ] },
@@ -121,12 +121,12 @@ export const guidePages: GuidePage[] = [
         { type: "callout", tone: "note", title: "没有检出的分支不能直接打开目录", text: "Git branch 只有引用，没有专属文件夹。请先检出分支或新建 Worktree；Open in IDE 不会自行 checkout、stash 或更改已有文件。找不到编辑器时请安装应用或配置 CLI/PATH；Windows 的 Zed CLI 一般位于 %LOCALAPPDATA%\\Programs\\Zed\\bin\\zed.exe。Auto 依据受支持的 VISUAL/EDITOR 配置和本机安装进行检测，并非使用资源管理器打开文件夹。" },
       ] },
       { id: "remote", title: "切换与管理本地 / origin 分支", blocks: [
-        { type: "text", text: "侧边栏把当前分支和 main 优先显示。点击分支：若已由另一 Worktree 占用，会打开对应工作区，而不是强行重复检出。Fetch + prune 仅同步远端引用并清理已消失的 remote-tracking refs；Pull 仅进行快进更新。" },
+        { type: "text", text: "侧边栏把当前分支和 main 优先显示。点击分支：若已由另一 Worktree 占用，会打开对应工作区，而不是强行重复检出。Fetch 默认带 prune，仅同步远端引用并清理已消失的 remote-tracking refs；Pull 仅进行快进更新。" },
         { type: "table", columns: ["动作", "影响范围", "注意"], rows: [
           ["Switch", "当前 worktree 中的本地分支", "未跟踪文件冲突或脏状态可能阻止切换"],
           ["Delete local", "本地已合并且未占用的分支", "保护 main/master 和占用中的分支，需确认"],
           ["Delete origin", "远端 origin 分支", "独立确认，不自动删除本地分支；保护默认分支"],
-          ["Fetch + prune", "本地的远端跟踪信息", "不会自动合并工作文件"],
+          ["Fetch", "本地的远端跟踪信息", "不会自动合并工作文件"],
         ] },
       ] },
     ],
@@ -366,7 +366,7 @@ export const guidePages: GuidePage[] = [
         { type: "table", columns: ["现象", "原因与处理"], rows: [
           ["分支切不过去", "检查是否被另一 worktree 占用，或未跟踪文件可能被覆盖。先检查 git status。"],
           ["删除分支按钮禁用", "当前分支、main/master、被其他 worktree 使用的分支受保护；删除仍需确认。"],
-          ["远端分支仍显示", "Fetch + prune 更新远端跟踪信息；删除 origin 分支与删除本地分支是两个动作。"],
+          ["远端分支仍显示", "Fetch 更新远端跟踪信息；删除 origin 分支与删除本地分支是两个动作。"],
           ["GitHub 数据不可用", "检查 gh --version、gh auth status、origin URL 与网络；本地 Changes 不受影响。"],
           ["Review draft 显示 stale", "HEAD 已变化；重新加载 Diff 并确认草稿是否仍然适用。"],
         ] },

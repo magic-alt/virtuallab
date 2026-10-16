@@ -97,7 +97,7 @@ fn installation_paths(editor: ExternalEditor) -> Vec<PathBuf> {
         }
         for base in app_dirs {
             match editor {
-                ExternalEditor::Zed => paths.push(base.join("Zed.app/Contents/MacOS/zed")),
+                ExternalEditor::Zed => paths.push(base.join("Zed.app/Contents/MacOS/cli")),
                 ExternalEditor::Vscode => paths.push(base.join("Visual Studio Code.app/Contents/Resources/app/bin/code")),
                 ExternalEditor::Cursor => paths.push(base.join("Cursor.app/Contents/Resources/app/bin/cursor")),
                 ExternalEditor::Auto => {}
@@ -181,6 +181,8 @@ fn open_workspace_in_editor_blocking(
     if !Path::new(&workspace).is_dir() {
         return Err(format!("Workspace directory no longer exists: {workspace}"));
     }
+    #[cfg(windows)]
+    let workspace = crate::process::windows_desktop_path(&workspace);
     let (resolved_editor, binary) = select_editor(editor)?;
     let mut command = background_command(&binary);
     command
@@ -190,12 +192,32 @@ fn open_workspace_in_editor_blocking(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    launch_editor(command, resolved_editor.label())
+}
+
+fn launch_editor(mut command: std::process::Command, label: &str) -> Result<(), String> {
     let mut child = command.spawn()
-        .map_err(|error| format!("Could not start {}: {error}", resolved_editor.label()))?;
-    // Launch is fire-and-forget: VirtualLab does not own, stop, or wait for
-    // the external IDE. Reap short-lived CLI shims without blocking the UI.
-    std::thread::spawn(move || { let _ = child.wait(); });
-    Ok(())
+        .map_err(|error| format!("Could not start {label}: {error}"))?;
+    // Catch CLI argument/initialization failures before reporting success.
+    // GUI binaries can stay alive indefinitely; keep the wait bounded and
+    // leave the user's IDE running independently after this launch window.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!(
+                "{label} could not open the workspace (launcher exited with {status}). Check the editor installation and CLI.",
+            )),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            result => {
+                std::thread::spawn(move || { let _ = child.wait(); });
+                return result.map(|_| ()).map_err(|error|
+                    format!("Could not check {label} startup: {error}"));
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -214,6 +236,47 @@ pub async fn open_workspace_in_editor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn editor_early_exit_is_reported_instead_of_silent_success() {
+        // Fixed test executable/arguments; the public API never accepts shell text.
+        let mut command = background_command("/bin/sh");
+        command.args(["-c", "exit 7"]);
+        let error = launch_editor(command, "fixture editor").unwrap_err();
+        assert!(error.contains("fixture editor") && error.contains('7'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_editor_shim_returns_success() {
+        let mut command = background_command("/bin/sh");
+        command.args(["-c", "exit 0"]);
+        assert!(launch_editor(command, "fixture editor").is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn running_editor_does_not_block_until_it_closes() {
+        let mut command = background_command("/bin/sleep");
+        command.arg("2");
+        let start = std::time::Instant::now();
+        assert!(launch_editor(command, "fixture editor").is_ok());
+        assert!(start.elapsed() < std::time::Duration::from_millis(1500));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn installed_zed_launcher_supports_new_window_arguments() {
+        // A real app installation exposes the GUI/CLI distinction: the GUI
+        // accepts --help but rejects the --new flag used by this adapter.
+        if let Some(binary) = locate_editor(ExternalEditor::Zed) {
+            let output = background_command(binary).arg("--help").output().unwrap();
+            assert!(output.status.success());
+            assert!(String::from_utf8_lossy(&output.stdout).contains("--new"),
+                "Zed launcher must support opening an independent workspace");
+        }
+    }
 
     #[test]
     fn accepts_only_supported_editor_ids() {

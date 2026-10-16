@@ -52,7 +52,16 @@ worktree root and editor enum to `open_workspace_in_editor` in
 validator from `git.rs` before looking up the editor binary and spawning a
 non-interactive OS process with a fixed `--new` / `--new-window` argument
 vector. Zed on Windows must use its `bin/zed.exe` CLI shim, not the GUI
-binary in the installation root. Auto selects only recognized executable
+binary in the installation root. macOS Zed uses the app bundle's
+`Contents/MacOS/cli`; its GUI executable does not accept `--new`.
+Windows desktop launch arguments convert Git's forward-slash paths to native
+backslashes and remove extended-length drive/UNC prefixes for Explorer/IDE
+compatibility, after registered-worktree validation. Git identity paths are
+unchanged. Editor startup checks early exit status for up to 750 ms and returns
+failures to the UI instead of silently reporting a successful spawn. A launcher
+still running after that interval is reaped in the background without taking
+ownership of the editor; later failures are outside this startup check.
+Auto selects only recognized executable
 families from `VISUAL` / `EDITOR`; environment strings are never evaluated
 as shell commands. Path arguments remain distinct, including spaces and
 Unicode. Unsupported/unavailable launchers return actionable errors.
@@ -257,7 +266,7 @@ Interactive terminals and build/test processes are separate execution paths:
 - **Process profile:** structured executable + argument vector + working directory. Intended for repeatable build/test/check commands; it does not accept a shell command string.
 - **Worktree mutation:** branch validation and explicit native confirmation precede ordinary worktree removal. A dirty registered non-primary worktree returns a typed `needsForce` preflight instead of being deleted. A separate irreversible-loss native confirmation is required before a single `git worktree remove --force`; Rust revalidates registered path, primary exclusion, full HEAD, checked-out branch and a SHA-256 digest of NUL-delimited status entries against the preflight snapshot. Stale previews and direct force calls without a matching snapshot fail closed; a locked worktree is not bypassed (never supply a second `--force`). Removing a worktree never deletes its Git branch. Ignored/generated files inside the directory can also be lost.
 - Native removal also rejects workspaces held by attached agent runtimes, running/stopping Run/Build jobs, active verification runs or retained PTY sessions/startup. These are conservative ownership checks; a shared lifecycle reservation to close concurrent start-versus-delete races remains future work.
-- **Filesystem watcher / Git refresh:** source-file events are coalesced (850 ms quiet period, 2.6 s max wait) and invoke the lightweight native `inspect_worktree_status` (HEAD + porcelain status) without toggling global loading or rebuilding the branch/worktree inventory. Identical status data retains the current React snapshot. A changed HEAD/branch or an explicit Git operation triggers a full `inspect_repository`; targeted Git HEAD/refs/worktrees/config events also trigger a quiet full refresh (400 ms debounce). `.git/index` updates refresh status only; read-only status uses `git --no-optional-locks status` to prevent the watcher from retriggering itself. Git objects/logs/lock files and generated-heavy directories (`node_modules`, `target`, `dist`, `.virtuallab`) do not trigger source rescans. Linked-worktree metadata paths and their shared `commondir` are watched explicitly. Refresh results are scoped to the selected repository/worktree and fenced against older full inspections.
+- **Filesystem watcher / Git refresh:** the workspace header has no manual Refresh control; local state refresh is built in. The Fetch action retains `git fetch --prune origin` while displaying only Fetch. Source-file events are coalesced (850 ms quiet period, 2.6 s max wait) and invoke the lightweight native `inspect_worktree_status` (HEAD + porcelain status) without toggling global loading or rebuilding the branch/worktree inventory. Identical status data retains the current React snapshot. A changed HEAD/branch or an explicit Git operation triggers a full `inspect_repository`; targeted Git HEAD/refs/worktrees/config events also trigger a quiet full refresh (400 ms debounce). `.git/index` updates refresh status only; read-only status uses `git --no-optional-locks status` to prevent the watcher from retriggering itself. Git objects/logs/lock files and generated-heavy directories (`node_modules`, `target`, `dist`, `.virtuallab`) do not trigger source rescans. Linked-worktree metadata paths and their shared `commondir` are watched explicitly. Refresh results are scoped to the selected repository/worktree and fenced against older full inspections.
 
 On Windows, `.cmd`/`.bat` process profiles are routed through `cmd.exe /d /s /c` only after the program and its arguments have already been separated by the profile model. Arbitrary command strings are not exposed as an agent API.
 
