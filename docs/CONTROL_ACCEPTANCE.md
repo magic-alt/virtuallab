@@ -13,7 +13,7 @@ Every visible interactive control must have an automated test and/or an explicit
 | Sidebar | New workspace | `ProjectSidebar.test.tsx`, `NewWorkspaceDialog.test.tsx`, Rust Git round-trip | create branch/worktree |
 | Sidebar | Workspace select | `ProjectSidebar.test.tsx` | switch worktree |
 | Sidebar | Workspace remove | `WorkbenchShell.branchSwitch.test.tsx`, `backend.worktreeRemoval.test.ts`, Rust `git.rs` force-removal fixtures | clean removal; dirty requires second native confirmation; cancel preserves selection/files; stale HEAD/status, primary, unknown and locked worktrees refused |
-| Header | Refresh | `WorkspaceHeader.test.tsx` | update repository state |
+| Header | Fetch (default prune); no manual Refresh | `WorkspaceHeader.test.tsx`, `WorkbenchShell.watchRefresh.test.tsx`, Rust Git prune fixture | fetch/prune origin; local state refreshes automatically |
 | Navigation | Overview/Changes/Terminal/Run/Checks/History | `WorkspaceContent.test.tsx` | switch each tab |
 | Workspace dialog | Create / Cancel / close | `NewWorkspaceDialog.test.tsx` | create real worktree |
 | Terminal | Start/New/Select/Stop | `TerminalWorkspace.test.tsx` | real PowerShell/bash PTY |
@@ -163,7 +163,7 @@ Monaco diff wrapping must be symmetric in side-by-side mode.
 | Monaco | original/modified line selection | component wiring + store tests | click a line in either diff pane and verify LEFT/RIGHT + line badge |
 | Changes | Save draft | `ChangesReview.test.tsx` | enter text, save, switch files, return and verify draft remains |
 | Changes | workspace persistence | `workbench.test.ts` | restart VirtualLab and confirm draft remains attached to the same worktree |
-| Changes | stale HEAD handling | `workbench.test.ts` | create draft, advance HEAD, Refresh; draft changes from active → stale |
+| Changes | stale HEAD handling | `workbench.test.ts` | create draft, advance HEAD, wait for automatic refresh; draft changes from active → stale |
 | Changes | remove draft | store mutation + visible control | remove one draft without modifying source/index |
 
 Drafts are local data. Creating, editing, selecting or deleting a local draft performs no network write and never mutates the reviewed file.
@@ -203,8 +203,8 @@ The GitHub adapter exposes no merge, reset, clean, force-push or release command
 | PR/issue → worktree intent | `GithubPanel.test.tsx`, `NewWorkspaceDialog.test.tsx`, `reviewLoop.test.ts` | load an issue/PR from the selected repository, inspect prefilled `review/issue-N` / `review/pr-N` and click Create |
 | Isolation and scope | Rust `git.rs` worktree tests, typed shell workflow | verify a sibling worktree is created; source reference is attached only to new worktree |
 | Review → fix → refresh → re-review | `ChangesReview.test.tsx`, `workbench.test.ts` | mark fix, edit file externally, click Refresh and re-review, reload diff and mark reviewed |
-| Stale open Diff | `ChangesReview.test.tsx` | keep Monaco open, edit tracked content, Refresh; old editor is invalidated until reloaded |
-| HEAD change / stale draft | `workbench.test.ts` | save draft, create new commit, Refresh; previous active draft becomes stale |
+| Stale open Diff | `ChangesReview.test.tsx` | keep Monaco open, edit tracked content, wait for automatic refresh; old editor is invalidated until reloaded |
+| HEAD change / stale draft | `workbench.test.ts` | save draft, create new commit, wait for automatic refresh; previous active draft becomes stale |
 | PR head/base relation | `reviewLoop.test.ts`, `GithubPanel.test.tsx`, Rust GitHub parse fixture | HEAD at PR base shows `At PR base` and posting disabled; HEAD at PR head allows only eligible draft |
 | Offline/repository mismatch | existing GithubPanel/Rust guard tests | no `gh`: Changes and drafts still work; cross-repo URL is rejected |
 | Mutations | existing explicit comment confirmation + native Git guards | creating worktree and posting comment need separate deliberate actions; no merge/reset/force push |
@@ -244,7 +244,7 @@ Windows `cmd.exe` wrapper, plus a static guard against unreviewed native
 2. Add/select a Git repository and keep VirtualLab open. Confirm there are no
    recurring console windows during initial Git status/worktree/log inspection.
 3. Modify a tracked file in an external editor and verify filesystem refresh
-   works **without** a console flash; click Refresh repeatedly.
+   works **without** a console flash; edit files and change Git metadata repeatedly to trigger automatic refresh.
 4. Open GitHub context (with and without `gh` on PATH), select Changes and
    reload diff; verify background Git/GitHub probes show no console windows.
 5. Execute an approved structured Run profile and (when configured) native

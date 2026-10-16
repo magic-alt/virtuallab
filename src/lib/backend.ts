@@ -98,7 +98,7 @@ export async function deleteLocalBranchAfterConfirmation(
   const confirmed = await confirm(
     `Delete the LOCAL branch "${branch}"?\n\n` +
       "This does not delete a branch on GitHub. Git will refuse to delete a branch with unmerged commits. " +
-      "Stale origin branches are removed with Fetch + prune.",
+      "Stale origin branches are removed with Fetch.",
     {
       title: "Delete local Git branch",
       kind: "warning",

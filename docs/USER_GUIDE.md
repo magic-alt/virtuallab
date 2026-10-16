@@ -18,7 +18,7 @@ VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元�
 | Local repositories | **Add repository** 导入现有本地 Git 项目 | 需要桌面运行时 |
 | Workspace lanes | 创建、导航 Git worktree | 工作目录互相独立 |
 | Git branches | 切换与删除 local/origin 分支 | 不可绕过分支保护 |
-| 工作区头部 | HEAD、remote、dirty；Open in IDE、Fetch + prune / Pull / Refresh | 可直接用外部编辑器打开当前 Worktree；Pull 仅快进 |
+| 工作区头部 | HEAD、remote、dirty；Open in IDE、Fetch / Pull；Git 状态自动刷新 | 可直接用外部编辑器打开当前 Worktree；Pull 仅快进 |
 | 功能标签 | Overview、Changes、GitHub、Agents、Terminal、Run、Checks、History | 按当前 worktree 执行；文档不在标签栏中 |
 | 底部状态栏 | 本地执行边界、程序版本 | 不代替正式验收记录 |
 
@@ -60,7 +60,7 @@ npm run tauri:dev
 
 > **提醒**：本机执行的构建脚本和 Agent 可能拥有本地系统权限。不要把导入仓库理解为项目安全认证；首次运行前需要审查构建脚本与依赖。
 
-工作区采用**静默增量刷新**：Terminal / Coding Agent 持续修改源码时，只更新工作区的文件修改状态和 Changes 数量，不会让左侧 Git branches 列表反复进入 Loading 或使操作按钮闪烁。执行 `git add` 后会更新暂存状态；通过 Terminal 执行提交、创建分支、切换分支等 Git 元数据操作时，才会更新完整分支与 Worktree 列表。持续写入会自动合并刷新请求，手动点击 **Refresh** 仍可强制重新检查全部 Git 信息。
+工作区采用**静默增量刷新**：Terminal / Coding Agent 持续修改源码时，只更新工作区的文件修改状态和 Changes 数量，不会让左侧 Git branches 列表反复进入 Loading 或使操作按钮闪烁。执行 `git add` 后会更新暂存状态；通过 Terminal 执行提交、创建分支、切换分支等 Git 元数据操作时，才会更新完整分支与 Worktree 列表。持续写入会自动合并刷新请求。工作区头部不再提供手动 Refresh 按钮；文件修改、Git 元数据变更和应用内 Git 操作都会自动刷新对应状态。
 
 ## 03 · Git Worktree 与分支管理
 
@@ -96,7 +96,7 @@ git status --short
 3. 如果选择 Auto-detect，VirtualLab 首先识别 `VISUAL` / `EDITOR` 指向的受支持 IDE；否则按 Zed → VS Code → Cursor 查找可用的应用。Windows 上会额外检查标准安装位置（包括 Zed 专用的 `%LOCALAPPDATA%\\Programs\\Zed\\bin\\zed.exe`），macOS 也检查常用 .app CLI 位置。
 4. 编辑器会把**选中的整个 Worktree 目录**作为单独项目窗口打开（Zed `--new`、VS Code/Cursor `--new-window`）。在另一个 Worktree 中检出的同名项目仍使用自己的路径。文件管理器 **Open folder** 与 **Open in IDE** 是两个不同的操作。
 
-**分支对应目录的边界：** Git branch 本身只是提交引用。没有被 Worktree 检出的 branch 并不存在专属工程目录，因此不会显示“直接在 IDE 打开”操作。先检出/创建 Worktree 再打开。该按钮不执行 Git checkout、Stash、Commit 或任何文件复制，也不会关闭已有编辑器或终端。外部 IDE 的修改仍由 VirtualLab 的文件监听器检测，可在 Changes / Refresh 中查看。
+**分支对应目录的边界：** Git branch 本身只是提交引用。没有被 Worktree 检出的 branch 并不存在专属工程目录，因此不会显示“直接在 IDE 打开”操作。先检出/创建 Worktree 再打开。该按钮不执行 Git checkout、Stash、Commit 或任何文件复制，也不会关闭已有编辑器或终端。外部 IDE 的修改仍由 VirtualLab 的文件监听器检测，Changes 会自动更新文件修改状态。
 
 **常见问题：** 若提示找不到编辑器，请安装对应 IDE，或将其 CLI 加入 PATH。Windows 的“文件夹默认打开方式”往往是资源管理器，并不是代码编辑器，因此 Auto-detect 依据受支持的编辑器环境变量及可执行文件，而不是使用系统的文件夹关联来冒充 IDE。浏览器预览模式不支持原生启动。
 
@@ -107,7 +107,7 @@ git status --short
 | Switch | 本地分支切换，若被另一 worktree 占用则导航到该 worktree | 未跟踪文件冲突时 Git 可拒绝 |
 | Delete local | 删除未占用且符合 Git 约束的本地分支 | 需确认；保护 main/master、占用分支 |
 | Delete origin | 删除 origin 远端分支 | 独立确认；保护远端默认分支；不删本地分支 |
-| Fetch + prune | 同步远端跟踪引用、清理失效 tracking refs | 不合并、不重置工作区文件 |
+| Fetch（默认带 prune） | 同步远端跟踪引用、清理失效 tracking refs | 不合并、不重置工作区文件 |
 | Pull | 快进更新当前分支 | 不执行 merge/reset |
 
 **macOS 上点击 Delete origin 出现“git-credential-osxkeychain”密码弹窗？** 该弹窗要求的是 Mac 登录钥匙串密码，不是 GitHub 密码。原来的后台 Git push/ls-remote/fetch 可能继承钥匙串凭据助手；更新后的 macOS 桌面版在 GitHub HTTPS origin 上改用 `gh auth git-credential`，并禁用后台交互式认证弹窗。首先在 macOS **终端**完成一次 GitHub CLI 授权：
@@ -119,7 +119,7 @@ gh auth status -h github.com
 git remote -v
 ~~~
 
-如果 `gh` 没有安装或授权，VirtualLab 会拒绝删除并提示修复步骤，不会在后台反复弹出密码窗口。确认 GitHub 账号对 origin 仓库有删除分支权限；默认分支和受保护分支依然不能删除。**Delete origin 是服务端删除，区别于仅删除本地远端跟踪引用的 Fetch + prune。** 该配置只影响 VirtualLab 发起的 GitHub HTTPS 后台操作，不修改全局 Git 配置，不会把令牌写入仓库或命令行参数。SSH 等其他 origin 继续使用 Git 原有认证方式。
+如果 `gh` 没有安装或授权，VirtualLab 会拒绝删除并提示修复步骤，不会在后台反复弹出密码窗口。确认 GitHub 账号对 origin 仓库有删除分支权限；默认分支和受保护分支依然不能删除。**Delete origin 是服务端删除，区别于仅删除本地远端跟踪引用的 Fetch。** 该配置只影响 VirtualLab 发起的 GitHub HTTPS 后台操作，不修改全局 Git 配置，不会把令牌写入仓库或命令行参数。SSH 等其他 origin 继续使用 Git 原有认证方式。
 
 ### 本地修改：撤销、Stash 与安全 Pull
 
@@ -129,7 +129,7 @@ git remote -v
 - **Discard all tracked… / Discard selected tracked…**：将全部或选定**已跟踪**文件的暂存及未暂存修改恢复到当前 HEAD；新增到暂存区、但 HEAD 中不存在的文件可能被删除。**不可撤销**。默认不会清理任何 untracked 文件。
 - **Delete selected untracked…**：先从 Worktree 文件列表选择一个未跟踪文件或目录，再点击此按钮；包含目录内非忽略文件的永久删除必须通过 Tauri 原生确认。不会对整个仓库执行无范围限制的 `git clean`，更不会使用 `git clean -x`。
 
-所有操作先显示当前 worktree 路径和风险说明。用户取消或原生确认不可用时不执行；Rust 后端重新核对仓库注册 worktree、分支、HEAD、Git status 和选中项，发现页面已过时会拒绝并提示 Refresh。建议在撤销 KiCad 原理图改动前优先 Stash 或提交，避免丢失未同步的绘图内容。
+所有操作先显示当前 worktree 路径和风险说明。用户取消或原生确认不可用时不执行；Rust 后端重新核对仓库注册 worktree、分支、HEAD、Git status 和选中项，发现页面已过时会拒绝操作；等待状态自动更新后，重新检查并确认。建议在撤销 KiCad 原理图改动前优先 Stash 或提交，避免丢失未同步的绘图内容。
 
 **Pull 规则**：已跟踪文件存在 staged/unstaged 修改时仍禁用快进 Pull；仅有未跟踪文件（例如 `hardware/.history/`）时允许尝试快进，Git 在远端文件与未跟踪文件发生冲突时会安全拒绝并保留本地内容。分支切换同样不会强制覆盖未跟踪文件。
 
@@ -319,7 +319,7 @@ PR/Issue 可用于创建预填的 Review Worktree，但**不会自动检出远�
 | Keil 不能编译 | Windows MDK、UV4.exe 安装位置、真实 uvprojx |
 | 分支切换失败 | 其他 Worktree 占用、未跟踪文件碰撞、脏状态 |
 | 本地 / origin 删除不可操作 | 是否受保护或仍被检出；远端删除需要独立确认 |
-| origin 旧分支残留 | Fetch + prune 更新跟踪信息 |
+| origin 旧分支残留 | Fetch 更新跟踪信息 |
 | GitHub 不可用 | gh auth status、origin、网络；不影响本地审阅 |
 | Draft stale | HEAD 改变，应重新加载 Diff 与评论 |
 | Run Passed 但无证据 | Run 不是 Verification evidence 写入器 |
