@@ -41,7 +41,7 @@ use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
 };
-use git::{create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, open_workspace_directory, remove_worktree};
+use git::{create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, inspect_worktree_status, open_workspace_directory, remove_worktree};
 use github::{github_capabilities, github_context, github_list_pull_requests, github_merge_pull_request, github_mark_ready_for_review, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
 use verification::{verification_cancel,verification_import_artifact,verification_run,VerificationManager};
@@ -71,6 +71,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_build::app_build_info,
             inspect_repository,
+            inspect_worktree_status,
             open_workspace_directory,
             git_diff,
             git_switch_branch,
