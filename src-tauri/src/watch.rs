@@ -1,6 +1,7 @@
 use crate::execution::WorkbenchEvent;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::path::Path;
 use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -56,7 +57,10 @@ fn watch_start_blocking(
     let app_for_events = app.clone();
     let id_for_events = id.clone();
     let slots = state.watchers.clone();
-    let last_emit = Arc::new(Mutex::new(None::<Instant>));
+    let git_directories = resolve_git_directories(Path::new(&path));
+    // Use separate rate limits for source files, the Git index, and refs.
+    let last_emit = Arc::new(Mutex::new(HashMap::<&'static str, Instant>::new()));
+    let metadata_for_events = git_directories.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<notify::Event>| {
             if !slots.lock().map(|slots| slots.get(&id_for_events)
@@ -71,7 +75,19 @@ fn watch_start_blocking(
                 return;
             }
 
-            let Some(changed) = event.paths.into_iter().find(|path| !is_ignored_path(path)) else {
+            // Watch Git metadata separately from source edits: `.git/index`
+            // changes status, while HEAD/refs/worktrees change the inventory.
+            // Git logs, lock files and objects must not trigger rescans.
+            let mut relevant = event.paths.into_iter()
+                .filter_map(|path| classify_watch_path(&path, &metadata_for_events)
+                    .map(|kind| (kind, path)))
+                .collect::<Vec<_>>();
+            relevant.sort_by_key(|(kind, _)| match *kind {
+                "git.changed" => 0,
+                "git.status_changed" => 1,
+                _ => 2,
+            });
+            let Some((event_type, changed)) = relevant.into_iter().next() else {
                 return;
             };
 
@@ -79,8 +95,8 @@ fn watch_start_blocking(
             let should_emit = last_emit
                 .lock()
                 .map(|mut last| {
-                    if emit_due(*last, now) {
-                        *last = Some(now);
+                    if emit_due(last.get(event_type).copied(), now) {
+                        last.insert(event_type, now);
                         true
                     } else {
                         false
@@ -91,7 +107,7 @@ fn watch_start_blocking(
             if should_emit {
                 let _ = app_for_events.emit(
                     "workbench://event",
-                    WorkbenchEvent::new("fs.changed", id_for_events.clone())
+                    WorkbenchEvent::new(event_type, id_for_events.clone())
                         .path(changed.to_string_lossy().to_string()),
                 );
             }
@@ -103,6 +119,26 @@ fn watch_start_blocking(
     watcher
         .watch(Path::new(&path), RecursiveMode::Recursive)
         .map_err(|error| format!("Failed to watch workspace: {error}"))?;
+
+    // Linked worktrees keep their real HEAD/index and shared branch refs
+    // outside the workspace. Watch only relevant Git folders, never the
+    // objects directory recursively.
+    let mut watched = HashSet::new();
+    for directory in &git_directories {
+        let targets = [
+            (directory.to_path_buf(), RecursiveMode::NonRecursive),
+            (directory.join("refs"), RecursiveMode::Recursive),
+            (directory.join("worktrees"), RecursiveMode::NonRecursive),
+        ];
+        for (target, mode) in targets {
+            if !target.is_dir() || target.starts_with(Path::new(&path)) ||
+                !watched.insert(target.clone()) {
+                continue;
+            }
+            watcher.watch(&target, mode)
+                .map_err(|error| format!("Failed to watch Git metadata at {}: {error}", target.display()))?;
+        }
+    }
 
     if !install_watcher(&state, &id, generation, watcher)? { return Ok(()); }
 
@@ -142,6 +178,62 @@ fn should_refresh_for_event(kind: &EventKind) -> bool {
 fn emit_due(last: Option<Instant>, now: Instant) -> bool {
     last.map(|instant| now.saturating_duration_since(instant) >= WATCH_EMIT_MIN_INTERVAL)
         .unwrap_or(true)
+}
+
+/// A linked worktree contains a .git pointer instead of its own Git directory.
+/// Its refs may also live in a distinct shared `commondir`.
+fn resolve_git_directories(worktree: &Path) -> Vec<PathBuf> {
+    let dotgit = worktree.join(".git");
+    let git_dir = if dotgit.is_dir() {
+        dotgit
+    } else {
+        let Ok(pointer) = std::fs::read_to_string(&dotgit) else { return Vec::new(); };
+        let Some(target) = pointer.lines().find_map(|line| line.strip_prefix("gitdir: ")) else {
+            return Vec::new();
+        };
+        let target = Path::new(target.trim());
+        let path = if target.is_absolute() { target.to_path_buf() } else { worktree.join(target) };
+        path.canonicalize().unwrap_or(path)
+    };
+    if !git_dir.is_dir() { return Vec::new(); }
+
+    let mut roots = vec![git_dir.clone()];
+    if let Ok(text) = std::fs::read_to_string(git_dir.join("commondir")) {
+        let relative = Path::new(text.trim());
+        let shared = if relative.is_absolute() {
+            relative.to_path_buf()
+        } else {
+            git_dir.join(relative)
+        };
+        let shared = shared.canonicalize().unwrap_or(shared);
+        if shared.is_dir() && shared != git_dir { roots.push(shared); }
+    }
+    roots
+}
+
+fn git_metadata_event(relative: &Path) -> Option<&'static str> {
+    let parts = relative.components().filter_map(|part| match part {
+        std::path::Component::Normal(name) => name.to_str(),
+        _ => None,
+    }).collect::<Vec<_>>();
+    if parts.last().is_some_and(|name| name.ends_with(".lock")) { return None; }
+    match parts.as_slice() {
+        ["index"] | ["worktrees", _, "index"] => Some("git.status_changed"),
+        ["HEAD"] | ["packed-refs"] | ["config"] |
+        ["refs", "heads", ..] | ["refs", "remotes", ..] |
+        ["worktrees"] | ["worktrees", _] | ["worktrees", _, "HEAD"] |
+        ["worktrees", _, "gitdir"] | ["worktrees", _, "commondir"] => Some("git.changed"),
+        _ => None,
+    }
+}
+
+fn classify_watch_path(path: &Path, git_directories: &[PathBuf]) -> Option<&'static str> {
+    for dir in git_directories {
+        if let Ok(relative) = path.strip_prefix(dir) {
+            return git_metadata_event(relative);
+        }
+    }
+    if is_ignored_path(path) { None } else { Some("fs.changed") }
 }
 
 fn is_ignored_path(path: &Path) -> bool {
@@ -196,6 +288,25 @@ mod tests {
         assert!(should_refresh_for_event(&EventKind::Modify(ModifyKind::Any)));
         assert!(should_refresh_for_event(&EventKind::Create(notify::event::CreateKind::Any)));
         assert!(should_refresh_for_event(&EventKind::Remove(notify::event::RemoveKind::Any)));
+    }
+
+    #[test]
+    fn git_metadata_events_are_classified_without_git_status_feedback() {
+        let git = PathBuf::from("/repo/.git");
+        let directories = vec![git.clone()];
+        let classify = |relative: &str| classify_watch_path(&git.join(relative), &directories);
+        assert_eq!(classify("HEAD"), Some("git.changed"));
+        assert_eq!(classify("refs/heads/main"), Some("git.changed"));
+        assert_eq!(classify("refs/remotes/origin/feat/a"), Some("git.changed"));
+        assert_eq!(classify("packed-refs"), Some("git.changed"));
+        assert_eq!(classify("worktrees/branch-a/HEAD"), Some("git.changed"));
+        assert_eq!(classify("index"), Some("git.status_changed"));
+        assert_eq!(classify("worktrees/branch-a/index"), Some("git.status_changed"));
+        assert_eq!(classify("index.lock"), None);
+        assert_eq!(classify("objects/aa/1234"), None);
+        assert_eq!(classify("logs/HEAD"), None);
+        assert_eq!(classify_watch_path(Path::new("/repo/src/main.rs"), &directories), Some("fs.changed"));
+        assert_eq!(classify_watch_path(Path::new("/repo/dist/bundle.js"), &directories), None);
     }
 
     #[test]
