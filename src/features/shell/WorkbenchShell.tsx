@@ -766,7 +766,7 @@ export function WorkbenchShell() {
           onSelect={selectRepository}
           onRemove={(id) => {
             const repository = useWorkbenchStore.getState().repositories.find((item) => item.id === id);
-            if (repository) useTaskNotifications.getState().discardWorkspace(repository.path);
+            if (repository) useTaskNotifications.getState().discardRepository(repository.path);
             removeRepository(id);
           }}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}

@@ -65,6 +65,7 @@ export function TerminalWorkspace({
   const activeIdRef = useRef(activeId);
   const parsers = useRef(new Map<string, TerminalAlertParser>());
   const lastBellAt = useRef(new Map<string, number>());
+  const lastOsc = useRef(new Map<string, { message: string; at: number }>());
   const alertSequence = useRef(0);
   const target = useTaskNotifications((state) => state.terminalTarget);
   const consumeTarget = useTaskNotifications((state) => state.consumeTerminalTarget);
@@ -93,7 +94,7 @@ export function TerminalWorkspace({
           const session = sessionsRef.current.find((item) => item.id === payload.id);
           if (!session) return;
           const parser = parsers.current.get(payload.id);
-          if (parser) {
+          if (parser && session.status !== "stopped" && session.status !== "error") {
             // PTY bytes are kept intact for xterm; only explicit control signals are
             // inspected. A quiet/still-running CLI is never considered complete.
             for (const signal of parser.feed(payload.data)) {
@@ -112,6 +113,11 @@ export function TerminalWorkspace({
                   severity: "attention",
                 }, focused);
               } else {
+                // Some CLIs replay their last notification on view changes.
+                // Suppress immediate identical repeats, but allow new turns later.
+                const previous = lastOsc.current.get(payload.id);
+                if (previous?.message === signal.message && now - previous.at < 5000) continue;
+                lastOsc.current.set(payload.id, { message: signal.message, at: now });
                 const kind = session.monitoredAgent ? classifyOsc9(signal.message) : "attention";
                 publishTaskNotice({
                   id: "terminal:" + payload.id + ":osc9:" + (++alertSequence.current),
@@ -201,6 +207,7 @@ export function TerminalWorkspace({
     pending.current.clear();
     parsers.current.clear();
     lastBellAt.current.clear();
+    lastOsc.current.clear();
     setSessions([]);
     setActiveId(null);
     setError(null);
@@ -265,6 +272,7 @@ export function TerminalWorkspace({
       pending.current.delete(id);
       parsers.current.delete(id);
       lastBellAt.current.delete(id);
+      lastOsc.current.delete(id);
       setSessions(next);
       setActiveId((current) => current === id ? next.at(-1)?.id ?? null : current);
     } catch (cause) { setError(String(cause)); }

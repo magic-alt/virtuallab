@@ -5,6 +5,8 @@ import { TerminalWorkspace } from "./TerminalWorkspace";
 import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { setTerminalFontSize } from "./terminalAppearance";
+import { useTaskNotifications } from "@/stores/taskNotifications";
+import { MONITORED_CODEX_COMMAND } from "@/lib/terminalAlerts";
 
 const backend = vi.hoisted(() => ({
   isDesktopRuntime: vi.fn(() => true),
@@ -12,6 +14,7 @@ const backend = vi.hoisted(() => ({
   terminalStop: vi.fn().mockResolvedValue(undefined),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),
+  desktopNotify: vi.fn().mockResolvedValue(undefined),
 }));
 
 const events = vi.hoisted(() => ({
@@ -82,6 +85,7 @@ beforeEach(() => {
   xterm.fits.length = 0;
   for (const method of Object.values(backend)) method.mockReset().mockResolvedValue(undefined);
   backend.isDesktopRuntime.mockReset().mockReturnValue(true);
+  useTaskNotifications.setState({ notices: [], desktopEnabled: true, desktopError: null, terminalTarget: null });
 });
 
 async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
@@ -93,6 +97,37 @@ async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("TerminalWorkspace native PTY lifecycle", () => {
+  it("launches monitored Codex with scoped CLI flags and alerts on completed turns in a hidden terminal", async () => {
+    const user = userEvent.setup();
+    render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start Codex with alerts" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Start Codex with alerts" }));
+    await waitFor(() => expect(backend.terminalSpawn).toHaveBeenCalledTimes(1));
+    const id = backend.terminalSpawn.mock.calls[0][0];
+    await waitFor(() => expect(backend.terminalWrite).toHaveBeenCalledWith(
+      id, new TextEncoder().encode(MONITORED_CODEX_COMMAND),
+    ));
+    act(() => {
+      events.callbacks["terminal://output"]({ payload: {
+        id, data: Array.from(new TextEncoder().encode("\x1b]9;Changes implemented\x07")),
+      } });
+    });
+    expect(useTaskNotifications.getState().notices[0].title).toBe("Codex task completed");
+    await waitFor(() => expect(backend.desktopNotify).toHaveBeenCalledTimes(1));
+    expect(backend.desktopNotify.mock.calls[0].join(" ")).not.toContain("Changes implemented");
+  });
+
+  it("treats a regular BEL as attention, never proof of a completed task", async () => {
+    const user = userEvent.setup();
+    render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} />);
+    const id = await startTerminal(user);
+    act(() => {
+      events.callbacks["terminal://output"]({ payload: { id, data: [7] } });
+    });
+    expect(useTaskNotifications.getState().notices[0].severity).toBe("attention");
+    expect(useTaskNotifications.getState().notices[0].title).toBe("Terminal needs attention");
+  });
+
   it("starts with legible text and zooms existing xterm buffers without respawning PTYs", async () => {
     const user = userEvent.setup();
     render(<TerminalWorkspace cwd="D:/workspace" enabled />);

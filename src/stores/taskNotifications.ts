@@ -25,6 +25,7 @@ type NotificationState = {
   markRead: (id: string) => void;
   clear: () => void;
   discardWorkspace: (workspaceRoot: string) => void;
+  discardRepository: (repositoryRoot: string) => void;
   setDesktopEnabled: (enabled: boolean) => void;
   setDesktopError: (error: string | null) => void;
   focusTerminal: (workspaceRoot: string, id: string) => void;
@@ -54,6 +55,13 @@ export const useTaskNotifications = create<NotificationState>()((set, get) => ({
   discardWorkspace: (path) => set((state) => ({
     notices: state.notices.filter((item) => workspaceKey(item.workspaceRoot) !== workspaceKey(path)),
   })),
+  discardRepository: (path) => set((state) => {
+    const key = workspaceKey(path);
+    return { notices: state.notices.filter((item) => {
+      const workspace = workspaceKey(item.workspaceRoot);
+      return workspace !== key && !workspace.startsWith(key + "/");
+    }) };
+  }),
   setDesktopEnabled: (enabled) => {
     try { window.localStorage.setItem(PREFERENCE, enabled ? "on" : "off"); }
     catch { /* in-memory preference still works */ }
