@@ -1,6 +1,7 @@
 import {
   Cloud,
   CloudOff,
+  Code2,
   FolderOpen,
   GitBranch,
   RefreshCw,
@@ -9,6 +10,7 @@ import {
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { compactPath } from "@/lib/utils";
+import { EXTERNAL_EDITORS, editorLabel, type ExternalEditor } from "@/lib/externalEditor";
 import type { RepositorySnapshot } from "@/types/workbench";
 
 interface Props {
@@ -18,6 +20,9 @@ interface Props {
   gitBusy: boolean;
   onRefresh: () => void;
   onOpenFolder: () => void;
+  editor: ExternalEditor;
+  onEditorChange: (editor: ExternalEditor) => void;
+  onOpenEditor: () => void;
   onFetch: () => void;
   onPull: () => void;
 }
@@ -29,6 +34,9 @@ export function WorkspaceHeader({
   gitBusy,
   onRefresh,
   onOpenFolder,
+  editor,
+  onEditorChange,
+  onOpenEditor,
   onFetch,
   onPull,
 }: Props) {
@@ -82,6 +90,30 @@ export function WorkspaceHeader({
             <FolderOpen size={13} />
             Open folder
           </Button>
+          <div className="flex min-w-0 items-center gap-1">
+            <Button
+              disabled={isPreview || loading}
+              onClick={onOpenEditor}
+              variant="outline"
+              size="sm"
+              title="Open the selected branch/worktree directory as a separate IDE project window"
+            >
+              <Code2 size={13} />
+              Open in {editor === "auto" ? "IDE" : editorLabel(editor)}
+            </Button>
+            <select
+              aria-label="Preferred editor"
+              title="Choose an IDE for opening repository and worktree folders; this choice is remembered"
+              className="h-8 min-w-0 max-w-[104px] rounded-md border border-white/15 bg-[#161b22] px-1 text-[11px] text-slate-300 outline-none focus:border-orange-400/60 disabled:opacity-40"
+              value={editor}
+              disabled={isPreview || loading}
+              onChange={(event) => onEditorChange(event.target.value as ExternalEditor)}
+            >
+              {EXTERNAL_EDITORS.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
+          </div>
           <Button
             disabled={isPreview || loading || gitBusy || !snapshot.remoteUrl}
             onClick={onFetch}
