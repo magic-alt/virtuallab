@@ -74,12 +74,12 @@ function status(next: RepositorySnapshot): WorktreeStatus {
   return { root, currentBranch, headSha, dirtyCount, stagedCount, unstagedCount, untrackedCount, changes };
 }
 
-async function changed() {
+async function changed(eventType = "fs.changed") {
   await waitFor(() => expect(harness.watchStart).toHaveBeenCalled());
   await waitFor(() => expect(harness.listeners.has("workbench://event")).toBe(true));
   const id = harness.watchStart.mock.lastCall?.[0] as string;
   act(() => harness.listeners.get("workbench://event")?.({
-    payload: { id, eventType: "fs.changed" },
+    payload: { id, eventType },
   }));
 }
 
@@ -150,6 +150,27 @@ describe("workbench quiet filesystem refresh", () => {
     expect(button).toBeEnabled();
     await act(async () => { completeInspection(snapshot(primary, "main", "2222222222")); });
     await waitFor(() => expect(button).toHaveTextContent("active"));
+    expect(harness.watchStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates the branch inventory after a terminal Git ref change without a loading flash", async () => {
+    const fromCli = "feat/from-cli";
+    harness.inspect.mockResolvedValueOnce(snapshot()).mockImplementationOnce(async () => ({
+      ...snapshot(),
+      branches: [...snapshot().branches, {
+        name: fromCli, local: true, remote: false, worktreePath: null,
+      }],
+    }));
+    render(<WorkbenchShell />);
+    const stable = await screen.findByRole("button", { name: "Switch to main" });
+    await waitFor(() => expect(stable).toBeEnabled());
+
+    await changed("git.changed");
+    await changed("git.changed");
+    await waitFor(() => expect(harness.inspect).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    expect(await screen.findByRole("button", { name: `Switch to ${fromCli}` })).toBeEnabled();
+    expect(harness.inspectStatus).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Switch to main" })).toBe(stable);
     expect(harness.watchStart).toHaveBeenCalledTimes(1);
   });
 
