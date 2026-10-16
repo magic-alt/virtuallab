@@ -47,10 +47,12 @@ export function TerminalWorkspace({
   cwd,
   enabled,
   visible = true,
+  repositoryId = null,
 }: {
   cwd: string;
   enabled: boolean;
   visible?: boolean;
+  repositoryId?: string | null;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -107,7 +109,7 @@ export function TerminalWorkspace({
                 lastBellAt.current.set(payload.id, now);
                 publishTaskNotice({
                   id: "terminal:" + payload.id + ":bell:" + (++alertSequence.current),
-                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd,
+                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd, repositoryId,
                   title: "Terminal needs attention",
                   detail: session.title + " sent an alert. Open Terminal to review.",
                   severity: "attention",
@@ -121,7 +123,7 @@ export function TerminalWorkspace({
                 const kind = session.monitoredAgent ? classifyOsc9(signal.message) : "attention";
                 publishTaskNotice({
                   id: "terminal:" + payload.id + ":osc9:" + (++alertSequence.current),
-                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd,
+                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd, repositoryId,
                   title: session.monitoredAgent === "codex"
                     ? (kind === "complete" ? "Codex task completed" : "Codex needs attention")
                     : "Terminal notification",

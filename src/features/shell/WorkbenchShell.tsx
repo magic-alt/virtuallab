@@ -677,9 +677,17 @@ export function WorkbenchShell() {
 
   const navigateToNotice = (notice: TaskNotice) => {
     const pathKey = workspaceKey(notice.workspaceRoot);
-    const repository = [...useWorkbenchStore.getState().repositories]
-      .filter((item) => pathKey === workspaceKey(item.path) ||
-        pathKey.startsWith(workspaceKey(item.path) + "/"))
+    const state = useWorkbenchStore.getState();
+    const repository = (notice.repositoryId
+      ? state.repositories.find((item) => item.id === notice.repositoryId)
+      : null) ?? [...state.repositories]
+      .filter((item) =>
+        pathKey === workspaceKey(item.path) ||
+        pathKey.startsWith(workspaceKey(item.path) + "/") ||
+        (state.workspaceStates[item.id] &&
+          workspaceKey(state.workspaceStates[item.id].activeWorktreePath) === pathKey) ||
+        snapshotCacheRef.current.get(workspaceKey(item.path))?.worktrees.some(
+          (tree) => workspaceKey(tree.path) === pathKey))
       .sort((a, b) => workspaceKey(b.path).length - workspaceKey(a.path).length)[0];
     if (!repository) return; // Workspace was removed; never reopen an unrelated path.
     const destination: WorkspaceTab = notice.source === "terminal" ? "terminal" : "agents";
@@ -766,7 +774,7 @@ export function WorkbenchShell() {
           onSelect={selectRepository}
           onRemove={(id) => {
             const repository = useWorkbenchStore.getState().repositories.find((item) => item.id === id);
-            if (repository) useTaskNotifications.getState().discardRepository(repository.path);
+            if (repository) useTaskNotifications.getState().discardRepository(repository.path, id);
             removeRepository(id);
           }}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}

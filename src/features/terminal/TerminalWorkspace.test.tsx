@@ -99,7 +99,7 @@ async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
 describe("TerminalWorkspace native PTY lifecycle", () => {
   it("launches monitored Codex with scoped CLI flags and alerts on completed turns in a hidden terminal", async () => {
     const user = userEvent.setup();
-    render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} />);
+    render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} repositoryId="repo-owner" />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Start Codex with alerts" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Start Codex with alerts" }));
     await waitFor(() => expect(backend.terminalSpawn).toHaveBeenCalledTimes(1));
@@ -113,6 +113,7 @@ describe("TerminalWorkspace native PTY lifecycle", () => {
       } });
     });
     expect(useTaskNotifications.getState().notices[0].title).toBe("Codex task completed");
+    expect(useTaskNotifications.getState().notices[0].repositoryId).toBe("repo-owner");
     await waitFor(() => expect(backend.desktopNotify).toHaveBeenCalledTimes(1));
     expect(backend.desktopNotify.mock.calls[0].join(" ")).not.toContain("Changes implemented");
   });
