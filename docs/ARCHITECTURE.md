@@ -19,6 +19,27 @@ active repository; it opens an overlay reader without changing the selected
 repository, worktree, tab, or persisted workspace state. A legacy persisted
 `guide` tab is normalized to `overview` while preserving its worktree path.
 
+## Background agent and terminal notification boundary
+
+Task notifications are an application-level observer, not a scheduler or a process
+owner. The per-PTY byte parser recognizes only OSC 9 terminal notifications and
+BEL; OSC 9;4 progress markers are ignored. No text scraping, idle-output timers,
+shell exit heuristics or automatic retries are used. For an opt-in Codex terminal,
+the UI sends fixed Codex CLI config overrides (`tui.notification_method=osc9`,
+`tui.notification_condition=always`) through its already-authorized PTY;
+neither global Codex preferences nor existing shell lifecycle are changed.
+
+Codex app-server/CLI structured turn completion events are consumed once at
+the Workbench level, with turn identity de-duplication. Raw terminal BEL means
+attention only; unmonitored OSC 9 is not classified as successful completion.
+A bounded in-memory Zustand inbox records originating worktree and terminal ID,
+not transcript text. The native `desktop_notify` command passes only generic
+bounded and control-character-validated titles/bodies to the Tauri notification
+plugin. Toasts are suppressed when the source task is already visible and focused;
+they neither steal focus nor block work. Native notification errors fall back
+to the in-app inbox. Routing to an inbox item only navigates to a registered
+repository/worktree and never creates or starts work.
+
 ## External workspace editor boundary
 
 The Workbench header, repository rows, checked-out branch rows and workspace
@@ -107,7 +128,7 @@ Implemented: xterm.js/PTy, structured `workbench://event`, Monaco read-only diff
 
 - Tauri 2
 - Rust 2021
-- Tauri dialog plugin
+- Tauri dialog and notification plugins
 - Git CLI through `std::process::Command`
 - portable-pty for PowerShell/bash sessions
 - notify for workspace change observation
