@@ -1217,7 +1217,7 @@ pub async fn git_local_changes(request: LocalChangesRequest) -> Result<(), Strin
 
 // Native Git mutations deliberately require registered worktrees and preserve
 // uncommitted changes. Pull is always fast-forward-only, never rebase/reset.
-fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<(String, String), String> {
+pub(crate) fn resolve_git_workspace(repository_root: &str, workspace_root: &str) -> Result<(String, String), String> {
     let repository = git_read(repository_root, &["rev-parse", "--show-toplevel"])?
         .trim().to_string();
     let workspace = git_read(workspace_root, &["rev-parse", "--show-toplevel"])?

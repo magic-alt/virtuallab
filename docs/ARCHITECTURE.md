@@ -19,6 +19,28 @@ active repository; it opens an overlay reader without changing the selected
 repository, worktree, tab, or persisted workspace state. A legacy persisted
 `guide` tab is normalized to `overview` while preserving its worktree path.
 
+## External workspace editor boundary
+
+The Workbench header, repository rows, checked-out branch rows and workspace
+lanes expose an explicit **Open in IDE** action, separate from the OS file
+manager action. The preferred editor is a locally persisted enum (Auto/Zed/
+VS Code/Cursor); no executable path or shell command is accepted from the
+frontend. `src/lib/backend.ts` forwards the repository root, selected
+worktree root and editor enum to `open_workspace_in_editor` in
+`src-tauri/src/external_editor.rs`. Rust reuses the registered Git worktree
+validator from `git.rs` before looking up the editor binary and spawning a
+non-interactive OS process with a fixed `--new` / `--new-window` argument
+vector. Zed on Windows must use its `bin/zed.exe` CLI shim, not the GUI
+binary in the installation root. Auto selects only recognized executable
+families from `VISUAL` / `EDITOR`; environment strings are never evaluated
+as shell commands. Path arguments remain distinct, including spaces and
+Unicode. Unsupported/unavailable launchers return actionable errors.
+
+Opening a project does not create a worktree, switch branches, stash changes,
+modify Git state or transfer ownership of a workspace. External editors are
+user-owned processes, not VirtualLab-managed Run/Agent processes; closing or
+removing a worktree in VirtualLab does not terminate external IDE instances.
+
 ## Application build identity
 
 `src-tauri/build.rs` embeds the application source commit, branch, dirty status

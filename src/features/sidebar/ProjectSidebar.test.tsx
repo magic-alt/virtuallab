@@ -25,6 +25,9 @@ function props() {
     onRemove: vi.fn(),
     onOpenRepositoryFolder: vi.fn(),
     onOpenWorkspaceFolder: vi.fn(),
+    onOpenRepositoryEditor: vi.fn(),
+    onOpenWorkspaceEditor: vi.fn(),
+    editor: "zed" as const,
     onNewWorkspace: vi.fn(),
     onSelectWorkspace: vi.fn(),
     onRemoveWorkspace: vi.fn(),
@@ -51,6 +54,8 @@ describe("ProjectSidebar controls", () => {
     expect(p.onSelect).toHaveBeenCalledWith("repo-2");
     await user.click(screen.getByRole("button", { name: "Open repository folder sample-beta" }));
     expect(p.onOpenRepositoryFolder).toHaveBeenCalledWith("D:/Work/sample-beta");
+    await user.click(screen.getByRole("button", { name: "Open repository in Zed sample-beta" }));
+    expect(p.onOpenRepositoryEditor).toHaveBeenCalledWith("D:/Work/sample-beta");
 
     await user.click(screen.getByRole("button", { name: /remove sample-beta/i }));
     expect(p.onRemove).toHaveBeenCalledWith("repo-2");
@@ -62,6 +67,11 @@ describe("ProjectSidebar controls", () => {
     expect(p.onSelectWorkspace).toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /open workspace folder feat\/sample-workspace/i }));
     expect(p.onOpenWorkspaceFolder).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Open worktree in Zed feat/sample-workspace" }));
+    expect(p.onOpenWorkspaceEditor).toHaveBeenCalledWith("/workspace/sample-repo-feature");
+    await user.click(screen.getByRole("button", { name: "Open branch main in Zed" }));
+    expect(p.onOpenWorkspaceEditor).toHaveBeenCalledWith("/workspace/sample-repo");
+    expect(screen.queryByRole("button", { name: "Open branch feat/remote-only in Zed" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
     expect(p.onRemoveWorkspace).toHaveBeenCalled();
@@ -144,6 +154,7 @@ describe("ProjectSidebar controls", () => {
     expect(screen.getByText("sample-beta")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add repository/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Open repository folder sample-beta" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Open repository in Zed sample-beta" })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^new$/i })).toBeDisabled();
     rerender(
       <ProjectSidebar

@@ -7,6 +7,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 ## Features
 
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
+- **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; identify untracked files and directories; save local line comments and track review state.
 - **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
 - **GitHub PR and CI dashboard** — browse open pull requests from any workspace, inspect all GitHub CI checks and failed jobs, review merge readiness, and explicitly confirm a SHA-pinned remote merge (Squash/Merge/Rebase). Existing issue context and review drafts remain supported.

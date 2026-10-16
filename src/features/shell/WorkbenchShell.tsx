@@ -29,6 +29,7 @@ import {
   inspectWorktreeStatus,
   isDesktopRuntime,
   openWorkspaceDirectory,
+  openWorkspaceInEditor,
   removeWorktreeAfterConfirmation,
   resolveLocalChangesAfterConfirmation,
   watchStart,
@@ -36,6 +37,7 @@ import {
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
 import { workspaceKey } from "@/lib/workspaceKey";
+import { readPreferredEditor, savePreferredEditor, type ExternalEditor } from "@/lib/externalEditor";
 import { mergeWorktreeStatus } from "@/lib/worktreeStatus";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import type { AgentEvent } from "@/types/agent";
@@ -93,6 +95,7 @@ export function WorkbenchShell() {
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [preferredEditor, setPreferredEditor] = useState<ExternalEditor>(readPreferredEditor);
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
@@ -624,6 +627,24 @@ export function WorkbenchShell() {
     }
   };
 
+  const chooseEditor = (editor: ExternalEditor) => {
+    savePreferredEditor(editor);
+    setPreferredEditor(editor);
+  };
+
+  const openEditor = async (path: string, repositoryPath: string) => {
+    const repositoryId = useWorkbenchStore.getState().activeRepositoryId;
+    try {
+      await openWorkspaceInEditor(repositoryPath, path, preferredEditor);
+    } catch (err) {
+      // A slow/native failure from an earlier selection must not overwrite the
+      // new repository's errors or status.
+      if (useWorkbenchStore.getState().activeRepositoryId === repositoryId) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    }
+  };
+
   const selectRepository = (id: string) => {
     if (id === activeRepositoryId) return;
     latestSnapshotRequestRef.current = null;
@@ -712,6 +733,11 @@ export function WorkbenchShell() {
           onSelect={selectRepository}
           onRemove={removeRepository}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}
+          editor={preferredEditor}
+          onOpenRepositoryEditor={(path) => void openEditor(path, path)}
+          onOpenWorkspaceEditor={(path) => {
+            if (activeRepository && workspaceReady) void openEditor(path, activeRepository.path);
+          }}
           onOpenWorkspaceFolder={(path) => {
             if (activeRepository && workspaceReady) void openFolder(path, activeRepository.path);
           }}
@@ -746,6 +772,11 @@ export function WorkbenchShell() {
             isPreview={isPreview}
             loading={loading}
             gitBusy={gitBusy}
+            editor={preferredEditor}
+            onEditorChange={chooseEditor}
+            onOpenEditor={() => {
+              if (activeRepository && workspaceReady) void openEditor(snapshot.root, activeRepository.path);
+            }}
             onFetch={() => {
               if (activeRepository) void runGitMutation(() => gitFetchOrigin(activeRepository.path));
             }}

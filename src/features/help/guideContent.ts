@@ -77,7 +77,7 @@ export const guidePages: GuidePage[] = [
         { type: "table", columns: ["区域", "看到什么", "常见操作"], rows: [
           ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
           ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
-          ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Fetch + prune、Pull、Refresh"],
+          ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch + prune、Pull、Refresh"],
           ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
         ] },
@@ -111,6 +111,14 @@ export const guidePages: GuidePage[] = [
         ] },
         { type: "code", label: "理解底层 Git 行为（命令行示例）", language: "bash", content: "git worktree add ../my-project-feature -b feat/drive main\ngit worktree list\ngit status --short" },
         { type: "callout", tone: "warning", title: "删除 Worktree 不等于强制清理文件", text: "应用仅允许确认后移除洁净的非主 Worktree；有未提交修改时 Git 会拒绝。不要把删除工作区当成备份方式。" },
+      ] },
+      { id: "editor", title: "在 Zed / VS Code 中打开整个 Worktree 工程", blocks: [
+        { type: "steps", items: [
+          { title: "确认目标 Worktree", description: "点击左侧 Workspace lanes 选中开发目录；也可直接使用仓库、Worktree 或已检出 branch 旁的代码编辑器图标。" },
+          { title: "选择 IDE", description: "顶部 Preferred editor 选择 Auto-detect、Zed、VS Code 或 Cursor；选择会记住，左侧打开工程图标也沿用它。" },
+          { title: "Open in IDE", description: "把对应 Worktree 的整个本地目录作为独立工程窗口打开。Zed 使用 --new；VS Code 和 Cursor 使用 --new-window。" },
+        ] },
+        { type: "callout", tone: "note", title: "没有检出的分支不能直接打开目录", text: "Git branch 只有引用，没有专属文件夹。请先检出分支或新建 Worktree；Open in IDE 不会自行 checkout、stash 或更改已有文件。找不到编辑器时请安装应用或配置 CLI/PATH；Windows 的 Zed CLI 一般位于 %LOCALAPPDATA%\\Programs\\Zed\\bin\\zed.exe。Auto 依据受支持的 VISUAL/EDITOR 配置和本机安装进行检测，并非使用资源管理器打开文件夹。" },
       ] },
       { id: "remote", title: "切换与管理本地 / origin 分支", blocks: [
         { type: "text", text: "侧边栏把当前分支和 main 优先显示。点击分支：若已由另一 Worktree 占用，会打开对应工作区，而不是强行重复检出。Fetch + prune 仅同步远端引用并清理已消失的 remote-tracking refs；Pull 仅进行快进更新。" },

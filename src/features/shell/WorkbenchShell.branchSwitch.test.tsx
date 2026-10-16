@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   currentBranch: "codex/pr-15",
   inspect: vi.fn(),
   switchBranch: vi.fn(),
+  openEditor: vi.fn(),
   stashChanges: vi.fn(),
   deleteOriginBranch: vi.fn(),
   removeWorktree: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/backend", () => ({
   gitSwitchBranch: harness.switchBranch,
   resolveLocalChangesAfterConfirmation: harness.stashChanges,
   openWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
+  openWorkspaceInEditor: harness.openEditor,
   gitFetchOrigin: vi.fn(),
   gitPullCurrent: vi.fn(),
   deleteLocalBranchAfterConfirmation: vi.fn(),
@@ -111,6 +113,8 @@ describe("workbench branch switching with untracked artifacts", () => {
     harness.currentBranch = "codex/pr-15";
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
+    harness.openEditor.mockReset().mockResolvedValue(undefined);
+    window.localStorage.removeItem('virtuallab-external-editor');
     harness.stashChanges.mockReset().mockResolvedValue(true);
     harness.deleteOriginBranch.mockReset();
     harness.removeWorktree.mockReset();
@@ -127,6 +131,34 @@ describe("workbench branch switching with untracked artifacts", () => {
       activeRepositoryId: "repo-1",
       workspaceStates: {},
     });
+  });
+
+  it("opens selected, linked and repository roots in the chosen IDE without switching Git", async () => {
+    const user = userEvent.setup();
+    harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path));
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open in IDE" })).toBeEnabled());
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Preferred editor" }), "zed");
+    expect(window.localStorage.getItem("virtuallab-external-editor")).toBe("zed");
+    await user.click(screen.getByRole("button", { name: "Open in Zed" }));
+    await waitFor(() => expect(harness.openEditor).toHaveBeenCalledWith(repoRoot, repoRoot, "zed"));
+
+    await user.click(screen.getByRole("button", { name: "Open branch feat/joint17-brake in Zed" }));
+    expect(harness.openEditor).toHaveBeenCalledWith(repoRoot, linkedPath, "zed");
+    await user.click(screen.getByRole("button", { name: "Open repository in Zed virtuallab" }));
+    expect(harness.openEditor).toHaveBeenCalledWith(repoRoot, repoRoot, "zed");
+    expect(harness.switchBranch).not.toHaveBeenCalled();
+  });
+
+  it("reports missing editor binaries without altering repository state", async () => {
+    const user = userEvent.setup();
+    harness.openEditor.mockRejectedValueOnce(new Error("Zed CLI was not found"));
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open in IDE" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Open in IDE" }));
+    expect(await screen.findByText("Zed CLI was not found")).toBeInTheDocument();
+    expect(harness.switchBranch).not.toHaveBeenCalled();
   });
 
   it("opens documentation from the application Help menu, not a workspace tab", async () => {
