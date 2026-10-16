@@ -46,9 +46,9 @@ vi.mock("@/lib/backend", () => ({
 }));
 
 vi.mock("@/features/workspace/WorkspaceContent", () => ({
-  WorkspaceContent: ({ tab, onTabChange }: { tab: string; onTabChange: (tab: "history") => void }) => (
+  WorkspaceContent: ({ tab, onTabChange }: { tab: string; onTabChange: (tab: "changes") => void }) => (
     <div data-testid="workspace-content" data-active-tab={tab}>
-      <button type="button" onClick={() => onTabChange("history")}>History</button>
+      <button type="button" onClick={() => onTabChange("changes")}>Changes</button>
     </div>
   ),
 }));
@@ -180,12 +180,12 @@ describe("workbench branch switching with untracked artifacts", () => {
   it("does not change the workspace tab when opening and closing documentation", async () => {
     const user = userEvent.setup();
     render(<WorkbenchShell />);
-    await user.click(screen.getByRole("button", { name: "History" }));
+    await user.click(screen.getByRole("button", { name: "Changes" }));
     await user.click(screen.getByRole("button", { name: "Help" }));
     await user.click(screen.getByRole("menuitem", { name: /使用文档/ }));
     await user.click(screen.getByRole("button", { name: "关闭文档" }));
-    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeTab).toBe("history");
-    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeTab).toBe("changes");
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "changes");
   });
 
   it("makes documentation available even before adding a repository", async () => {
@@ -398,7 +398,7 @@ describe("workbench branch switching with untracked artifacts", () => {
       workspaceStates: {
         "repo-1": {
           repositoryId: "repo-1", activeWorktreePath: repoRoot,
-          activeTab: "history", updatedAt: 1,
+          activeTab: "changes", updatedAt: 1,
         },
       },
     });
@@ -408,7 +408,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     await user.click(screen.getByRole("button", { name: "Remove workspace" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove workspace" })).not.toBeInTheDocument());
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot);
-    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "history");
+    expect(screen.getByTestId("workspace-content")).toHaveAttribute("data-active-tab", "changes");
   });
 
   it("safely stashes tracked edits before switching, but never auto-applies them to the target branch", async () => {

@@ -174,9 +174,7 @@ export type WorkspaceTab =
   | "github"
   | "agents"
   | "terminal"
-  | "run"
-  | "checks"
-  | "history";
+  | "run";
 
 export interface WorkspacePersistedState {
   repositoryId: string;

@@ -25,7 +25,7 @@ describe("in-app illustrated user guide", () => {
     const article = screen.getByRole("article");
     expect(within(article).getByText("案例 C：Keil MDK 固件")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /下一章/ }));
-    expect(screen.getByRole("heading", { name: "Terminal、Checks 与 History" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Terminal 与工作区状态" })).toBeInTheDocument();
   });
 
   it("shows a recoverable no-results state", async () => {

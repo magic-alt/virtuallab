@@ -102,7 +102,7 @@ function isWorkspaceReviewState(value: unknown): value is WorkspaceReviewState {
 }
 
 const validWorkspaceTabs: readonly WorkspaceTab[] = [
-  "overview", "changes", "github", "agents", "terminal", "run", "checks", "history",
+  "overview", "changes", "github", "agents", "terminal", "run",
 ];
 
 function normalizeWorkspaceTab(value: string): WorkspaceTab {
@@ -121,8 +121,7 @@ function sanitizeWorkspaceStates(value: unknown) {
       .filter(([id, item]) => isWorkspaceState(item) && item.repositoryId === id)
       .map(([id, item]) => {
         const state = item as WorkspacePersistedState;
-        // The old app stored "guide" as a workspace tab. Keep the selected
-        // worktree, but migrate that app-level page to the default workspace tab.
+        // Persist only current workspace tabs; invalid values use Overview.
         return [id, { ...state, activeTab: normalizeWorkspaceTab(state.activeTab) }];
       }),
   ) as Record<string, WorkspacePersistedState>;
@@ -340,7 +339,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     {
       name: "virtuallab-workbench-v2",
       storage: createJSONStorage(() => window.localStorage),
-      version: 6,
+      version: 7,
       migrate: (persistedState) => {
         const saved = persistedState as Partial<WorkbenchState>;
         return {

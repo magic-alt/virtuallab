@@ -78,16 +78,16 @@ export const guidePages: GuidePage[] = [
           ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
           ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
           ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch、Pull；Git 状态自动刷新"],
-          ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run / Checks / History", "在同一工作区切换任务（不包含文档入口）"],
+          ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
         ] },
       ] },
       { id: "tabs", title: "如何选择功能标签", blocks: [
         { type: "cards", items: [
-          { title: "Overview + History", description: "查看工作区拓扑、最近提交和本地状态。" },
+          { title: "Overview", description: "查看工作区拓扑、最近提交和本地状态。" },
           { title: "Changes + GitHub", description: "审阅代码差异，追踪 PR/Issue 上下文；推送评论需单独确认。" },
           { title: "Terminal + Run", description: "交互式 Shell 与结构化可重复构建分别管理，避免混用。" },
-          { title: "Checks + Agents", description: "本地 readiness 检查；按需附加 Coding Agent。" },
+          { title: "Agents", description: "按需附加 Coding Agent，在所选工作区运行任务。" },
         ] },
         { type: "callout", tone: "note", title: "所有工作区共用这本手册", text: "从顶部 Help → 使用文档打开独立阅读界面，不属于工作区标签；关闭后回到原工作区和标签。打开文档不会切换 Git 分支、运行命令、上传代码或更改当前项目。" },
       ] },
@@ -133,26 +133,45 @@ export const guidePages: GuidePage[] = [
   },
   {
     id: "review", category: "核心工作流", icon: "review", title: "Changes 与代码审阅",
-    subtitle: "理解三种 Diff 模式，正确处理行评论与复审。",
-    duration: "约 6 分钟",
+    subtitle: "先看文件与差异，需要时再展开高级审阅和本地修改管理。",
+    duration: "约 8 分钟",
     sections: [
+      { id: "daily", title: "日常查看：选择文件即可", blocks: [
+        { type: "steps", items: [
+          { title: "确认工作区", description: "先在左侧选中目标仓库与 Worktree。Changes 只显示这个工作目录的修改，顶部计数包含未暂存、已暂存和未跟踪条目。" },
+          { title: "选择 Worktree 或 Staged", description: "默认 Worktree 列出未暂存修改和未跟踪条目；Staged 列出已暂存修改。同一文件同时存在两类修改时，需要分别查看。" },
+          { title: "点击文件查看差异", description: "左侧选文件，右侧查看只读差异。Unified 为单栏，Side by side 为左右对照；切换布局不重新读取 Git，也不会修改文件。" },
+          { title: "在编辑器中修改", description: "Changes 不提供编辑、暂存或提交操作。通过 Open in IDE 或 Terminal 修改文件、执行 git add / git commit；后台会自动刷新工作区状态，然后重新选择文件读取最新差异。" },
+        ] },
+        { type: "text", text: "Advanced review（高级审阅）和 Manage local changes（管理本地修改）默认收起；日常查看不需要标记审阅阶段或创建草稿。已有草稿数量会显示在 Advanced review 入口，展开后可查看。" },
+      ] },
       { id: "modes", title: "三种差异视图", blocks: [
         { type: "table", columns: ["模式", "比较对象", "适用场景"], rows: [
           ["Worktree", "工作目录中尚未暂存的修改", "日常迭代、自查"],
           ["Staged", "索引（暂存区）中的修改", "提交前核查"],
-          ["Base", "当前提交与选定 Base ref 的差异", "分支对比与 PR 审阅"],
+          ["Base（Advanced review 内）", "所选基线与 HEAD 的共同祖先到 HEAD 的已提交差异（base...HEAD）", "分支对比与 PR 审阅，不包含本地未提交修改"],
         ] },
-        { type: "text", text: "Changed 文件由原生 Git 读取，Monaco 编辑器提供 Unified（上下）与 Side by side（左右）只读差异视图。文件选择、工作树和基线变化需要及时刷新；二进制或过大的文件可能只有状态提示。" },
+        { type: "text", text: "文件列表由原生 Git 读取。要比较分支，展开 Advanced review，点击 Base，输入存在的本地分支名或提交引用，再点击 Load base files。干净工作区也可以查看已提交的分支差异；关闭高级审阅会从 Base 返回 Worktree。无文件时先确认模式与基线是否正确；二进制文件显示提示，大文件可能截断。" },
         { type: "callout", tone: "note", title: "未跟踪文件 ≠ 完整 Diff", text: "未跟踪文件和目录会显示路径与状态，但不会被当作 Git 已跟踪文件调用差异预览，也不能据此创建行评论。" },
       ] },
       { id: "review-loop", title: "评审闭环：Review → Fix → Re-review", blocks: [
         { type: "steps", items: [
-          { title: "选择目标文件", description: "在 Changes 中选取已跟踪文件，切换 Unified 或 Side by side 检查变更。" },
-          { title: "记录评论草稿", description: "选定行并编写本地 draft。此操作仅存储在本机，不会立即发给 GitHub。" },
-          { title: "修改与刷新", description: "在外部编辑器或终端修复后，使用 Refresh and re-review，加载新的 Diff。" },
-          { title: "确认新的 HEAD", description: "之前 HEAD 上的评论可能变 stale。重新检查后标记 reviewed；需要时再单独确认发布。" },
+          { title: "选择目标文件", description: "展开 Advanced review，在 Changes 中选取已跟踪文件，切换 Unified 或 Side by side 检查变更。" },
+          { title: "记录评论草稿", description: "高级审阅开启时，选定行并编写本地 draft，点击 Save draft。草稿列表位于文件列表下方，可查看或删除；关闭高级审阅不会删除已保存草稿，也不会发给 GitHub。" },
+          { title: "修改与刷新", description: "Mark fix in progress 仅记录本地修复阶段。在外部编辑器或终端修改后，使用 Refresh and re-review 刷新状态，再重新选文件或 Load base files 读取新的差异。" },
+          { title: "确认新的 HEAD", description: "HEAD 变化会使旧草稿变 stale；工作区刷新会清除已打开的差异和行选择，重新加载前不能保存行草稿或 Mark reviewed。重新检查后点击 Mark reviewed 记录本地审阅状态，这不代表测试通过或 GitHub 已批准。" },
         ] },
-        { type: "callout", tone: "warning", title: "避免评论指向旧版本", text: "发布评论须满足同仓库、当前本地 HEAD 与 PR HEAD 匹配且需明确确认。PR 合并属于独立手动操作，必须 CI 全绿且通过 GitHub 合并资格校验。" },
+        { type: "callout", tone: "warning", title: "避免评论指向旧版本", text: "过期草稿不能发布。发布评论须在 GitHub 页单独选择并确认，满足同仓库、当前本地 HEAD 与 PR HEAD 匹配；本地 HEAD 位于 PR Base 并不满足条件。PR 合并属于独立手动操作，必须 CI 全绿且通过 GitHub 合并资格校验。" },
+      ] },
+      { id: "manage", title: "管理本地修改：备份、丢弃与删除", blocks: [
+        { type: "text", text: "需要切换分支或 Pull，但被本地修改阻挡时，展开 Manage local changes。展开本身只显示操作，不会修改仓库。所有操作仍需原生确认；取消不会更改文件，确认后会重新校验工作区状态，状态变化时拒绝执行。" },
+        { type: "table", columns: ["操作", "作用范围", "结果与恢复"], rows: [
+          ["Stash all (safe)", "当前 Worktree 的已跟踪修改和未跟踪文件；不包含被 Git 忽略的文件", "保存到 Git stash 后清理这些本地修改。可在 Terminal 使用 git stash list 查看，git stash apply 恢复；恢复可能有冲突，不会自动恢复。"],
+          ["Discard all tracked…", "当前 Worktree 全部已跟踪文件的暂存和未暂存修改", "恢复到 HEAD，保留未跟踪文件；未提交修改会丢失。"],
+          ["Discard selected tracked…", "先选择的单个已跟踪文件", "同时丢弃该文件的暂存和未暂存修改，即使从 Staged 选中也如此。"],
+          ["Delete selected untracked…", "先在 Worktree 选择的未跟踪文件或目录", "永久删除选中条目；目录内的文件也可能被删除，Git 无法恢复。不会批量清理所有未跟踪文件。"],
+        ] },
+        { type: "callout", tone: "warning", title: "丢弃和删除不是备份", text: "优先使用 Stash 或自行备份。确认前检查所选 Worktree、文件路径和操作范围；Base 视图不提供按文件清理。操作期间或其他 Git 操作进行中，清理按钮禁用。操作完成后，重新选择文件查看最新状态。" },
       ] },
     ],
   },
@@ -191,15 +210,15 @@ export const guidePages: GuidePage[] = [
     ],
   },
   {
-    id: "terminal", category: "核心工作流", icon: "terminal", title: "Terminal、Checks 与 History",
-    subtitle: "交互式命令、结构化执行和本地仓库检查各有适用边界。",
+    id: "terminal", category: "核心工作流", icon: "terminal", title: "Terminal 与工作区状态",
+    subtitle: "交互式命令、结构化执行和 Overview 各有适用边界。",
     duration: "约 4 分钟",
     sections: [
       { id: "pty", title: "Terminal 和 Run 的区别", blocks: [
         { type: "cards", items: [
           { title: "Terminal = 交互式 PTY", description: "适合人工执行 Git、命令行调试及需要输入的工具，支持交互、窗口尺寸变化和 Ctrl+C。" },
           { title: "Run = 可重复的步骤", description: "适合编译、单测、打包及确认过的部署命令，使用 program + args + cwd 结构化启动。" },
-          { title: "Checks = 本地状态汇总", description: "展示已定义的仓库 readiness 状态；不等于完整的生产线签核。" },
+          { title: "Overview = 工作区状态", description: "查看活动分支、工作区修改、Worktree 数量和最近提交。实际构建/测试结果在 Run，远端 CI 在 GitHub。" },
         ] },
         { type: "code", label: "常见工作区检查", language: "bash", content: "git status --short\ngit branch --show-current\ngit log -5 --oneline" },
       ] },
@@ -212,8 +231,8 @@ export const guidePages: GuidePage[] = [
         ] },
         { type: "callout", tone: "warning", title: "响铃不代表任务成功", text: "手动输入 codex 或运行其他 TUI 时，普通 BEL 响铃只产生「需要关注」提醒；只有已启用 OSC 9 的 Codex 提供明确的本轮完成信号。Agents 标签采用结构化 turn 结束事件。静默、终端退出、Git 状态变化均不当作 Agent 成功完成。若系统通知权限被禁用，应用内铃铛仍可显示任务提醒。通知不会发送你的代码、Prompt 或终端日志。" },
       ] },
-      { id: "history", title: "History / Overview", blocks: [
-        { type: "text", text: "Overview 显示工作树是否洁净、活动分支、Worktree 数量和最近提交。History 专门列出近期提交。它们是帮助你确定工作上下文的视图，不会自动修改仓库。" },
+      { id: "overview", title: "Overview 与完整 Git 历史", blocks: [
+        { type: "text", text: "Overview 显示工作树是否洁净、活动分支、Worktree 数量，以及 Recent activity 中最近 6 条提交。它用于快速确认工作上下文，不会自动修改仓库。需要更早记录、作者或分支图时，在 Terminal 执行 git log --oneline --graph --decorate，或使用外部编辑器的 Git 历史功能。" },
         { type: "callout", tone: "note", title: "运行结果的保留限制", text: "Run 的屏幕日志和部分会话状态为本次应用会话内数据；切换视图后不要依赖其作为长期证据。需要可追溯归档时，应使用独立的验证/证据存储流程。" },
       ] },
     ],
@@ -293,10 +312,10 @@ export const guidePages: GuidePage[] = [
       { id: "levels", title: "三种不同的“通过”", blocks: [
         { type: "cards", items: [
           { title: "Run passed", description: "构建或脚本执行结束且退出码符合预期；不代表产物正确或已测试真机。" },
-          { title: "Checks passed", description: "定义好的本地 readiness 条件满足；不等同于完整质量认证。" },
+          { title: "Run 成功 / GitHub CI 通过", description: "仅表示对应任务或 CI 检查成功；不等同于完整质量认证。" },
           { title: "Verification evidence", description: "原生受限执行器可以存储 profile、manifest、stdout/stderr 与 SHA-256 哈希，需使用对应的验证调用方。" },
         ] },
-        { type: "callout", tone: "note", title: "不要误认为已具备全自动 HIL", text: "底层 verification_run 支持受限的 build/unit/evidence 进程门；HIL、soak 和硬件门目前 BLOCKED。界面中的 Run/Checks 并不是硬件 HIL 运行面板。" },
+        { type: "callout", tone: "note", title: "不要误认为已具备全自动 HIL", text: "底层 verification_run 支持受限的 build/unit/evidence 进程门；HIL、soak 和硬件门目前 BLOCKED。界面中的 Run 并不是硬件 HIL 运行面板。" },
       ] },
       { id: "evidence", title: "证据存储目录", blocks: [
         { type: "code", label: "原生 Verification evidence 目录结构", language: "text", content: "<workspace>/.virtuallab/evidence/<run-id>/\n  profile.json\n  manifest.json\n  <gate-id>.stdout.log\n  <gate-id>.stderr.log\n  import-N-<filename>     # optional" },
@@ -340,7 +359,7 @@ export const guidePages: GuidePage[] = [
         { type: "steps", items: [
           { title: "确认 gh 已认证", description: "在终端运行 gh auth status，并保证 origin 是预期的 GitHub 仓库。" },
           { title: "在 GitHub 中选择 PR", description: "记录 PR 信息并显式创建 review worktree；如需 PR head，在外部 Git 操作中自主获取。" },
-          { title: "对齐本地 HEAD", description: "使用 Changes / Base 查看真实差异，写下本地逐行评论草稿。" },
+          { title: "对齐本地 HEAD", description: "使用 Changes → Advanced review → Base 查看真实差异，写下本地逐行评论草稿。" },
           { title: "Refresh and re-review", description: "修改后重新载入差异，确认旧草稿是否 stale。" },
           { title: "人工确认发布", description: "只有同仓库、PR head 校验通过时才选择确认发布评论；不进行自动 merge。" },
         ] },

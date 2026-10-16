@@ -88,12 +88,13 @@ console.log("[ ] Run layout: stream 2000+ short/very long compiler lines at desk
 console.log("[ ] Run layout: scroll the left workflow column separately; resizing the window below 1280px stacks cards and keeps the log height bounded with its own scrollbar.");
 console.log("[ ] Run scrollback: manually scroll the log upward while compilation continues; position stays stable; Latest output restores follow-tail.");
 console.log("[ ] Other scroll boundaries: Terminal scrollback, Changes file list/diff, GitHub CI lists and Agents timeline do not stretch the whole workbench.");
-console.log("[ ] Changes/Checks/History/Overview tabs render and switch correctly.");
+console.log("[ ] Overview/Changes/GitHub/Agents/Terminal/Run tabs render and switch correctly; no separate Checks or History tab.");
 console.log("[ ] Filesystem edits update repository status without manual refresh.");
 console.log("\nV0.3 Phase A diff acceptance:");
+console.log("[ ] Changes opens with file list/diff and collapsed Advanced review / Manage local changes; opening/closing panels alone never changes Git state.");
 console.log("[ ] Worktree mode shows an unstaged tracked-file diff.");
 console.log("[ ] Staged mode shows the staged version and hides unstaged-only files.");
-console.log("[ ] Base mode loads baseRef...HEAD files even when the working tree is clean.");
+console.log("[ ] Advanced review opens Base mode, loads baseRef...HEAD files even when the working tree is clean, and returns to Worktree when collapsed.");
 console.log("[ ] Rename / Unicode / space-containing paths remain selectable and preserve old → new identity.");
 console.log("[ ] Binary files show the explicit binary state.");
 console.log("[ ] Large diffs show the truncated state without freezing the desktop window.");
