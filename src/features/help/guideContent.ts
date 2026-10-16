@@ -203,6 +203,15 @@ export const guidePages: GuidePage[] = [
         ] },
         { type: "code", label: "常见工作区检查", language: "bash", content: "git status --short\ngit branch --show-current\ngit log -5 --oneline" },
       ] },
+      { id: "agent-alerts", title: "Codex 完成任务时的桌面提醒", blocks: [
+        { type: "steps", items: [
+          { title: "打开目标 Worktree 的 Terminal", description: "点击 Start Codex with alerts，创建新终端并以仅针对本次运行的 OSC 9 通知参数启动 Codex，不修改本机全局 Codex 配置。" },
+          { title: "继续其他工作", description: "Codex 长任务在原 PTY 中运行；可以切换到其他 Worktree、页面或桌面应用，任务不会因此自动停止。" },
+          { title: "收到原生系统通知", description: "Codex 本轮完成或需要操作时，未在前台查看原终端的情况下会收到系统通知。不弹确认框，不切换当前页面。" },
+          { title: "点击顶部铃铛返回任务", description: "选择通知条目，回到来源仓库、Worktree 和终端会话；Desktop alerts 可关闭系统提示，但不影响应用内通知。" },
+        ] },
+        { type: "callout", tone: "warning", title: "响铃不代表任务成功", text: "手动输入 codex 或运行其他 TUI 时，普通 BEL 响铃只产生「需要关注」提醒；只有已启用 OSC 9 的 Codex 提供明确的本轮完成信号。Agents 标签采用结构化 turn 结束事件。静默、终端退出、Git 状态变化均不当作 Agent 成功完成。若系统通知权限被禁用，应用内铃铛仍可显示任务提醒。通知不会发送你的代码、Prompt 或终端日志。" },
+      ] },
       { id: "history", title: "History / Overview", blocks: [
         { type: "text", text: "Overview 显示工作树是否洁净、活动分支、Worktree 数量和最近提交。History 专门列出近期提交。它们是帮助你确定工作上下文的视图，不会自动修改仓库。" },
         { type: "callout", tone: "note", title: "运行结果的保留限制", text: "Run 的屏幕日志和部分会话状态为本次应用会话内数据；切换视图后不要依赖其作为长期证据。需要可追溯归档时，应使用独立的验证/证据存储流程。" },
