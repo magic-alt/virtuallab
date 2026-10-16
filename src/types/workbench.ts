@@ -69,6 +69,19 @@ export interface RepositorySnapshot {
   recentCommits: CommitSummary[];
 }
 
+/** Lightweight status from a single worktree; branch/worktree inventories stay cached. */
+export type WorktreeStatus = Pick<
+  RepositorySnapshot,
+  | "root"
+  | "currentBranch"
+  | "headSha"
+  | "dirtyCount"
+  | "stagedCount"
+  | "unstagedCount"
+  | "untrackedCount"
+  | "changes"
+>;
+
 export interface RepositoryRecord {
   id: string;
   name: string;
