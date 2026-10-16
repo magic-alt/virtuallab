@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   Boxes,
+  Code2,
   FolderGit2,
   FolderOpen,
   GitBranch,
@@ -12,6 +13,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { cn, compactPath } from "@/lib/utils";
 import { workspaceKey } from "@/lib/workspaceKey";
+import { editorLabel, type ExternalEditor } from "@/lib/externalEditor";
 import type { RepositoryRecord, RepositorySnapshot } from "@/types/workbench";
 
 interface Props {
@@ -24,6 +26,9 @@ interface Props {
   onRemove: (id: string) => void;
   onOpenRepositoryFolder: (path: string) => void;
   onOpenWorkspaceFolder: (path: string) => void;
+  onOpenRepositoryEditor: (path: string) => void;
+  onOpenWorkspaceEditor: (path: string) => void;
+  editor: ExternalEditor;
   onNewWorkspace: () => void;
   onSelectWorkspace: (path: string) => void;
   onRemoveWorkspace: (path: string) => void;
@@ -46,6 +51,9 @@ export function ProjectSidebar({
   onRemove,
   onOpenRepositoryFolder,
   onOpenWorkspaceFolder,
+  onOpenRepositoryEditor,
+  onOpenWorkspaceEditor,
+  editor,
   onNewWorkspace,
   onSelectWorkspace,
   onRemoveWorkspace,
@@ -142,6 +150,16 @@ export function ProjectSidebar({
                     <FolderOpen size={13} />
                   </button>
                   <button
+                    aria-label={`Open repository in ${editorLabel(editor)} ${repository.name}`}
+                    title={`Open this repository as a project in ${editorLabel(editor)}`}
+                    disabled={!repositoryActionsEnabled}
+                    className="rounded-md p-1.5 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
+                    onClick={() => onOpenRepositoryEditor(repository.path)}
+                    type="button"
+                  >
+                    <Code2 size={13} />
+                  </button>
+                  <button
                     aria-label={`Remove ${repository.name}`}
                     className="rounded-md p-1.5 text-slate-700 opacity-0 transition hover:bg-white/[0.06] hover:text-rose-300 group-hover:opacity-100"
                     onClick={() => onRemove(repository.id)}
@@ -194,6 +212,16 @@ export function ProjectSidebar({
                   type="button"
                 >
                   <FolderOpen size={12} />
+                </button>
+                <button
+                  aria-label={`Open worktree in ${editorLabel(editor)} ${worktree.branch ?? worktree.path}`}
+                  title={`Open this exact worktree as a project in ${editorLabel(editor)}`}
+                  disabled={!workspaceActionsEnabled}
+                  className="rounded-md p-1 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
+                  onClick={() => onOpenWorkspaceEditor(worktree.path)}
+                  type="button"
+                >
+                  <Code2 size={12} />
                 </button>
                 {workspaceKey(worktree.path) !== workspaceKey(snapshot.worktrees[0]?.path ?? "") && (
                   <button
@@ -250,6 +278,18 @@ export function ProjectSidebar({
                       {active ? "active" : inOtherWorktree ? "worktree" : branch.local && branch.remote ? "local+origin" : branch.local ? "local" : "origin"}
                     </span>
                   </button>
+                  {branch.worktreePath && (
+                    <button
+                      type="button"
+                      aria-label={`Open branch ${branch.name} in ${editorLabel(editor)}`}
+                      title={`Open the checked-out directory for ${branch.name} in ${editorLabel(editor)}`}
+                      disabled={!branchActionsEnabled}
+                      onClick={() => onOpenWorkspaceEditor(branch.worktreePath!)}
+                      className="shrink-0 rounded-md p-1.5 text-slate-500 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
+                    >
+                      <Code2 size={12} />
+                    </button>
+                  )}
                   {branch.local && !protectedBranch && (
                     <button
                       type="button"
