@@ -9,6 +9,7 @@ import type {
   LocalChangesRequest,
   ProcessSpec,
   RepositorySnapshot,
+  WorktreeStatus,
   WorkspaceMutationResult,
 } from "@/types/workbench";
 
@@ -43,6 +44,12 @@ export async function chooseRepositoryDirectory(): Promise<string | null> {
 export async function inspectRepository(path: string): Promise<RepositorySnapshot> {
   requireDesktop();
   return invoke<RepositorySnapshot>("inspect_repository", { path });
+}
+
+/** Source edits only require Git HEAD and porcelain status, not branch/Worktree inventory. */
+export async function inspectWorktreeStatus(path: string): Promise<WorktreeStatus> {
+  requireDesktop();
+  return invoke<WorktreeStatus>("inspect_worktree_status", { path });
 }
 
 /** Opens a registered worktree in Explorer, Finder or the Linux file manager. */

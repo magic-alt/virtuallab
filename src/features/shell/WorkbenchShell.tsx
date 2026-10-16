@@ -26,6 +26,7 @@ import {
   gitPullCurrent,
   gitSwitchBranch,
   inspectRepository,
+  inspectWorktreeStatus,
   isDesktopRuntime,
   openWorkspaceDirectory,
   removeWorktreeAfterConfirmation,
@@ -35,6 +36,7 @@ import {
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
 import { workspaceKey } from "@/lib/workspaceKey";
+import { mergeWorktreeStatus } from "@/lib/worktreeStatus";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
@@ -47,6 +49,9 @@ import type {
 } from "@/types/workbench";
 
 const WATCH_ID = "active-workspace";
+const WATCH_METADATA_QUIET_MS = 400;
+const WATCH_REFRESH_QUIET_MS = 850;
+const WATCH_REFRESH_MAX_WAIT_MS = 2600;
 
 export function WorkbenchShell() {
   const {
@@ -91,6 +96,11 @@ export function WorkbenchShell() {
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
+  const metadataRefreshTimer = useRef<number | undefined>(undefined);
+  const firstWatchChangeAtRef = useRef<number | null>(null);
+  const fullInspectionEpochRef = useRef(0);
+  const statusLoadsRef = useRef(new Map<string, Promise<void>>());
+  const queuedStatusRef = useRef(new Set<string>());
   const watchSequence = useRef(0);
   const snapshotLoadsRef = useRef(new Map<string, Promise<RepositorySnapshot>>());
   const snapshotCacheRef = useRef(new Map<string, RepositorySnapshot>());
@@ -101,6 +111,7 @@ export function WorkbenchShell() {
   const loadSnapshot = useCallback((
     path: string, requireFresh = false,
     ownerId: string | null = useWorkbenchStore.getState().activeRepositoryId,
+    background = false,
   ): Promise<RepositorySnapshot> => {
     // Fresh retries inherit the *original* owner. A previous repository's
     // delayed watch/inspection must not select a path inside the new one.
@@ -119,7 +130,7 @@ export function WorkbenchShell() {
         // A filesystem watch refresh may have started before git switch ended.
         // Wait for it, then *reinspect* the new HEAD instead of displaying
         // the snapshot that captured the previous branch.
-        return existing.catch(() => undefined).then(() => loadSnapshot(path, true, ownerId));
+        return existing.catch(() => undefined).then(() => loadSnapshot(path, true, ownerId, background));
       }
       // An older request may have lost ownership of the UI when the user
       // switched worktrees. Re-selecting its path must commit its snapshot.
@@ -128,11 +139,11 @@ export function WorkbenchShell() {
           activePathRef.current = next.root;
           setSnapshot(next);
           setSnapshotRevision((revision) => revision + 1);
-          setLoading(false);
+          if (!background) setLoading(false);
         }
         return next;
       }).catch((cause) => {
-        if (ownsSelection()) {
+        if (ownsSelection() && !background) {
           setLoading(false);
           setError(cause instanceof Error ? cause.message : String(cause));
         }
@@ -151,10 +162,12 @@ export function WorkbenchShell() {
       setSnapshot(cached);
     }
 
-    setLoading(true);
+    if (!background) setLoading(true);
     // A filesystem watcher refresh must not erase a meaningful Git error
     // (e.g. an untracked file collision) before the user can read it.
 
+    // Invalidates any older lightweight status request before a full inspection.
+    fullInspectionEpochRef.current += 1;
     const request = inspectRepository(path)
       .then((next) => {
         snapshotCacheRef.current.set(key, next);
@@ -166,7 +179,7 @@ export function WorkbenchShell() {
         return next;
       })
       .catch((err) => {
-        if (ownsSelection()) {
+        if (ownsSelection() && !background) {
           const message =
             err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
           setError(message);
@@ -177,7 +190,7 @@ export function WorkbenchShell() {
         snapshotLoadsRef.current.delete(key);
         // A slow inspection of another repository must never keep the
         // currently selected workspace in a permanent loading state.
-        if (ownsSelection()) setLoading(false);
+        if (ownsSelection() && !background) setLoading(false);
       });
 
     snapshotLoadsRef.current.set(key, request);
@@ -236,6 +249,62 @@ export function WorkbenchShell() {
     return () => { cancelled = true; };
   }, [activeRepository, loadSnapshot, saveWorkspaceState]);
 
+  const refreshWorkingTree: (path: string, ownerId: string) => Promise<void> = useCallback(
+    (path, ownerId) => {
+      const key = normalizePath(path);
+      const ownsSelection = () =>
+        latestSnapshotRequestRef.current === key &&
+        normalizePath(activePathRef.current ?? "") === key &&
+        useWorkbenchStore.getState().activeRepositoryId === ownerId;
+
+      if (!ownsSelection() || gitMutationInFlightRef.current ||
+          snapshotLoadsRef.current.has(key)) return Promise.resolve();
+
+      const inFlight = statusLoadsRef.current.get(key);
+      if (inFlight) {
+        // An edit arriving during a Git status scan needs one trailing scan;
+        // otherwise a quiet final write could be missed.
+        queuedStatusRef.current.add(key);
+        return inFlight;
+      }
+
+      const epoch = fullInspectionEpochRef.current;
+      const request = inspectWorktreeStatus(path)
+        .then(async (status) => {
+          if (!ownsSelection() || gitMutationInFlightRef.current ||
+              snapshotLoadsRef.current.has(key) ||
+              fullInspectionEpochRef.current !== epoch) return;
+
+          const previous = snapshotCacheRef.current.get(key);
+          if (!previous) return;
+          const next = mergeWorktreeStatus(previous, status);
+          if (!next) {
+            // Terminal-side commit/checkout changed HEAD: reload branch and
+            // worktree metadata once, without blocking or flashing the sidebar.
+            await loadSnapshot(path, true, ownerId, true);
+          } else if (next !== previous) {
+            snapshotCacheRef.current.set(key, next);
+            setSnapshot(next);
+            setSnapshotRevision((revision) => revision + 1);
+          }
+        })
+        .catch(() => {
+          // A watcher read may race an external Git operation. Keep the last
+          // valid snapshot and leave diagnostic errors to explicit Refresh.
+        })
+        .finally(() => {
+          statusLoadsRef.current.delete(key);
+          if (queuedStatusRef.current.delete(key) && ownsSelection() &&
+              !gitMutationInFlightRef.current) {
+            void refreshWorkingTree(path, ownerId);
+          }
+        });
+      statusLoadsRef.current.set(key, request);
+      return request;
+    },
+    [loadSnapshot],
+  );
+
   useEffect(() => {
     if (
       !isDesktopRuntime() ||
@@ -259,12 +328,30 @@ export function WorkbenchShell() {
       .catch((err) => { if (!disposed) setError(err instanceof Error ? err.message : String(err)); });
 
     void Promise.resolve(listen<WorkbenchEvent>("workbench://event", ({ payload }) => {
-      if (payload.eventType !== "fs.changed" || payload.id !== watchId) return;
+      if (disposed || payload.id !== watchId) return;
+      if (payload.eventType === "git.changed") {
+        // HEAD, branch refs and worktree inventories are inexpensive to
+        // refresh only when Git metadata actually changes.
+        window.clearTimeout(metadataRefreshTimer.current);
+        metadataRefreshTimer.current = window.setTimeout(() => {
+          if (!gitMutationInFlightRef.current) {
+            void loadSnapshot(snapshot.root, true, activeRepository.id, true).catch(() => undefined);
+          }
+        }, WATCH_METADATA_QUIET_MS);
+        return;
+      }
+      if (payload.eventType !== "fs.changed" &&
+          payload.eventType !== "git.status_changed") return;
+      const now = Date.now();
+      if (firstWatchChangeAtRef.current === null) firstWatchChangeAtRef.current = now;
+      // Coalesce write bursts; the max wait prevents continuous Agent output
+      // from indefinitely postponing the final Git status refresh.
+      const remaining = WATCH_REFRESH_MAX_WAIT_MS - (now - firstWatchChangeAtRef.current);
       window.clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => {
-        const path = activePathRef.current;
-        if (path) void loadSnapshot(path).catch(() => undefined);
-      }, 550);
+        firstWatchChangeAtRef.current = null;
+        void refreshWorkingTree(snapshot.root, activeRepository.id);
+      }, Math.max(0, Math.min(WATCH_REFRESH_QUIET_MS, remaining)));
     })).then((fn) => {
       if (typeof fn !== "function") return;
       if (disposed) fn();
@@ -276,10 +363,12 @@ export function WorkbenchShell() {
     return () => {
       disposed = true;
       window.clearTimeout(refreshTimer.current);
+      window.clearTimeout(metadataRefreshTimer.current);
+      firstWatchChangeAtRef.current = null;
       unlisten?.();
       void watchStop(watchId).catch(() => undefined);
     };
-  }, [activeRepository, loadSnapshot, snapshot.root]);
+  }, [activeRepository, loadSnapshot, refreshWorkingTree, snapshot.root]);
 
   const addLocalRepository = async () => {
     try {
