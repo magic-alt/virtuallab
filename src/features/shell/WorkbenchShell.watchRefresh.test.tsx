@@ -32,6 +32,7 @@ vi.mock("@/lib/backend", () => ({
   watchStop: harness.watchStop,
   chooseRepositoryDirectory: vi.fn(),
   openWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
+  openWorkspaceInEditor: vi.fn().mockResolvedValue(undefined),
   createWorktree: vi.fn(),
   gitSwitchBranch: vi.fn(),
   gitFetchOrigin: vi.fn(),
