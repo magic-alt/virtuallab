@@ -147,16 +147,16 @@ export const guidePages: GuidePage[] = [
       ] },
       { id: "modes", title: "三种差异视图", blocks: [
         { type: "table", columns: ["模式", "比较对象", "适用场景"], rows: [
-          ["Worktree", "工作目录中尚未暂存的修改", "日常迭代、自查"],
+          ["Worktree", "工作目录中尚未暂存的修改和未跟踪新文件（只读预览）", "日常迭代、自查"],
           ["Staged", "索引（暂存区）中的修改", "提交前核查"],
           ["Base（Advanced review 内）", "所选基线与 HEAD 的共同祖先到 HEAD 的已提交差异（base...HEAD）", "分支对比与 PR 审阅，不包含本地未提交修改"],
         ] },
         { type: "text", text: "文件列表由原生 Git 读取。要比较分支，展开 Advanced review，点击 Base，输入存在的本地分支名或提交引用，再点击 Load base files。干净工作区也可以查看已提交的分支差异；关闭高级审阅会从 Base 返回 Worktree。无文件时先确认模式与基线是否正确；二进制文件显示提示，大文件可能截断。" },
-        { type: "callout", tone: "note", title: "未跟踪文件 ≠ 完整 Diff", text: "未跟踪文件和目录会显示路径与状态，但不会被当作 Git 已跟踪文件调用差异预览，也不能据此创建行评论。" },
+        { type: "callout", tone: "note", title: "未跟踪文件可直接预览", text: "选择未跟踪文本文件时，左侧为空版本、右侧显示新增内容，不会执行 git add。未跟踪目录可点开并按需展示最多 200 个非忽略子文件，选择子文件继续审阅。二进制、符号链接和嵌套 Git 仓库不进行文本预览；大文件会截断。" },
       ] },
       { id: "review-loop", title: "评审闭环：Review → Fix → Re-review", blocks: [
         { type: "steps", items: [
-          { title: "选择目标文件", description: "展开 Advanced review，在 Changes 中选取已跟踪文件，切换 Unified 或 Side by side 检查变更。" },
+          { title: "选择目标文件", description: "展开 Advanced review，在 Changes 中选取已跟踪文件或未跟踪文本文件，切换 Unified 或 Side by side 检查变更。" },
           { title: "记录评论草稿", description: "高级审阅开启时，选定行并编写本地 draft，点击 Save draft。草稿列表位于文件列表下方，可查看或删除；关闭高级审阅不会删除已保存草稿，也不会发给 GitHub。" },
           { title: "修改与刷新", description: "Mark fix in progress 仅记录本地修复阶段。在外部编辑器或终端修改后，使用 Refresh and re-review 刷新状态，再重新选文件或 Load base files 读取新的差异。" },
           { title: "确认新的 HEAD", description: "HEAD 变化会使旧草稿变 stale；工作区刷新会清除已打开的差异和行选择，重新加载前不能保存行草稿或 Mark reviewed。重新检查后点击 Mark reviewed 记录本地审阅状态，这不代表测试通过或 GitHub 已批准。" },
