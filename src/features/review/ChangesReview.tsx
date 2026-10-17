@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { gitDiff } from "@/lib/backend";
@@ -29,6 +29,13 @@ interface ReviewFile {
   oldPath?: string | null;
   status: string;
   untracked?: boolean;
+  /** Child of a grouped untracked directory (not staged for preview). */
+  groupPath?: string;
+}
+
+interface UntrackedGroup {
+  files: ReviewFile[];
+  truncated: boolean;
 }
 
 export function ChangesReview({
@@ -71,6 +78,7 @@ export function ChangesReview({
   const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
   const [baseRef, setBaseRef] = useState(taskBaseRef ?? "main");
   const [baseFiles, setBaseFiles] = useState<DiffFileSummary[]>([]);
+  const [expandedUntracked, setExpandedUntracked] = useState<Record<string, UntrackedGroup>>({});
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +104,7 @@ export function ChangesReview({
       setSelectedPath(null);
       setSelectedReviewLine(null);
       setBaseFiles([]);
+      setExpandedUntracked({});
       setError(null);
       setDiffOutdated(true);
     }
@@ -160,6 +169,7 @@ export function ChangesReview({
         setSelectedReviewLine(null);
         setDraftBody("");
         setResult(null);
+        setExpandedUntracked({});
         setDiffOutdated(true);
       }
     } catch (err) {
@@ -185,10 +195,19 @@ export function ChangesReview({
           ? change.indexStatus !== " " && change.indexStatus !== "?"
           : change.worktreeStatus !== " " || change.kind === "untracked",
       )
-      .map((change) => localReviewFile(change, mode));
-  }, [baseFiles, mode, snapshot.changes]);
+      .flatMap((change): ReviewFile[] => {
+        const file = localReviewFile(change, mode);
+        const group = mode === "worktree" ? expandedUntracked[file.path] : undefined;
+        return group && file.untracked && file.path.endsWith("/")
+          ? [file, ...group.files]
+          : [file];
+      });
+  }, [baseFiles, expandedUntracked, mode, snapshot.changes]);
 
   const selectedUntracked = files.find((file) => file.path === selectedPath && file.untracked);
+  const selectedUntrackedGroup = selectedUntracked?.path.endsWith("/")
+    ? expandedUntracked[selectedUntracked.path]
+    : undefined;
 
   const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
@@ -198,7 +217,14 @@ export function ChangesReview({
     setDraftBody("");
     setResult(null);
     setError(null);
-    if (file.untracked) {
+    const isUntrackedDirectory = file.untracked && file.path.endsWith("/");
+    if (isUntrackedDirectory && expandedUntracked[file.path]) {
+      // Clicking an expanded group collapses it without another Git process.
+      setExpandedUntracked((current) => {
+        const next = { ...current };
+        delete next[file.path];
+        return next;
+      });
       setLoading(false);
       return;
     }
@@ -213,7 +239,24 @@ export function ChangesReview({
         baseRef: taskBaseRef ?? (mode === "base" ? baseRef.trim() || null : null),
       });
       if (requestRevision === requestRevisionRef.current) {
-        setResult(next);
+        if (isUntrackedDirectory) {
+          // Rust lists only non-ignored untracked children, on demand.
+          setExpandedUntracked((current) => ({
+            ...current,
+            [file.path]: {
+              files: next.files.map((child) => ({
+                path: child.path,
+                status: child.status,
+                untracked: true,
+                groupPath: file.path,
+              })),
+              truncated: next.truncated,
+            },
+          }));
+          setResult(null);
+        } else {
+          setResult(next);
+        }
         setDiffOutdated(false);
       }
     } catch (err) {
@@ -266,6 +309,7 @@ export function ChangesReview({
     setSelectedReviewLine(null);
     setDraftBody("");
     setResult(null);
+    setExpandedUntracked({});
     setError(null);
   };
 
