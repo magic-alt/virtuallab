@@ -2598,6 +2598,106 @@ mod tests {
     }
 
     #[test]
+    fn diff_previews_untracked_unicode_markdown_without_staging() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-content");
+        let directory = repo.join("docs/superpowers/plans");
+        fs::create_dir_all(&directory).expect("untracked plans directory");
+        let path = "docs/superpowers/plans/新 plan file.md";
+        let body = "# New plan\\nnot staged\\n";
+        fs::write(repo.join(path), body).expect("write untracked content");
+
+        let preview = diff_request(&repo, DiffMode::Worktree, Some(path), None);
+        assert_eq!(preview.mode, DiffMode::Worktree);
+        assert_eq!(preview.path.as_deref(), Some(path));
+        assert_eq!(preview.files.len(), 1);
+        assert_eq!(preview.files[0].status, "?");
+        assert_eq!(preview.original_text.as_deref(), Some(""));
+        assert_eq!(preview.modified_text.as_deref(), Some(body));
+        assert!(!preview.binary);
+        assert!(!preview.content_truncated);
+        assert!(preview.patch.is_empty());
+
+        let status = read_worktree_status(repo.to_str().unwrap()).expect("worktree status");
+        assert_eq!(status.untracked_count, 1);
+        assert_eq!(status.changes[0].path, "docs/");
+        assert_eq!(status.staged_count, 0);
+        assert!(git_read(repo.to_str().unwrap(), &["diff", "--cached", "--name-only"])
+            .expect("staged diff").is_empty());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_expands_untracked_directories_without_ignored_or_tracked_files() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-directory");
+        fs::write(repo.join(".gitignore"), "*.ignore\\n").expect("ignore fixture");
+        fs::create_dir_all(repo.join("generated/nested")).expect("nested group");
+        fs::write(repo.join("generated/new file.ts"), "export const x = 1;\\n").unwrap();
+        fs::write(repo.join("generated/nested/two.md"), "# Two\\n").unwrap();
+        fs::write(repo.join("generated/secret.ignore"), "ignored").unwrap();
+        git_ok(&repo, &["add", ".gitignore"]);
+        git_ok(&repo, &["commit", "-m", "ignore fixture"]);
+
+        let listing = diff_request(&repo, DiffMode::Worktree, Some("generated/"), None);
+        assert_eq!(listing.files.len(), 2);
+        assert_eq!(listing.files[0].path, "generated/nested/two.md");
+        assert_eq!(listing.files[1].path, "generated/new file.ts");
+        assert!(listing.files.iter().all(|file| file.status == "?"));
+        assert_eq!(listing.original_text, None);
+        assert_eq!(listing.modified_text, None);
+        assert_eq!(listing.returned_bytes, 0);
+        assert!(!listing.truncated);
+
+        let child = diff_request(&repo, DiffMode::Worktree, Some("generated/nested/two.md"), None);
+        assert_eq!(child.modified_text.as_deref(), Some("# Two\\n"));
+        let index = diff_request(&repo, DiffMode::Index, Some("generated/nested/two.md"), None);
+        assert!(index.files.is_empty());
+        assert!(index.patch.is_empty());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_limits_untracked_content_and_directory_listing() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-limits");
+        fs::create_dir_all(repo.join("bulk")).expect("bulk directory");
+        for index in 0..(MAX_UNTRACKED_DISPLAY_FILES + 5) {
+            fs::write(repo.join(format!("bulk/file-{index:03}.txt")), "ok").unwrap();
+        }
+        let listing = diff_request(&repo, DiffMode::Worktree, Some("bulk/"), None);
+        assert_eq!(listing.files.len(), MAX_UNTRACKED_DISPLAY_FILES);
+        assert!(listing.truncated);
+        let large_path = "oversized.txt";
+        fs::write(repo.join(large_path), "a".repeat(MAX_DIFF_BYTES + 100)).unwrap();
+        let preview = diff_request(&repo, DiffMode::Worktree, Some(large_path), None);
+        assert!(preview.content_truncated);
+        assert_eq!(preview.modified_text.as_ref().unwrap().len(), MAX_DIFF_BYTES);
+        let binary_path = "binary.png";
+        fs::write(repo.join(binary_path), [0, 1, 2, 3]).unwrap();
+        let binary = diff_request(&repo, DiffMode::Worktree, Some(binary_path), None);
+        assert!(binary.binary);
+        assert_eq!(binary.modified_text, None);
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diff_refuses_untracked_symlinks_even_when_the_target_is_readable() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-link");
+        let secret = sandbox.join("secret.txt");
+        fs::write(&secret, "outside the worktree").unwrap();
+        std::os::unix::fs::symlink(&secret, repo.join("link.txt")).unwrap();
+        let error = git_diff_blocking(DiffRequest {
+            repository_root: repo.to_string_lossy().into_owned(),
+            workspace_root: repo.to_string_lossy().into_owned(),
+            path: Some("link.txt".into()), old_path: None,
+            mode: DiffMode::Worktree, base_ref: None,
+        }).expect_err("untracked symlink must not be dereferenced");
+        assert!(error.contains("symlink"), "{error}");
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
     fn diff_reports_rename_delete_and_base_ref() {
         let (sandbox, repo) = init_fixture_repo("diff-rename");
         let base = git_read(repo.to_string_lossy().as_ref(), &["rev-parse", "HEAD"])
