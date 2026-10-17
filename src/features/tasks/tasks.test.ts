@@ -177,3 +177,13 @@ describe('single task observer generation guards', () => {
     expect(useTaskStore.getState().actionErrors['task-1']).toBe('partial integration');stop();
   });
 });
+
+describe('task navigation across observer reattachment',()=>{
+ it('preserves the selected tab when adding a repository and clears removed selection',async()=>{
+  const {selectTask}=await import('@/stores/tasks');
+  native.invoke.mockImplementation(cmd=>Promise.resolve(cmd==='task_list'?[taskFixture()]:cmd==='task_events'?[]:readinessFixture()));
+  const first=observeTasks(['/repo']);await vi.waitFor(()=>expect(useTaskStore.getState().tasks).toHaveLength(1));selectTask('task-1','证据');first();
+  const second=observeTasks(['/repo','/other']);await vi.waitFor(()=>expect(useTaskStore.getState().tasks).toHaveLength(1));expect(useTaskStore.getState().activeTaskId).toBe('task-1');expect(useTaskStore.getState().activeTaskTab).toBe('证据');second();
+  const third=observeTasks(['/other']);await vi.waitFor(()=>expect(useTaskStore.getState().loading).toBe(false));expect(useTaskStore.getState().activeTaskId).toBeNull();third();
+ });
+});

@@ -30,5 +30,11 @@ describe('Task-first application navigation', () => {
     expect(workspace.isConnected).toBe(true);
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(screen.getByTestId('workspace-main')).toBe(workspace);
+    for (const name of ['证据','设置','控制中心','任务']) {
+      await user.click(screen.getByRole('button',{name}));
+      expect(screen.getByTestId('workspace-main')).toBe(workspace);
+      expect(workspace.isConnected).toBe(true);
+    }
+
   });
 });

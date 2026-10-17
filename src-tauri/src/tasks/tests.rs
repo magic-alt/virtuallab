@@ -1100,3 +1100,13 @@ fn clones_serialize_updates_without_losing_events() {
     assert_eq!(m.get(&t.id).unwrap().revision, 9);
     assert_eq!(f.manager().events(0).unwrap().len(), 9);
 }
+
+#[test]
+fn accepted_task_profile_is_independent_of_library_updates() {
+    let f=Fixture::new(); let library=crate::task_profiles::TaskProfileLibrary::open(f.dir.join("profiles.json")).unwrap();
+    let profile=serde_json::json!({"schemaVersion":1,"id":"checks","name":"Original","gates":[{"id":"unit","label":"Unit","kind":"unit","required":true,"approval":"none","executor":{"type":"process","program":"npm","args":["test"],"cwd":"workspace"}}]});
+    library.save(crate::task_profiles::SaveProfileRequest{profile:profile.clone(),expected_revision:None}).unwrap();
+    let m=f.manager();let mut d=draft("impl",&[]);d.profile=Some(profile.clone());let tasks=m.accept_plan(f.request(vec![d])).unwrap();
+    let mut changed=profile.clone();changed["name"]="Changed".into();library.save(crate::task_profiles::SaveProfileRequest{profile:changed,expected_revision:Some(1)}).unwrap();
+    assert_eq!(m.get(&tasks[0].id).unwrap().profile,Some(profile));
+}

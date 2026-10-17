@@ -21,11 +21,11 @@ function Harness(props: Partial<React.ComponentProps<typeof TaskControlCenter>>)
 beforeEach(()=>{
   Object.defineProperty(window,'__TAURI_INTERNALS__',{value:{},configurable:true});
   tasks=[taskFixture()];ready=readinessFixture();
-  useTaskStore.setState({activeTaskId:null,pending:{},cancelling:{},actionErrors:{},observerError:null});
+  useTaskStore.setState({filters:{query:'',repositoryRoot:'',attention:false},activeTaskTab:'概览',activeTaskId:null,pending:{},cancelling:{},actionErrors:{},observerError:null});
   native.listen.mockResolvedValue(vi.fn());native.confirm.mockResolvedValue(false);
   native.invoke.mockImplementation(async(command,args)=>{
     if(command==='task_list')return tasks;
-    if(command==='task_events')return [];
+    if(command==='task_events'||command==='task_profile_list')return [];
     if(command==='task_readiness')return ready;
     if(command==='inspect_repository')return {root:'/repo',headSha:'b'.repeat(40)};
     if(command==='task_accept_plan')return args.request.tasks.map((t:TaskRecord,i:number)=>taskFixture({...t,id:`new-${i}`}));
@@ -202,4 +202,14 @@ describe('task control center user flows',()=>{
     native.invoke.mockRejectedValue(new Error('task service unavailable'));
     render(<Harness/>);expect(await screen.findByRole('alert')).toHaveTextContent('task service unavailable');expect(screen.queryByText(/PASS/)).not.toBeInTheDocument();
   });
+});
+
+it('retains detail tab and filters across views while Profile failure leaves workspace controls available',async()=>{
+ const original=native.invoke.getMockImplementation()!;native.invoke.mockImplementation((command,args)=>command==='task_profile_list'?Promise.reject(new Error('corrupt Profile store')):original(command,args));
+ const open=vi.fn();const page=render(<Harness onOpenWorkspace={open}/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'执行'}));
+ await userEvent.type(screen.getByLabelText('搜索任务'),'Unicode');page.rerender(<Harness view="settings" onOpenWorkspace={open}/>);await screen.findByText(/corrupt Profile store/);
+ expect(screen.getByRole('button',{name:'打开 Provider / Agents 配置'})).toBeEnabled();page.rerender(<Harness view="tasks" onOpenWorkspace={open}/>);
+ expect(screen.getByLabelText('搜索任务')).toHaveValue('Unicode');expect(screen.getByRole('tab',{name:'执行'})).toHaveAttribute('aria-selected','true');
+ await userEvent.click(screen.getByRole('button',{name:'打开 Agents'}));expect(open).toHaveBeenCalledWith('/work/task-1','agents','/repo');
+ expect(native.invoke.mock.calls.some(([c])=>['task_start','task_prepare_workspace','task_verify','task_review','task_accept_result'].includes(c))).toBe(false);
 });

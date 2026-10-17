@@ -1,8 +1,9 @@
+import { refreshTaskProfiles, useTaskProfileStore } from '@/stores/taskProfiles';
 import { workspaceKey } from '@/lib/workspaceKey';
 import { useEffect, useRef, useState } from 'react';
 import { acceptTaskPlan } from '@/lib/tasks';
 import { inspectRepository, isDesktopRuntime } from '@/lib/backend';
-import { runTaskAction, useTaskStore } from '@/stores/tasks';
+import { runTaskAction, useTaskStore, selectTask } from '@/stores/tasks';
 import type { RepositoryRecord } from '@/types/workbench';
 import type { TaskDraft, TaskKind, TaskPlanRequest, TaskRecord } from '@/types/tasks';
 import { parseTaskProfile, validateTaskPlan } from './model';
@@ -16,8 +17,11 @@ export function TaskPlanWizard({repositories, activeRepository, onClose}: {repos
   const [step, setStep] = useState(0);
   const [nodes, setNodes] = useState<NodeEditor[]>([{localId:1,key:'impl-1',title:'',goal:'',scopeText:'',kind:'implementation',dependenciesText:'',profileJson:'null',autoCommit:false}]);
   const nextId = useRef(2);
+  const liveContext=useRef({root,repositories});liveContext.current={root,repositories};
   const [error, setError] = useState(''); const [reading, setReading] = useState(false);
   const readGeneration = useRef(0); const alive = useRef(true); const dialog = useRef<HTMLDialogElement>(null);
+  const library = useTaskProfileStore();
+  useEffect(() => {void refreshTaskProfiles();}, []);
   const tasks = useTaskStore(s => s.tasks); const pending = useTaskStore(s => s.pending[`plan:${root}`]);
   useEffect(() => {alive.current = true; if (dialog.current?.showModal) dialog.current.showModal(); else dialog.current?.setAttribute('open',''); return () => {alive.current = false; ++readGeneration.current;};}, []);
   useEffect(() => {++readGeneration.current; setReading(false); setHead('');}, [root]);
@@ -51,7 +55,7 @@ export function TaskPlanWizard({repositories, activeRepository, onClose}: {repos
       if (!repositories.some(repo => workspaceKey(repo.path) === workspaceKey(root))) errors.push('所选仓库已移除。');
       if (errors.length) throw new Error(errors.join('\n'));
       const records: TaskRecord[] = await runTaskAction(`plan:${root}`, () => acceptTaskPlan(request));
-      if (alive.current) {if (records[0]) useTaskStore.setState({activeTaskId:records[0].id}); onClose();}
+      if (alive.current && workspaceKey(liveContext.current.root) === workspaceKey(request.repositoryRoot) && liveContext.current.repositories.some(repo => workspaceKey(repo.path) === workspaceKey(request.repositoryRoot))) {if (records[0]) selectTask(records[0].id,'概览'); onClose();}
     } catch (error) {if (alive.current) setError(error instanceof Error ? error.message : String(error));}
   };
   return <dialog ref={dialog} className="task-plan-dialog task-surface" aria-label="创建任务计划" onCancel={event => {event.preventDefault(); if (!pending) onClose();}}>
@@ -71,6 +75,11 @@ export function TaskPlanWizard({repositories, activeRepository, onClose}: {repos
       {step === 1 && <>
         <label>允许修改的范围（每行一个）<textarea value={nodes[0].scopeText} onChange={event => update(0,{scopeText:event.target.value})}/></label>
         <p>范围使用相对字面路径；文件夹无需尾部斜杠，不支持通配符。</p>
+        <label>已保存 Profile<select value="" onChange={event => {
+          const record = library.records.find(record => `library:${record.id}` === event.target.value);
+          if (record) update(0,{profileJson:JSON.stringify(record.profile,null,2)});
+        }}><option value="">从 Profile 库复制配置</option>{library.records.map(record => <option key={record.id} value={`library:${record.id}`}>{record.profile.name} · 库修订 {record.revision}</option>)}</select></label>
+        {library.error && <p role="status">Profile 库不可用：{library.error}。可使用下方手动 JSON。</p>}
         <label>当前任务 Profile<select defaultValue="" onChange={event => {const profile = profiles.find(profile => profile.id === event.target.value); if (profile) update(0,{profileJson:JSON.stringify(profile,null,2)});}}>
           <option value="">选择已有 Profile 或编辑 JSON</option>{profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
         </select></label>

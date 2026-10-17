@@ -55,3 +55,6 @@ pub(crate) fn task_accept_plan(
 #[cfg(test)]
 #[path = "tasks/tests.rs"]
 mod tests;
+
+/// Configuration-only validation; task acceptance still checks repository containment.
+pub(crate) fn validate_profile_definition(value: &serde_json::Value) -> Result<(), String> { validation::profile(value, None) }

@@ -39,3 +39,5 @@ export interface IntegrationPreview {planId: string; taskId: string; repositoryR
 export interface TaskWorkspaceRequest {taskId: string; branch: string; targetPath: string | null}
 export interface TaskReviewRequest {taskId: string; expectedHeadSha: string; note: string; approved: boolean}
 export interface TaskAcceptanceRequest {taskId: string; expectedHeadSha: string; acknowledgedWarnings: boolean}
+
+export type TaskDetailTab = '概览'|'执行'|'变更与审查'|'证据'|'交付';

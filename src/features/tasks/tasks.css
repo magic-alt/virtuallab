@@ -49,3 +49,10 @@
 .task-embedded-tools {max-height:720px; overflow:auto; overscroll-behavior:contain; min-width:0; margin-top:12px;}
 .task-center details>summary {cursor:pointer; color:#f1c99e; padding:4px 0;}
 .task-center details>summary:focus-visible {outline:2px solid var(--task-accent); outline-offset:3px;}
+
+.task-dashboard-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;}
+.task-dashboard-grid .task-surface {margin:8px 0;}
+.task-dashboard-grid li {margin:8px 0;}
+.task-evidence-table {max-width:100%;overflow:auto;overscroll-behavior:contain;}
+.task-evidence-table table {width:100%;border-collapse:collapse;font-size:12px;}
+.task-evidence-table :is(th,td) {text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--task-border);overflow-wrap:anywhere;max-width:240px;}

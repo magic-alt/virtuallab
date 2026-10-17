@@ -21,6 +21,35 @@ Active PTYs, Agents, Run/build processes and verification hold the same workspac
 
 AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through workspace Agents; the task coordinator's first implementation uses Codex only.
 
+## Task-driven surfaces
+
+Settings includes an independent reusable Profile library, even before the first
+task exists. Choose 新建 Profile, edit its name/ID and structured gates/arguments,
+then save. Paths/toolchain lists use one entry per line. Advanced JSON and bounded
+JSON import/export preserve the supported configuration. A save conflict leaves
+your draft intact: explicitly reload the latest selected record, or copy it to a
+new ID. An ID change creates a separate record; delete/rename migration is not
+provided. Saving configuration proves neither tool availability nor authentication.
+
+In the task wizard, 已保存 Profile copies a full snapshot into the draft.
+Changing the library later cannot update the draft or an accepted task. Manual
+JSON and existing-task reuse remain available if library storage is unavailable.
+A task accepted without a Profile keeps that frozen policy; create a new plan
+with a configured Profile rather than assuming a settings edit repairs it.
+
+The dashboard separates overlapping action queues and routes a task to the
+relevant detail tab. Unknown readiness is displayed as unknown, not a zero count.
+The next-step panel explains known blockers; its button only navigates to existing
+controls. Selection, detail tab and task filters survive Workspace round trips;
+removing the repository invalidates its selection. Navigation never creates or
+starts work, and retained terminals continue to belong to Workspace.
+
+The evidence page lists all Runs persisted on task Attempts, with repository,
+task, Attempt, tested SHA, historical outcome and time. Filter by repository/task/
+check outcome; select 查看 Run for checks, digests and artifact metadata, then
+explicitly open its task. Superseded records remain historical even if HEAD
+matches. This inventory does not scan all archived files or open artifact paths.
+
 ## Verification Profile
 
 The existing schema-v1 Profile declares gates with explicit executable/argument vectors. Task Profiles additionally accept:

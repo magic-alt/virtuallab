@@ -1,15 +1,18 @@
 import { create } from 'zustand';
 import { workspaceKey } from '@/lib/workspaceKey';
 import { cancelTask, getTaskEvents, getTaskReadiness, listTasks, subscribeTaskEvents } from '@/lib/tasks';
-import type { TaskRecord, TaskReadiness, TaskEvent } from '@/types/tasks';
+import type { TaskRecord, TaskReadiness, TaskEvent, TaskDetailTab } from '@/types/tasks';
 
+interface TaskFilters {query:string;repositoryRoot:string;attention:boolean}
 interface TaskState {
+  activeTaskTab:TaskDetailTab; activeTaskRepositoryRoot:string|null; filters:TaskFilters;
   tasks: TaskRecord[]; readiness: Record<string, TaskReadiness>; readinessErrors: Record<string, string>;
   events: TaskEvent[]; error: string | null; observerError: string | null;
   actionErrors: Record<string, string>; pending: Record<string, boolean>; cancelling: Record<string, boolean>;
   roots: string[]; loading: boolean; activeTaskId: string | null;
 }
 export const useTaskStore = create<TaskState>(() => ({
+  activeTaskTab:'概览', activeTaskRepositoryRoot:null, filters:{query:'',repositoryRoot:'',attention:false},
   tasks: [], readiness: {}, readinessErrors: {}, events: [], error: null, observerError: null,
   actionErrors: {}, pending: {}, cancelling: {}, roots: [], loading: false, activeTaskId: null,
 }));
@@ -33,7 +36,7 @@ export async function refreshTasks(): Promise<void> {
   const [records, events] = await Promise.allSettled([listTasks(roots), getTaskEvents(afterSeq)]);
   if (!current()) return;
   if (records.status === 'rejected') {
-    useTaskStore.setState({loading: false, tasks: [], readiness: {}, events: [], error: errorText(records.reason)}); return;
+    useTaskStore.setState({loading: false, tasks: [], readiness: {}, events: [], activeTaskId:null, activeTaskTab:'概览', error: errorText(records.reason)}); return;
   }
   const tasks = records.value.filter(task => roots.some(root => workspaceKey(root) === workspaceKey(task.repositoryRoot)));
   const results = await Promise.allSettled(tasks.map(task => getTaskReadiness(task.id)));
@@ -49,12 +52,22 @@ export async function refreshTasks(): Promise<void> {
     events: mergeEvents(state.events, events.status === 'fulfilled' ? events.value : [], tasks),
     observerError: events.status === 'rejected' ? `事件来源不可用: ${errorText(events.reason)}` : state.observerError,
     activeTaskId: state.activeTaskId && tasks.some(task => task.id === state.activeTaskId) ? state.activeTaskId : null,
+    activeTaskRepositoryRoot: tasks.find(task => task.id === state.activeTaskId)?.repositoryRoot ?? null,
+    activeTaskTab: tasks.some(task => task.id === state.activeTaskId) ? state.activeTaskTab : '概览',
   }));
 }
 /** Called once by the shell hook. Cleanup also handles a delayed native listener. */
 export function observeTasks(roots: string[]): () => void {
   const epoch = ++generation; observed = true; afterSeq = 0;
-  useTaskStore.setState({roots: [...new Set(roots)].sort(), tasks: [], readiness: {}, readinessErrors: {}, events: [], error: null, observerError: null});
+  useTaskStore.setState(state => {
+    const contains=(root:string)=>roots.some(value=>workspaceKey(value)===workspaceKey(root));
+    const selected=state.tasks.find(task=>task.id===state.activeTaskId);
+    const selectedRoot=selected?.repositoryRoot??(state.activeTaskId?state.activeTaskRepositoryRoot:null);
+    const retained=!!selectedRoot&&contains(selectedRoot);
+    return {roots:[...new Set(roots)].sort(),tasks:[],readiness:{},readinessErrors:{},events:[],error:null,observerError:null,
+      activeTaskId:retained?state.activeTaskId:null,activeTaskTab:retained?state.activeTaskTab:'概览',activeTaskRepositoryRoot:retained?selectedRoot:null,
+      filters:{...state.filters,repositoryRoot:contains(state.filters.repositoryRoot)?state.filters.repositoryRoot:''}};
+  });
   let disposed = false; const listeners: (() => void)[] = [];
   let changeTimer: ReturnType<typeof setTimeout> | undefined;
   const retainListener = (stop: () => void) => {
@@ -125,3 +138,12 @@ export async function runTaskCancellation(id: string): Promise<TaskRecord> {
     useTaskStore.setState(state => ({cancelling: {...state.cancelling, [id]: false}}));
   }
 }
+
+/** Navigation only; never invokes Native. */
+export function selectTask(taskId:string,tab?:TaskDetailTab):void {
+ useTaskStore.setState(state=>{
+  const task=state.tasks.find(t=>t.id===taskId&&state.roots.some(root=>workspaceKey(root)===workspaceKey(t.repositoryRoot)));
+  return task?{activeTaskId:taskId,activeTaskRepositoryRoot:task.repositoryRoot,activeTaskTab:tab??(state.activeTaskId===taskId?state.activeTaskTab:'概览')}:{activeTaskId:null,activeTaskRepositoryRoot:null,activeTaskTab:'概览'};
+ });
+}
+export function setTaskFilters(patch:Partial<TaskFilters>):void {useTaskStore.setState(state=>({filters:{...state.filters,...patch}}));}
