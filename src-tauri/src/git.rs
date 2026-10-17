@@ -547,6 +547,8 @@ fn git_origin_network(repo: &str, args: &[&str], pushing: bool) -> Result<String
 
 const MAX_DIFF_BYTES: usize = 512 * 1024;
 const MAX_DIFF_LINES: usize = 12_000;
+const MAX_UNTRACKED_LIST_BYTES: usize = 256 * 1024;
+const MAX_UNTRACKED_DISPLAY_FILES: usize = 200;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -590,6 +592,100 @@ pub struct DiffResponse {
     original_text: Option<String>,
     modified_text: Option<String>,
     content_truncated: bool,
+}
+
+/// Untracked files have no Git patch/index blob. Read them on demand, never
+/// staging them just to make Monaco review possible. A grouped directory
+/// returns a bounded list of non-ignored files instead of reading every file.
+fn untracked_review_response(
+    workspace_root: &str,
+    relative_path: &str,
+) -> Result<Option<DiffResponse>, String> {
+    let pathspec = format!(":(literal){relative_path}");
+    let (raw, list_truncated) = git_read_limited(
+        workspace_root,
+        &["ls-files", "--others", "--exclude-standard", "-z", "--", &pathspec],
+        MAX_UNTRACKED_LIST_BYTES,
+    )?;
+
+    // Truncation must never turn a partial filename into a selectable path.
+    let complete_length = raw.iter().rposition(|byte| *byte == 0)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let is_directory = relative_path.ends_with('/');
+    let mut paths: Vec<String> = raw[..complete_length]
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .filter(|path| {
+            if is_directory {
+                path.starts_with(relative_path)
+            } else {
+                path == relative_path
+            }
+        })
+        .collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    if is_directory && paths.iter().any(|path| path == relative_path) {
+        // Git treats an embedded repository as an opaque untracked directory.
+        // Do not put the directory itself back into its own child list.
+        return Err("This folder contains an embedded Git repository. Open that repository separately to review its files.".to_string());
+    }
+
+    if is_directory {
+        // Porcelain status groups untracked directories, but the user must be
+        // able to inspect individual children without modifying the index.
+        let truncated = list_truncated || paths.len() > MAX_UNTRACKED_DISPLAY_FILES;
+        paths.truncate(MAX_UNTRACKED_DISPLAY_FILES);
+        return Ok(Some(DiffResponse {
+            mode: DiffMode::Worktree,
+            base_ref: None,
+            path: Some(relative_path.to_string()),
+            old_path: None,
+            files: paths.into_iter().map(|path| DiffFileSummary {
+                path, old_path: None, status: "?".to_string(),
+            }).collect(),
+            patch: String::new(),
+            binary: false,
+            truncated,
+            returned_bytes: 0,
+            original_text: None,
+            modified_text: None,
+            content_truncated: false,
+        }));
+    }
+
+    // Never follow untracked symlinks or read special files. This also avoids
+    // showing the contents of an ignored or sensitive symlink target.
+    let candidate = Path::new(workspace_root).join(relative_path);
+    let metadata = std::fs::symlink_metadata(&candidate)
+        .map_err(|error| format!("Cannot inspect untracked file {relative_path}: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("Untracked symlink or special file cannot be previewed safely".to_string());
+    }
+    let (bytes, content_truncated) =
+        read_workspace_file_limited(workspace_root, relative_path, MAX_DIFF_BYTES)?;
+    let binary = bytes.contains(&0) || std::str::from_utf8(&bytes).is_err();
+    Ok(Some(DiffResponse {
+        mode: DiffMode::Worktree,
+        base_ref: None,
+        path: Some(relative_path.to_string()),
+        old_path: None,
+        files: vec![DiffFileSummary {
+            path: relative_path.to_string(), old_path: None, status: "?".to_string(),
+        }],
+        patch: String::new(),
+        binary,
+        truncated: false,
+        returned_bytes: 0,
+        original_text: if binary { None } else { Some(String::new()) },
+        modified_text: if binary { None } else {
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        },
+        content_truncated,
+    }))
 }
 
 #[tauri::command]
@@ -643,6 +739,17 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
         }
         _ => None,
     };
+
+    // git diff intentionally excludes untracked files. Resolve only the
+    // explicitly selected Worktree path, after worktree and path validation.
+    // Index and Base review continue to use their original Git semantics.
+    if request.mode == DiffMode::Worktree && old_path.is_none() {
+        if let Some(selected_path) = path.as_deref() {
+            if let Some(response) = untracked_review_response(&workspace_root, selected_path)? {
+                return Ok(response);
+            }
+        }
+    }
 
     let args = diff_args(
         request.mode,
@@ -2492,6 +2599,106 @@ mod tests {
         assert_eq!(index.original_text.as_deref(), Some(""));
         assert_eq!(index.modified_text.as_deref(), Some("hello\n"));
 
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_previews_untracked_unicode_markdown_without_staging() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-content");
+        let directory = repo.join("docs/superpowers/plans");
+        fs::create_dir_all(&directory).expect("untracked plans directory");
+        let path = "docs/superpowers/plans/新 plan file.md";
+        let body = "# New plan\nnot staged\n";
+        fs::write(repo.join(path), body).expect("write untracked content");
+
+        let preview = diff_request(&repo, DiffMode::Worktree, Some(path), None);
+        assert_eq!(preview.mode, DiffMode::Worktree);
+        assert_eq!(preview.path.as_deref(), Some(path));
+        assert_eq!(preview.files.len(), 1);
+        assert_eq!(preview.files[0].status, "?");
+        assert_eq!(preview.original_text.as_deref(), Some(""));
+        assert_eq!(preview.modified_text.as_deref(), Some(body));
+        assert!(!preview.binary);
+        assert!(!preview.content_truncated);
+        assert!(preview.patch.is_empty());
+
+        let status = read_worktree_status(repo.to_str().unwrap()).expect("worktree status");
+        assert_eq!(status.untracked_count, 1);
+        assert_eq!(status.changes[0].path, "docs/");
+        assert_eq!(status.staged_count, 0);
+        assert!(git_read(repo.to_str().unwrap(), &["diff", "--cached", "--name-only"])
+            .expect("staged diff").is_empty());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_expands_untracked_directories_without_ignored_or_tracked_files() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-directory");
+        fs::write(repo.join(".gitignore"), "*.ignore\n").expect("ignore fixture");
+        fs::create_dir_all(repo.join("generated/nested")).expect("nested group");
+        fs::write(repo.join("generated/new file.ts"), "export const x = 1;\n").unwrap();
+        fs::write(repo.join("generated/nested/two.md"), "# Two\n").unwrap();
+        fs::write(repo.join("generated/secret.ignore"), "ignored").unwrap();
+        git_ok(&repo, &["add", ".gitignore"]);
+        git_ok(&repo, &["commit", "-m", "ignore fixture"]);
+
+        let listing = diff_request(&repo, DiffMode::Worktree, Some("generated/"), None);
+        assert_eq!(listing.files.len(), 2);
+        assert_eq!(listing.files[0].path, "generated/nested/two.md");
+        assert_eq!(listing.files[1].path, "generated/new file.ts");
+        assert!(listing.files.iter().all(|file| file.status == "?"));
+        assert_eq!(listing.original_text, None);
+        assert_eq!(listing.modified_text, None);
+        assert_eq!(listing.returned_bytes, 0);
+        assert!(!listing.truncated);
+
+        let child = diff_request(&repo, DiffMode::Worktree, Some("generated/nested/two.md"), None);
+        assert_eq!(child.modified_text.as_deref(), Some("# Two\n"));
+        let index = diff_request(&repo, DiffMode::Index, None, None);
+        assert!(index.files.is_empty());
+        assert!(index.patch.is_empty());
+
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn diff_limits_untracked_content_and_directory_listing() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-limits");
+        fs::create_dir_all(repo.join("bulk")).expect("bulk directory");
+        for index in 0..(MAX_UNTRACKED_DISPLAY_FILES + 5) {
+            fs::write(repo.join(format!("bulk/file-{index:03}.txt")), "ok").unwrap();
+        }
+        let listing = diff_request(&repo, DiffMode::Worktree, Some("bulk/"), None);
+        assert_eq!(listing.files.len(), MAX_UNTRACKED_DISPLAY_FILES);
+        assert!(listing.truncated);
+        let large_path = "oversized.txt";
+        fs::write(repo.join(large_path), "a".repeat(MAX_DIFF_BYTES + 100)).unwrap();
+        let preview = diff_request(&repo, DiffMode::Worktree, Some(large_path), None);
+        assert!(preview.content_truncated);
+        assert_eq!(preview.modified_text.as_ref().unwrap().len(), MAX_DIFF_BYTES);
+        let binary_path = "binary.png";
+        fs::write(repo.join(binary_path), [0, 1, 2, 3]).unwrap();
+        let binary = diff_request(&repo, DiffMode::Worktree, Some(binary_path), None);
+        assert!(binary.binary);
+        assert_eq!(binary.modified_text, None);
+        let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diff_refuses_untracked_symlinks_even_when_the_target_is_readable() {
+        let (sandbox, repo) = init_fixture_repo("diff-untracked-link");
+        let secret = sandbox.join("secret.txt");
+        fs::write(&secret, "outside the worktree").unwrap();
+        std::os::unix::fs::symlink(&secret, repo.join("link.txt")).unwrap();
+        let error = git_diff_blocking(DiffRequest {
+            repository_root: repo.to_string_lossy().into_owned(),
+            workspace_root: repo.to_string_lossy().into_owned(),
+            path: Some("link.txt".into()), old_path: None,
+            mode: DiffMode::Worktree, base_ref: None,
+        }).expect_err("untracked symlink must not be dereferenced");
+        assert!(error.contains("symlink"), "{error}");
         let _ = fs::remove_dir_all(sandbox);
     }
 

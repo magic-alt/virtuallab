@@ -8,7 +8,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
 - **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
-- **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; identify untracked files and directories; save local line comments and track review state.
+- **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; preview untracked text files and expand untracked directories without staging; save local line comments and track review state.
 - **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
 - **Non-blocking agent task notifications** — launch an interactive Codex CLI with per-launch OSC 9 completion/attention signals, receive native desktop toasts when working elsewhere, and return through an in-app notification inbox to the originating worktree and terminal. Structured Agents turn-completion events use the same inbox; ordinary terminal bells never imply success.
 - **GitHub PR and CI dashboard** — browse open pull requests from any workspace, inspect all GitHub CI checks and failed jobs, review merge readiness, and explicitly confirm a SHA-pinned remote merge (Squash/Merge/Rebase). Existing issue context and review drafts remain supported.
@@ -66,11 +66,11 @@ The preview uses representative data. Native folder selection, Git operations, t
 
 1. Select **Add Repository** and choose a local Git repository.
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
-3. Use **Changes**, **History**, and **Overview** to inspect the selected workspace. Worktree lists unstaged and untracked entries; Staged shows index changes; Base compares committed changes against a selected ref. Untracked entries have status information but no tracked diff preview.
+3. Use **Changes**, **History**, and **Overview** to inspect the selected workspace. Worktree lists unstaged and untracked entries; Staged shows index changes; Base compares committed changes against a selected ref. Untracked text files are previewed as new additions without staging. Expand an untracked folder to inspect its files; Staged and Base continue to show only their respective Git changes.
 4. Use **Terminal** for interactive work (choose **Start Codex with alerts** for long-running Codex turns and OS notifications). In **Run**, choose an automatically detected one-click build/package recipe or save an editable multi-step Build/Test/Package/Deploy profile. Steps run sequentially in the selected worktree; Deploy requires explicit confirmation every time. See [Project Build Workflows](docs/PROJECT_BUILD_WORKFLOWS.md).
 5. Use **GitHub** to select an open PR, inspect failing/pending CI jobs, and confirm a merge once GitHub reports `CLEAN`; see [PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md). Use **Agents** when an optional agent provider is configured.
 
-For code review, select a changed tracked file and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
+For code review, select a changed file (tracked or untracked text) and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
 
 ## Application version
 

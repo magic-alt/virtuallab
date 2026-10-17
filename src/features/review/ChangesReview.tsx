@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, LoaderCircle, MessageSquarePlus, Trash2, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { gitDiff } from "@/lib/backend";
@@ -29,6 +29,13 @@ interface ReviewFile {
   oldPath?: string | null;
   status: string;
   untracked?: boolean;
+  /** Child of a grouped untracked directory (not staged for preview). */
+  groupPath?: string;
+}
+
+interface UntrackedGroup {
+  files: ReviewFile[];
+  truncated: boolean;
 }
 
 export function ChangesReview({
@@ -71,6 +78,7 @@ export function ChangesReview({
   const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
   const [baseRef, setBaseRef] = useState(taskBaseRef ?? "main");
   const [baseFiles, setBaseFiles] = useState<DiffFileSummary[]>([]);
+  const [expandedUntracked, setExpandedUntracked] = useState<Record<string, UntrackedGroup>>({});
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -96,6 +104,7 @@ export function ChangesReview({
       setSelectedPath(null);
       setSelectedReviewLine(null);
       setBaseFiles([]);
+      setExpandedUntracked({});
       setError(null);
       setDiffOutdated(true);
     }
@@ -160,6 +169,7 @@ export function ChangesReview({
         setSelectedReviewLine(null);
         setDraftBody("");
         setResult(null);
+        setExpandedUntracked({});
         setDiffOutdated(true);
       }
     } catch (err) {
@@ -185,10 +195,19 @@ export function ChangesReview({
           ? change.indexStatus !== " " && change.indexStatus !== "?"
           : change.worktreeStatus !== " " || change.kind === "untracked",
       )
-      .map((change) => localReviewFile(change, mode));
-  }, [baseFiles, mode, snapshot.changes]);
+      .flatMap((change): ReviewFile[] => {
+        const file = localReviewFile(change, mode);
+        const group = mode === "worktree" ? expandedUntracked[file.path] : undefined;
+        return group && file.untracked && file.path.endsWith("/")
+          ? [file, ...group.files]
+          : [file];
+      });
+  }, [baseFiles, expandedUntracked, mode, snapshot.changes]);
 
   const selectedUntracked = files.find((file) => file.path === selectedPath && file.untracked);
+  const selectedUntrackedGroup = selectedUntracked?.path.endsWith("/")
+    ? expandedUntracked[selectedUntracked.path]
+    : undefined;
 
   const loadFile = async (file: ReviewFile) => {
     if (!enabled) return;
@@ -198,7 +217,14 @@ export function ChangesReview({
     setDraftBody("");
     setResult(null);
     setError(null);
-    if (file.untracked) {
+    const isUntrackedDirectory = file.untracked && file.path.endsWith("/");
+    if (isUntrackedDirectory && expandedUntracked[file.path]) {
+      // Clicking an expanded group collapses it without another Git process.
+      setExpandedUntracked((current) => {
+        const next = { ...current };
+        delete next[file.path];
+        return next;
+      });
       setLoading(false);
       return;
     }
@@ -213,7 +239,24 @@ export function ChangesReview({
         baseRef: taskBaseRef ?? (mode === "base" ? baseRef.trim() || null : null),
       });
       if (requestRevision === requestRevisionRef.current) {
-        setResult(next);
+        if (isUntrackedDirectory) {
+          // Rust lists only non-ignored untracked children, on demand.
+          setExpandedUntracked((current) => ({
+            ...current,
+            [file.path]: {
+              files: next.files.map((child) => ({
+                path: child.path,
+                status: child.status,
+                untracked: true,
+                groupPath: file.path,
+              })),
+              truncated: next.truncated,
+            },
+          }));
+          setResult(null);
+        } else {
+          setResult(next);
+        }
         setDiffOutdated(false);
       }
     } catch (err) {
@@ -266,6 +309,7 @@ export function ChangesReview({
     setSelectedReviewLine(null);
     setDraftBody("");
     setResult(null);
+    setExpandedUntracked({});
     setError(null);
   };
 
@@ -455,7 +499,7 @@ export function ChangesReview({
                 ? "Load a base ref to compare committed changes. Local unstaged and untracked changes are not included."
                 : mode === "index"
                   ? "Staged changes only. Untracked entries are shown in Worktree."
-                  : "Unstaged changes and untracked entries. Select a tracked file for read-only Monaco review."}
+                  : "Unstaged and untracked files. Select a file to preview, or expand an untracked folder. Nothing is staged automatically."}
             </div>
           </div>
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="changes-file-list">
@@ -474,6 +518,7 @@ export function ChangesReview({
                   file={file}
                   active={file.path === selectedPath}
                   disabled={!enabled}
+                  expanded={Boolean(expandedUntracked[file.path])}
                   onSelect={() => void loadFile(file)}
                 />
               ))
@@ -531,7 +576,8 @@ export function ChangesReview({
 
         <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
           <div className="flex min-h-10 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
-            <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
+            <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400"
+              title={result?.path ?? selectedPath ?? ""}>
               {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? selectedPath ?? "No file selected"}
             </div>
             {selectedReviewLine && (
@@ -543,20 +589,26 @@ export function ChangesReview({
             {(result?.truncated || result?.contentTruncated) && (
               <Badge tone="orange">truncated</Badge>
             )}
-            {result && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
+            {selectedUntracked && <Badge tone="neutral">untracked</Badge>}
+            {result && !selectedUntracked && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
           </div>
 
+          {selectedUntracked && !selectedUntracked.path.endsWith("/") && textualResult && (
+            <div role="status" className="shrink-0 border-b border-white/[0.06] px-3 py-1.5 text-[11px] text-slate-400">
+              New untracked file · showing its current contents as additions. No git add or staging performed.
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-hidden" data-testid="changes-review-editor-body">
             {loading ? (
               <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
-              <ReviewMessage icon="error" title="Diff load failed" detail={error} />
-            ) : selectedUntracked ? (
+              <ReviewMessage icon="error" title={selectedUntracked ? "Preview failed" : "Diff load failed"} detail={error} />
+            ) : selectedUntracked?.path.endsWith("/") ? (
               <ReviewMessage
-                title={selectedUntracked.path.endsWith("/") ? "Untracked directory" : "Untracked file"}
-                detail={selectedUntracked.path.endsWith("/")
-                  ? "Git groups this directory as one local change. Its files are not staged; tracked diff review is unavailable here."
-                  : "This file is counted as a local change but is not staged. Tracked diff review is unavailable until the file is staged."}
+                title="Untracked directory"
+                detail={selectedUntrackedGroup
+                  ? `Showing ${selectedUntrackedGroup.files.length}${selectedUntrackedGroup.truncated ? "+" : ""} untracked files in the left list. Choose a child to preview it without staging.`
+                  : "Select the folder to expand its untracked files."}
               />
             ) : result?.binary ? (
               <ReviewMessage
@@ -615,7 +667,8 @@ export function ChangesReview({
               Large diff content was bounded before rendering. Review the complete file in an external editor if needed.
             </div>
           )}
-          <div className="mono border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600">
+          <div className="mono truncate border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600"
+            title={selectedPath ?? workspaceRoot}>
             {selectedPath ?? workspaceRoot}
           </div>
         </section>
@@ -638,19 +691,28 @@ function FileRow({
   file,
   active,
   disabled,
+  expanded,
   onSelect,
 }: {
   file: ReviewFile;
   active: boolean;
   disabled: boolean;
+  expanded: boolean;
   onSelect: () => void;
 }) {
   const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+  const noSlash = file.path.endsWith("/") ? file.path.slice(0, -1) : file.path;
+  const basename = noSlash.slice(noSlash.lastIndexOf("/") + 1);
+  const folder = noSlash.includes("/") ? noSlash.slice(0, noSlash.lastIndexOf("/") + 1) : "Repository root";
+  const displayName = file.oldPath
+    ? `${file.oldPath.slice(file.oldPath.lastIndexOf("/") + 1)} → ${basename}`
+    : file.path.endsWith("/") ? `${basename}/` : basename;
   return (
     <button
       aria-label={label}
       className={cn(
         "flex w-full items-center gap-3 border-b border-white/[0.05] px-3 py-3 text-left transition",
+        file.groupPath && "pl-8",
         active ? "bg-orange-400/[0.10]" : "hover:bg-white/[0.025]",
       )}
       disabled={disabled}
@@ -660,9 +722,14 @@ function FileRow({
       <span className="mono flex min-w-8 shrink-0 items-center justify-center border border-white/[0.08] px-1 py-1 text-[10px] text-orange-300">
         {file.status}
       </span>
-      <span className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={label}>
-        {label}
+      <span className="min-w-0 flex-1" title={label}>
+        <span className="mono block truncate text-xs text-slate-200">{displayName}</span>
+        <span className="mono mt-0.5 block truncate text-[10px] text-slate-500">{folder}</span>
       </span>
+      {file.untracked && file.path.endsWith("/") && (
+        expanded ? <ChevronDown className="shrink-0 text-orange-300" size={14} />
+          : <ChevronRight className="shrink-0 text-slate-400" size={14} />
+      )}
       {file.untracked && <Badge tone="neutral">untracked</Badge>}
     </button>
   );
