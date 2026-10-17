@@ -628,6 +628,11 @@ fn untracked_review_response(
     if paths.is_empty() {
         return Ok(None);
     }
+    if is_directory && paths.iter().any(|path| path == relative_path) {
+        // Git treats an embedded repository as an opaque untracked directory.
+        // Do not put the directory itself back into its own child list.
+        return Err("This folder contains an embedded Git repository. Open that repository separately to review its files.".to_string());
+    }
 
     if is_directory {
         // Porcelain status groups untracked directories, but the user must be
@@ -2603,7 +2608,7 @@ mod tests {
         let directory = repo.join("docs/superpowers/plans");
         fs::create_dir_all(&directory).expect("untracked plans directory");
         let path = "docs/superpowers/plans/新 plan file.md";
-        let body = "# New plan\\nnot staged\\n";
+        let body = "# New plan\nnot staged\n";
         fs::write(repo.join(path), body).expect("write untracked content");
 
         let preview = diff_request(&repo, DiffMode::Worktree, Some(path), None);
@@ -2630,10 +2635,10 @@ mod tests {
     #[test]
     fn diff_expands_untracked_directories_without_ignored_or_tracked_files() {
         let (sandbox, repo) = init_fixture_repo("diff-untracked-directory");
-        fs::write(repo.join(".gitignore"), "*.ignore\\n").expect("ignore fixture");
+        fs::write(repo.join(".gitignore"), "*.ignore\n").expect("ignore fixture");
         fs::create_dir_all(repo.join("generated/nested")).expect("nested group");
-        fs::write(repo.join("generated/new file.ts"), "export const x = 1;\\n").unwrap();
-        fs::write(repo.join("generated/nested/two.md"), "# Two\\n").unwrap();
+        fs::write(repo.join("generated/new file.ts"), "export const x = 1;\n").unwrap();
+        fs::write(repo.join("generated/nested/two.md"), "# Two\n").unwrap();
         fs::write(repo.join("generated/secret.ignore"), "ignored").unwrap();
         git_ok(&repo, &["add", ".gitignore"]);
         git_ok(&repo, &["commit", "-m", "ignore fixture"]);
@@ -2649,8 +2654,8 @@ mod tests {
         assert!(!listing.truncated);
 
         let child = diff_request(&repo, DiffMode::Worktree, Some("generated/nested/two.md"), None);
-        assert_eq!(child.modified_text.as_deref(), Some("# Two\\n"));
-        let index = diff_request(&repo, DiffMode::Index, Some("generated/nested/two.md"), None);
+        assert_eq!(child.modified_text.as_deref(), Some("# Two\n"));
+        let index = diff_request(&repo, DiffMode::Index, None, None);
         assert!(index.files.is_empty());
         assert!(index.patch.is_empty());
 
