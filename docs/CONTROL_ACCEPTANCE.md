@@ -2,6 +2,20 @@
 
 Every visible interactive control must have an automated test and/or an explicit desktop acceptance step. Automated success does not prove authenticated GitHub posting or safe physical hardware behavior.
 
+## Task-first local implementation
+
+See [capability boundaries](TASK_FIRST_CONTROL_CENTER.md). These automated regressions do not close the remaining packaged GUI, authenticated provider or three-host qualification gates.
+
+| Surface | Automated evidence | Desktop acceptance still required |
+| --- | --- | --- |
+| App navigation and terminal retention | `WorkbenchShell.tasks.test.tsx`, existing workspace/terminal tests | Switch Task/repository pages with live PTYs in multiple worktrees |
+| Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Manual plan through native folder/worktree provisioning; interrupted preparation reconciliation |
+| Execute, Cancel and Retry | Task cancellation tests; exact-run/thread and bounded-slot native fixtures | Authenticated concurrent Codex instances; cancellation during startup, verification and integration |
+| Task review context | `ChangesReview.taskBase.test.tsx`, `TaskWorkspaceTools.test.tsx` | Clean committed changes against accepted base; responsive diff and independent scroll |
+| Evidence, review, acceptance and passport | Native source/toolchain/runtime/atomic-store tests | Source change-and-restore, tool replacement, restart, stale dependency and superseded human decision |
+| Fixed-source integration and repair | Real temporary-repository native fixtures | Native confirmation cancellation/expiry, conflict preservation, committed scoped repair and independent re-verification |
+| Offline prototype | Standalone syntax/state checks | Visual inspection of all six mock scenarios; no native execution |
+
 | Surface | Control | Automated evidence | Desktop acceptance |
 | --- | --- | --- | --- |
 | Top bar | Search text | `WorkspaceSearch.test.tsx` | type repository/worktree name |

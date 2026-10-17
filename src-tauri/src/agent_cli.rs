@@ -4,6 +4,7 @@
 use crate::bounded_lines::{bounded_lines, MAX_AGENT_LINE_BYTES};
 use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
+use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -36,38 +37,38 @@ struct CliFeatures {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliBinding {
-    workspace_root: String,
-    harness: String,
-    thread_id: String,
-    created_at_ms: u128,
-    updated_at_ms: u128,
+    pub(crate) workspace_root: String,
+    pub(crate) harness: String,
+    pub(crate) thread_id: String,
+    pub(crate) created_at_ms: u128,
+    pub(crate) updated_at_ms: u128,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliStart {
-    workspace_root: String,
-    harness: String,
-    thread_id: Option<String>,
+    pub(crate) workspace_root: String,
+    pub(crate) harness: String,
+    pub(crate) thread_id: Option<String>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliTurn {
-    workspace_root: String,
-    thread_id: String,
-    text: String,
+    pub(crate) workspace_root: String,
+    pub(crate) thread_id: String,
+    pub(crate) text: String,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliInterrupt {
-    workspace_root: String,
-    thread_id: String,
-    turn_id: String,
+    pub(crate) workspace_root: String,
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliTurnResult {
-    thread_id: String,
-    turn_id: String,
+    pub(crate) thread_id: String,
+    pub(crate) turn_id: String,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,6 +86,7 @@ struct CliSession {
     active: Mutex<Option<(String, Arc<Mutex<Child>>)>>,
     turn_counter: AtomicU64,
     stopped: AtomicBool,
+    _reservation: WorkspaceReservation,
 }
 #[derive(Clone, Default)]
 pub struct CliAgentManager {
@@ -167,6 +169,7 @@ pub fn agent_cli_session_start(
     let mut map = state.sessions.lock().map_err(err_lock)?;
     if app.state::<crate::run_registry::RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
     if let Some(existing) = map.get(&workspace_key) {
+        if existing.stopped.load(Ordering::SeqCst) { return Err("CLI session is stopping; wait for cleanup before attaching.".into()); }
         let binding = existing.binding.lock().map_err(err_lock)?.clone();
         if binding.harness != request.harness {
             return Err("Stop the attached agent before changing harnesses.".into());
@@ -176,6 +179,7 @@ pub fn agent_cli_session_start(
         }
         return Ok(binding);
     }
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(root, &format!("agent {}", request.harness))?;
     owner.claim(root, &request.harness)?;
     let stamp = now();
     let binding = CliBinding {
@@ -185,6 +189,7 @@ pub fn agent_cli_session_start(
         created_at_ms: stamp, updated_at_ms: stamp,
     };
     map.insert(workspace_key, Arc::new(CliSession {
+        _reservation: reservation,
         binding: Mutex::new(binding.clone()),
         active: Mutex::new(None),
         turn_counter: AtomicU64::new(1),

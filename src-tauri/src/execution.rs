@@ -1,3 +1,4 @@
+use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
 use crate::process::background_command;
 use crate::output_decode::Utf8StreamDecoder;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -98,6 +99,7 @@ struct TerminalSession {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: TerminalWriter,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    _reservation: WorkspaceReservation,
 }
 
 impl TerminalSession {
@@ -131,7 +133,12 @@ pub struct TerminalManager {
 
 #[derive(Clone, Default)]
 pub struct ProcessManager {
-    children: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    children: Arc<Mutex<HashMap<String, Arc<ProcessRuntime>>>>,
+}
+
+struct ProcessRuntime {
+    child: Mutex<Child>,
+    _reservation: WorkspaceReservation,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +161,7 @@ pub async fn terminal_spawn(
     rows: u16,
 ) -> Result<(), String> {
     let manager = state.inner().clone();
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&cwd, "terminal")?;
     {
         let mut pending = manager.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?;
         if app.state::<RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
@@ -164,7 +172,7 @@ pub async fn terminal_spawn(
     let cleanup = manager.clone();
     let cleanup_id = id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        terminal_spawn_blocking(app, manager, id, cwd, cols, rows)
+        terminal_spawn_blocking(app, manager, id, cwd, cols, rows, reservation)
     }).await.map_err(|error| format!("Terminal startup task failed: {error}"))
         .and_then(|result| result);
     if result.is_err() {
@@ -193,6 +201,7 @@ fn terminal_spawn_blocking(
     cwd: String,
     cols: u16,
     rows: u16,
+    reservation: WorkspaceReservation,
 ) -> Result<(), String> {
     let cwd_path = std::path::Path::new(&cwd);
     if !cwd_path.is_dir() {
@@ -245,8 +254,9 @@ fn terminal_spawn_blocking(
         Err(error) => { let _ = child.kill(); let _ = child.wait(); return Err(error); }
     };
     let cancelled = app.state::<RunRegistry>().is_closed() || state.reservations.lock()
-        .map_err(|_| "Terminal reservation lock poisoned")?.get(&id).copied().unwrap_or(true);
+        .map(|pending| pending.get(&id).copied().unwrap_or(true)).unwrap_or(true);
     let session = Arc::new(Mutex::new(TerminalSession {
+        _reservation: reservation,
         cwd: cwd.clone(),
         #[cfg(unix)]
         process,
@@ -423,11 +433,12 @@ pub async fn process_spawn(
     let root = std::fs::canonicalize(&spec.cwd).map_err(|e| format!("Cannot resolve process workspace: {e}"))?;
     let mut spec = spec;
     spec.cwd = root.to_string_lossy().into_owned();
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&spec.cwd, "process")?;
     app.state::<RunRegistry>().begin(&spec.id, &spec.cwd, &spec.program, false, spec.presentation.clone())?;
     let id = spec.id.clone();
     let registry_app = app.clone();
     let manager = state.inner().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || process_spawn_blocking(app, manager, spec))
+    let result = tauri::async_runtime::spawn_blocking(move || process_spawn_blocking(app, manager, spec, reservation))
         .await.map_err(|error| format!("Process startup task failed: {error}"))
         .and_then(|result| result);
     if let Err(error) = &result { registry_app.state::<RunRegistry>().fail(&id, error); }
@@ -438,6 +449,7 @@ fn process_spawn_blocking(
     app: AppHandle,
     state: ProcessManager,
     spec: ProcessSpec,
+    reservation: WorkspaceReservation,
 ) -> Result<(), String> {
     if spec.program.trim().is_empty() {
         return Err("Process program must not be empty".to_string());
@@ -463,13 +475,13 @@ fn process_spawn_blocking(
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let child = Arc::new(Mutex::new(child));
+    let child = Arc::new(ProcessRuntime { child: Mutex::new(child), _reservation: reservation });
 
     map.insert(spec.id.clone(), child.clone());
     drop(map);
 
     if app.state::<RunRegistry>().is_stopping(&spec.id) {
-        let _ = crate::process::terminate_tree(&mut *child.lock().map_err(|_| "Process child lock poisoned")?);
+        let _ = crate::process::terminate_tree(&mut *child.child.lock().map_err(|_| "Process child lock poisoned")?);
     }
     let mut readers = Vec::new();
     if let Some(stdout) = stdout {
@@ -486,7 +498,7 @@ fn process_spawn_blocking(
         let mut cleanup_reported = false;
         loop {
         let status = {
-            let mut child = match child.lock() {
+            let mut child = match child.child.lock() {
                 Ok(child) => child,
                 Err(_) => break,
             };
@@ -495,7 +507,7 @@ fn process_spawn_blocking(
 
         match status {
             Ok(Some(status)) => {
-                let cleanup = child.lock().map_err(|_| "Process child lock poisoned".to_string())
+                let cleanup = child.child.lock().map_err(|_| "Process child lock poisoned".to_string())
                     .and_then(|mut child| child.terminate_remaining().map_err(|e| e.to_string()));
                 if let Err(error) = cleanup {
                     if !cleanup_reported {
@@ -524,7 +536,7 @@ fn process_spawn_blocking(
                         .stream("system", error.to_string()),
                 );
                 let _ = emit_event(&app_for_monitor, WorkbenchEvent::new("process.stop_requested", id_for_monitor.clone()));
-                if let Ok(mut child) = child.lock() { let _ = crate::process::terminate_tree(&mut child); }
+                if let Ok(mut child) = child.child.lock() { let _ = crate::process::terminate_tree(&mut child); }
                 thread::sleep(Duration::from_millis(120));
             }
         }
@@ -555,7 +567,7 @@ pub fn process_stop(
     };
 
     if let Some(child) = child {
-        crate::process::terminate_tree(&mut *child.lock().map_err(|_| "Process child lock poisoned")?)?;
+        crate::process::terminate_tree(&mut *child.child.lock().map_err(|_| "Process child lock poisoned")?)?;
     }
 
     Ok(())
@@ -944,7 +956,7 @@ impl ProcessManager {
     pub fn shutdown(&self) {
         if let Ok(children) = self.children.lock() {
             for child in children.values() {
-                if let Ok(mut child) = child.lock() { let _ = crate::process::terminate_tree(&mut child); }
+                if let Ok(mut child) = child.child.lock() { let _ = crate::process::terminate_tree(&mut child); }
             }
         }
     }

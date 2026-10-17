@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BuildIdentity } from "./BuildIdentity";
+import { TaskControlCenter, useTaskObserver } from "@/features/tasks/TaskControlCenter";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Command,
@@ -73,6 +74,13 @@ export function WorkbenchShell() {
     () => repositories.find((item) => item.id === activeRepositoryId) ?? null,
     [activeRepositoryId, repositories],
   );
+
+  type AppView = "home" | "tasks" | "repositories" | "evidence" | "settings";
+  // Preserve existing operators' workspace on migration; fresh installs begin at Tasks home.
+  const [appView, setAppView] = useState<AppView>(() => activeRepositoryId ? "repositories" : "home");
+  const lastTaskView = useRef<Exclude<AppView, "repositories">>("home");
+  if (appView !== "repositories") lastTaskView.current = appView;
+  useTaskObserver(repositories);
 
   const appendAgentEvent = useAgentTimeline((s) => s.append);
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
@@ -676,6 +684,7 @@ export function WorkbenchShell() {
   };
 
   const navigateToNotice = (notice: TaskNotice) => {
+    setAppView("repositories");
     const pathKey = workspaceKey(notice.workspaceRoot);
     const state = useWorkbenchStore.getState();
     const repository = (notice.repositoryId
@@ -704,6 +713,18 @@ export function WorkbenchShell() {
       setTab(destination);
       void loadSnapshot(notice.workspaceRoot).catch(() => undefined);
     }
+  };
+
+  const openTaskWorkspace = (root: string, destination: WorkspaceTab, repositoryRoot?: string) => {
+    const state = useWorkbenchStore.getState();
+    const owner = state.repositories.find((item) => repositoryRoot && workspaceKey(item.path) === workspaceKey(repositoryRoot))
+      ?? state.repositories.find((item) => workspaceKey(item.path) === workspaceKey(root)
+        || snapshotCacheRef.current.get(workspaceKey(item.path))?.worktrees.some((tree) => workspaceKey(tree.path) === workspaceKey(root)));
+    if (!owner) return;
+    saveWorkspaceState({repositoryId:owner.id,activeWorktreePath:root,activeTab:destination,updatedAt:Date.now()});
+    setAppView("repositories");
+    if (state.activeRepositoryId !== owner.id) selectRepository(owner.id);
+    else {setTab(destination);void loadSnapshot(root).catch(() => undefined);}
   };
 
   return (
@@ -763,6 +784,14 @@ export function WorkbenchShell() {
       )}
 
       <div className="flex min-h-0 flex-1">
+        <aside className="vl-app-navigation flex min-h-0 shrink-0 flex-col border-r">
+          <nav aria-label="工程控制中心导航" className="flex shrink-0 flex-col gap-1 border-b p-2">
+            {([ ["home", "控制中心"], ["tasks", "任务"], ["repositories", "工程仓库"], ["evidence", "证据"], ["settings", "设置"] ] as const).map(([view,label]) => (
+              <button key={view} type="button" aria-current={appView === view ? "page" : undefined}
+                className="vl-app-route rounded-md px-3 py-2 text-left text-sm" onClick={() => setAppView(view)}>{label}</button>
+            ))}
+          </nav>
+          <div hidden={appView !== "repositories"} className="min-h-0 flex-1 overflow-hidden">
         <ProjectSidebar
           repositories={repositories}
           activeRepositoryId={activeRepositoryId}
@@ -810,8 +839,11 @@ export function WorkbenchShell() {
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
           onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
         />
+          </div>
+        </aside>
 
         <section className="vl-stage flex min-h-0 min-w-0 flex-1 flex-col">
+          <div hidden={appView !== "repositories"} className="vl-workspace-host min-h-0 min-w-0 flex-1 flex-col">
           <WorkspaceHeader
             snapshot={visibleSnapshot}
             isPreview={isPreview}
@@ -852,6 +884,11 @@ export function WorkbenchShell() {
             }}
             onTabChange={switchTab}
           />
+          </div>
+          <div hidden={appView === "repositories"} className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <TaskControlCenter view={lastTaskView.current} repositories={repositories} activeRepository={activeRepository}
+              searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace}/>
+          </div>
 
           <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">
             <div className="flex min-w-0 items-center gap-4">

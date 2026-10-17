@@ -5,6 +5,7 @@ use std::time::Instant;
 
 struct Fixture {
     session: TerminalSession,
+    lifecycle: WorkspaceLifecycle,
     drained: mpsc::Receiver<()>,
     bytes: Arc<AtomicUsize>,
     markers: Arc<AtomicUsize>,
@@ -15,6 +16,13 @@ impl Fixture {
         Self::start_delayed(command, Duration::ZERO)
     }
     fn start_delayed(command: CommandBuilder, delay: Duration) -> Self {
+        let cwd = command.get_cwd().map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let cwd = std::fs::canonicalize(cwd).unwrap();
+        // Qualification runs outside an AppHandle. Own a real isolated native
+        // claim for the command's actual workspace, for the whole session.
+        let lifecycle = WorkspaceLifecycle::default();
+        let reservation = lifecycle.reserve(cwd.to_str().unwrap(), "terminal qualification").unwrap();
         let pair = native_pty_system().openpty(PtySize {
             rows: 24, cols: 80, pixel_width: 0, pixel_height: 0,
         }).unwrap();
@@ -50,8 +58,8 @@ impl Fixture {
             });
             let _ = done.send(());
         });
-        Self { session: TerminalSession { cwd: "/virtuallab-pty-fixture".into(), master: Some(pair.master),
-            writer, child }, drained, bytes, markers, output }
+        Self { session: TerminalSession { cwd: cwd.to_string_lossy().into_owned(), master: Some(pair.master),
+            writer, child, _reservation: reservation }, lifecycle, drained, bytes, markers, output }
     }
     fn stop(&mut self) {
         self.session.terminate().unwrap();
@@ -186,6 +194,20 @@ fn windows_terminal_stop_releases_pty_reader_without_dropping_session() {
     command.args(["-e", "setInterval(()=>{},1000)"]);
     let mut fixture = Fixture::start(command);
     fixture.stop();
+}
+
+#[test]
+fn windows_terminal_fixture_retains_claim_until_session_is_dropped() {
+    let mut command = CommandBuilder::new("node.exe");
+    command.args(["-e", "setInterval(()=>{},1000)"]);
+    let mut fixture = Fixture::start(command);
+    let lifecycle = fixture.lifecycle.clone();
+    let root = fixture.session.cwd.clone();
+    assert!(lifecycle.reserve(&root, "competing writer").is_err());
+    fixture.stop();
+    assert!(lifecycle.reserve(&root, "before session drop").is_err());
+    drop(fixture);
+    assert!(lifecycle.reserve(&root, "after observed stop and drop").is_ok());
 }
 
 #[test]

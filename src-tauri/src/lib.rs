@@ -1,4 +1,11 @@
 mod app_build;
+mod task_inputs;
+mod task_evidence;
+mod task_git_watch;
+mod tasks;
+mod task_runtime;
+mod task_execution;
+mod workspace_lifecycle;
 #[cfg(test)]
 #[path = "../build_metadata_test.rs"]
 mod build_metadata_tests;
@@ -63,6 +70,9 @@ pub fn run() {
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
         .manage(RunRegistry::default())
+        .manage(workspace_lifecycle::WorkspaceLifecycle::default())
+        .manage(task_runtime::TaskDelivery::default())
+        .manage(task_execution::TaskExecution::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentJournal::default())
@@ -72,8 +82,36 @@ pub fn run() {
         .manage(VerificationManager::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            let manager = match app.path().app_data_dir() {
+                Ok(directory) => {
+                    let path = directory.join("tasks-v1.json");
+                    tasks::TaskManager::open(path.clone())
+                        .unwrap_or_else(|error| tasks::TaskManager::unavailable(path,error))
+                }
+                Err(_) => tasks::TaskManager::unavailable(std::path::PathBuf::new(), "Task application-data directory is unavailable".into()),
+            };
+            app.manage(manager);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_build::app_build_info,
+            tasks::task_list,
+            tasks::task_get,
+            tasks::task_events,
+            tasks::task_accept_plan,
+            task_execution::task_prepare_workspace,
+            task_execution::task_reconcile_workspace,
+            task_execution::task_start,
+            task_execution::task_retry,
+            task_execution::task_cancel,
+            task_runtime::task_readiness,
+            task_runtime::task_verify,
+            task_runtime::task_review,
+            task_runtime::task_accept_result,
+            task_runtime::task_integration_preview,
+            task_runtime::task_integration_confirm,
+            task_runtime::task_export_passport,
             inspect_repository,
             inspect_worktree_status,
             open_workspace_directory,
@@ -129,6 +167,7 @@ pub fn run() {
         .expect("error while building VirtualLab")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                app.state::<task_execution::TaskExecution>().shutdown();
                 app.state::<RunRegistry>().close();
                 app.state::<WatchManager>().shutdown();
                 app.state::<BuildWorkflowManager>().shutdown();
