@@ -743,9 +743,55 @@ fn default_preparation_target(repository: &Path, branch: &str) -> Result<PathBuf
         .join(slug))
 }
 
+/// Check the original spelling before Path components or filesystem operations:
+/// Windows verbatim paths do not parse forward slashes like ordinary paths.
+/// Git positional paths use ordinary drive/UNC syntax, preserving case/Unicode.
+fn preparation_git_spelling(value: &str, windows: bool) -> Result<String, String> {
+    if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err("Worktree target must be a bounded literal path".into());
+    }
+    let segments = || value.split(|ch| ch == '/' || (windows && ch == '\\'));
+    if segments().any(|part| part == ".." || part.eq_ignore_ascii_case(".git")) {
+        return Err(
+            "Worktree target must stay outside Git internals without parent traversal".into(),
+        );
+    }
+    if !windows {
+        return Ok(value.to_owned());
+    }
+    // Removing the verbatim namespace must not turn a literal trailing dot or
+    // space into a different Win32 directory. Refuse such unrepresentable paths.
+    if segments().any(|part| part.ends_with('.') || part.ends_with(' ')) {
+        return Err("Worktree target has an ambiguous Windows path component".into());
+    }
+    let slashed = value.replace('\\', "/");
+    if let Some(unc) = slashed.strip_prefix("//?/UNC/") {
+        return Ok(format!("//{unc}"));
+    }
+    if let Some(drive) = slashed.strip_prefix("//?/") {
+        let bytes = drive.as_bytes();
+        if bytes.first().is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(1) == Some(&b':')
+            && bytes.get(2) == Some(&b'/')
+        {
+            return Ok(drive.to_owned());
+        }
+        return Err("Worktree target requires a regular drive or UNC path".into());
+    }
+    if slashed.starts_with("//./") {
+        return Err("Worktree target cannot use a Windows device namespace".into());
+    }
+    Ok(slashed)
+}
+
 /// Resolve an absent path through its nearest existing ancestor without mkdir.
 /// Reject dangling links, parent traversal, Git internals and non-directory parents.
 fn preparation_target(path: &Path, require_absent: bool) -> Result<PathBuf, String> {
+    let spelling = preparation_git_spelling(
+        path.to_str().ok_or("Worktree target must be Unicode")?,
+        cfg!(windows),
+    )?;
+    let path = Path::new(&spelling);
     if !path.is_absolute()
         || path
             .to_str()
@@ -800,7 +846,14 @@ fn preparation_target(path: &Path, require_absent: bool) -> Result<PathBuf, Stri
     {
         return Err("Worktree target resolves inside Git internals".into());
     }
-    Ok(canonical)
+    // canonicalize reintroduces a verbatim prefix on Windows. Convert again
+    // before storing/passing a positional path to the typed Git adapter.
+    Ok(PathBuf::from(preparation_git_spelling(
+        canonical
+            .to_str()
+            .ok_or("Worktree target must be Unicode")?,
+        cfg!(windows),
+    )?))
 }
 
 fn validate_branch(root: &Path, branch: &str) -> Result<(), String> {
@@ -1009,7 +1062,13 @@ fn reconcile_preparation(
         .map(Ok)
         .unwrap_or_else(|| default_preparation_target(&root, &intent.branch))?;
     let target = preparation_target(&recorded_target, false)?;
-    if target != recorded_target {
+    let recorded_spelling = PathBuf::from(preparation_git_spelling(
+        recorded_target
+            .to_str()
+            .ok_or("Retained target must be Unicode")?,
+        cfg!(windows),
+    )?);
+    if target != recorded_spelling {
         return Err(
             "Retained target parent identity changed; manual reconciliation required".into(),
         );
@@ -2009,7 +2068,10 @@ mod review_tests {
             &WorkspaceLifecycle::default(),
         )
         .unwrap();
-        assert_eq!(bound.workspace_root.as_deref(), Some(target));
+        assert_eq!(
+            crate::workspace_identity::key(bound.workspace_root.as_deref().unwrap()),
+            crate::workspace_identity::key(target),
+        );
     }
     #[test]
     fn reconciliation_binds_exact_observed_worktree_without_recreating_it() {
@@ -2044,7 +2106,10 @@ mod review_tests {
             &WorkspaceLifecycle::default(),
         )
         .unwrap();
-        assert_eq!(result.workspace_root.as_deref(), Some(target));
+        assert_eq!(
+            crate::workspace_identity::key(result.workspace_root.as_deref().unwrap()),
+            crate::workspace_identity::key(target),
+        );
         assert_eq!(
             crate::task_inputs::git(&fixture.root, &["worktree", "list", "--porcelain", "-z"])
                 .unwrap(),
@@ -2138,16 +2203,47 @@ mod review_tests {
         .is_err());
     }
     #[test]
+    fn preparation_git_spelling_preserves_drive_unc_unicode_and_rejects_raw_traversal() {
+        for (raw, expected) in [
+            (r"\\?\C:\work tree\仓库\lane", "C:/work tree/仓库/lane"),
+            (
+                r"\\?\UNC\server\share\工作 lane",
+                "//server/share/工作 lane",
+            ),
+            (r"D:\work tree\lane", "D:/work tree/lane"),
+            (
+                "//server/share/work tree/lane",
+                "//server/share/work tree/lane",
+            ),
+        ] {
+            assert_eq!(preparation_git_spelling(raw, true).unwrap(), expected);
+        }
+        for raw in [
+            r"\\?\C:\repo\..\escape",
+            r"\\?\C:\repo/../escape",
+            r"\\?\UNC\server\share\repo/../escape",
+            r"C:\repo\.GiT\lane",
+            r"\\?\C:\repo/.git/lane",
+            r"\\.\GLOBALROOT\lane",
+            r"\\?\GLOBALROOT\lane",
+            r"\\?\C:\repo\alias.\lane",
+        ] {
+            assert!(preparation_git_spelling(raw, true).is_err(), "{raw}");
+        }
+        assert_eq!(
+            preparation_git_spelling("/tmp/仓库/lane", false).unwrap(),
+            "/tmp/仓库/lane"
+        );
+        assert!(preparation_git_spelling("/tmp/repo/../escape", false).is_err());
+    }
+
+    #[test]
     fn target_validation_rejects_traversal_git_internals_and_dangling_links() {
         let fixture = Fixture::new();
         let mut request = fixture.request("task-lane");
-        request.target_path = Some(
-            fixture
-                .root
-                .join("../escape")
-                .to_string_lossy()
-                .into_owned(),
-        );
+        // Preserve raw separators and parent components in the request instead
+        // of applying PathBuf::join's Windows verbatim rules in the fixture.
+        request.target_path = Some(format!("{}/../escape", fixture.root.to_string_lossy()));
         assert!(validate_preparation(&fixture.task, &request).is_err());
         request.target_path = Some(
             fixture

@@ -62,8 +62,10 @@ fn dependency_revision_guard_rejects_stale_decisions_without_persistence() {
 fn gate_programs_match_runner_exact_names_while_toolchain_paths_remain_metadata() {
     let f = Fixture::new();
     let m = f.manager();
+    let compiler = PathBuf::from(&f.repo).join("Compiler Toolchain/bin/python3");
+    assert!(compiler.is_absolute());
     let profile = serde_json::json!({"schemaVersion":1,"id":"checks","name":"Checks",
-        "toolchainPrograms":["/opt/Compiler Toolchain/bin/python3","C:\\Compiler Toolchain\\bin\\cl.exe"],
+        "toolchainPrograms":[compiler.to_str().unwrap(),"C:\\Compiler Toolchain\\bin\\cl.exe"],
         "gates":[{"id":"build","label":"Build","kind":"build","required":true,"approval":"none",
         "executor":{"type":"process","program":"cargo","args":["--version"],"cwd":"workspace"}}]});
     for program in [
@@ -596,8 +598,10 @@ fn symlink_target_with_literal_backslash_is_not_reinterpreted_as_scope_component
 fn toolchain_declarations_preserve_paths_and_reject_secret_fingerprints() {
     let f = Fixture::new();
     let m = f.manager();
+    let compiler = PathBuf::from(&f.repo).join("Tool Chain/bin/clang");
+    assert!(compiler.is_absolute());
     let profile = serde_json::json!({"schemaVersion":1,"id":"checks","name":"Checks",
-        "toolchainPrograms":["clang++","/opt/Tool Chain/bin/clang","C:\\Tool Chain\\bin\\cl.exe"],
+        "toolchainPrograms":["clang++",compiler.to_str().unwrap(),"C:\\Tool Chain\\bin\\cl.exe"],
         "gates":[{"id":"build","label":"Build","kind":"build","required":true,"approval":"none",
         "executor":{"type":"process","program":"cmake","args":["--build","build"],"cwd":"workspace"}}]});
     let mut d = draft("a", &[]);
