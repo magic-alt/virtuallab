@@ -2,6 +2,7 @@
 //! Only explicitly requested user actions start processes. Presets never flash,
 //! publish, or deploy, and the executor never interprets a shell command string.
 use crate::execution::process_command;
+use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
 use crate::self_restart::{self, SelfBuildPlan};
 use crate::output_decode::Utf8StreamDecoder;
 use serde::{Deserialize, Serialize};
@@ -100,10 +101,10 @@ fn emit(app: &AppHandle, event: BuildEvent) {
     let _ = app.emit("build://event", event);
 }
 
-#[derive(Default)]
 struct ActiveBuild {
     cancel: AtomicBool,
     child: Mutex<Option<Child>>,
+    _reservation: WorkspaceReservation,
 }
 
 #[derive(Clone, Default)]
@@ -496,6 +497,7 @@ pub fn build_workflow_start(
     spec: BuildWorkflowSpec,
 ) -> Result<(), String> {
     let root = validate_spec(&spec)?;
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&root.to_string_lossy(), "build workflow")?;
     let restart_plan = if spec.restart_after_build {
         if !is_tauri_desktop_build(&spec.steps) {
             return Err("Only npm run tauri:build may rebuild and restart the running app".into());
@@ -504,7 +506,9 @@ pub fn build_workflow_start(
     } else {
         None
     };
-    let run = Arc::new(ActiveBuild::default());
+    let run = Arc::new(ActiveBuild {
+        _reservation: reservation, cancel: AtomicBool::new(false), child: Mutex::new(None),
+    });
     let manager = state.inner().clone();
     {
         let mut active = manager.active.lock()

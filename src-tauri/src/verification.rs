@@ -1,6 +1,7 @@
 //! Local verification runner and evidence storage.
 //! This module intentionally does NOT authorize hardware execution.
 use crate::process::background_command;
+use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -13,7 +14,7 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 const READER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(3);
@@ -126,6 +127,7 @@ struct VerificationEvent {
 
 #[derive(Clone)]
 struct ActiveVerification {
+    _reservation: Arc<WorkspaceReservation>,
     workspace_root: String,
     cancel: Arc<AtomicBool>,
 }
@@ -155,6 +157,7 @@ pub async fn verification_run(
     validate_id(&request.run_id)?;
     validate_profile(&request.profile)?;
     let manager = manager.inner().clone();
+    let reservation = Arc::new(app.state::<WorkspaceLifecycle>().reserve(&request.workspace_root, "verification")?);
     let token = Arc::new(AtomicBool::new(false));
     {
         let mut active = manager.active.lock().map_err(lock_err)?;
@@ -162,17 +165,24 @@ pub async fn verification_run(
             return Err("Verification run id is already active.".into());
         }
         active.insert(request.run_id.clone(), ActiveVerification {
+            _reservation: reservation.clone(),
             workspace_root: request.workspace_root.clone(),
             cancel: token.clone(),
         });
     }
-    let run_id = request.run_id.clone();
+    let worker_manager = manager.clone();
+    let worker_id = request.run_id.clone();
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        execute_verification(&app, request, token)
+        // The blocking worker retains ownership even if its awaiting command
+        // is cancelled. Remove the runtime only after all gates have stopped.
+        let _reservation = reservation;
+        let outcome = execute_verification(&app, request, token);
+        worker_manager.active.lock().map_err(lock_err)?.remove(&worker_id);
+        outcome
     })
     .await
     .map_err(|error| format!("Verification worker crashed: {error}"));
-    manager.active.lock().map_err(lock_err)?.remove(&run_id);
+    // A panicked worker leaves its manager entry reserved (fail closed).
     outcome?
 }
 
@@ -192,11 +202,14 @@ pub fn verification_cancel(
 
 #[tauri::command]
 pub async fn verification_import_artifact(
+    app: AppHandle,
     manager: State<'_, VerificationManager>,
     request: ArtifactImportRequest,
 ) -> Result<EvidenceManifest, String> {
     let manager = manager.inner().clone();
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&request.workspace_root, "evidence import")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
         import_artifact(&manager, request)
     })
     .await
@@ -345,19 +358,34 @@ fn run_gate(
         }
     };
     // Includes the successful leader-exit path: descendants can still own pipes.
-    if let Err(error) = crate::process::terminate_tree(&mut child) {
-        return ("fail".into(), format!("Process tree cleanup not confirmed: {error}"), exit);
+    let mut cleanup_error = None;
+    loop {
+        match crate::process::terminate_tree(&mut child) {
+            Ok(()) => break,
+            Err(error) => {
+                cleanup_error = Some(error);
+                // Retain the worker and its manager reservation while cleanup
+                // is unknown. Cancellation is not proof of process-tree exit.
+                thread::sleep(Duration::from_millis(120));
+            }
+        }
     }
     let deadline = Instant::now() + READER_CLEANUP_TIMEOUT;
+    let mut reader_timed_out = false;
     while !output.is_finished() || !error.is_finished() {
-        if Instant::now() >= deadline {
-            return ("fail".into(), "Output stream cleanup not confirmed within 3 seconds.".into(), exit);
-        }
+        // Do not release the workspace while log writers still own files.
+        reader_timed_out |= Instant::now() >= deadline;
         thread::sleep(Duration::from_millis(20));
     }
     let (Ok(Ok(out_truncated)), Ok(Ok(err_truncated))) = (output.join(), error.join()) else {
         return ("fail".into(), "Could not persist output stream evidence.".into(), exit);
     };
+    if let Some(error) = cleanup_error {
+        return ("fail".into(), format!("Process tree cleanup required retry: {error}"), exit);
+    }
+    if reader_timed_out {
+        return ("fail".into(), "Output stream cleanup exceeded 3 seconds.".into(), exit);
+    }
     for (suffix,stream) in [("stdout","stdout"),("stderr","stderr")] {
         let path = dir.join(format!("{}.{}.log",gate.id,suffix));
         if let Ok(artifact) = artifact_from_file(
@@ -579,17 +607,23 @@ mod tests {
     fn active_verification_prevents_worktree_removal_until_finished() {
         let manager = VerificationManager::default();
         let key = "fixture-verification".to_string();
+        let root = fixture_dir("active-ownership");
+        let service = WorkspaceLifecycle::default();
+        let path = root.to_string_lossy().to_string();
         manager.active.lock().unwrap().insert(key.clone(), ActiveVerification {
-            workspace_root: "/repo/verification".into(),
+            _reservation: Arc::new(service.reserve(&path, "verification").unwrap()),
+            workspace_root: path.clone(),
             cancel: Arc::new(AtomicBool::new(false)),
         });
-        assert!(manager.owns_workspace("/repo/verification/").unwrap());
+        assert!(manager.owns_workspace(&format!("{path}/")).unwrap());
         assert!(!manager.owns_workspace("/repo/other").unwrap());
         manager.active.lock().unwrap().get(&key).unwrap().cancel.store(true, Ordering::Release);
-        assert!(manager.owns_workspace("/repo/verification").unwrap(),
+        assert!(manager.owns_workspace(&path).unwrap(),
             "Cancellation pending must still block deletion");
         manager.active.lock().unwrap().remove(&key);
-        assert!(!manager.owns_workspace("/repo/verification").unwrap());
+        assert!(!manager.owns_workspace(&path).unwrap());
+        assert!(service.begin_removal(&path).is_ok());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn exited_parent_with_inherited_pipes_finishes_promptly() {

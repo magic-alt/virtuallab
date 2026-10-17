@@ -4,8 +4,8 @@
   font-family:
     "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
     sans-serif;
-  color: #fff0d2;
-  background: #913400;
+  color: #e6edf3;
+  background: #111315;
   font-synthesis: none;
   text-rendering: geometricPrecision;
   color-scheme: dark;
@@ -27,7 +27,7 @@ body,
 body {
   margin: 0;
   overflow: hidden;
-  background: #913400;
+  background: #111315;
 }
 
 button,
@@ -66,16 +66,17 @@ textarea:focus-visible {
   --vl-orange-6: #3c1400;
   position: relative;
   isolation: isolate;
-  background: #8f3100;
-  color: #fff0d2;
+  background: #111315;
+  color: #e6edf3;
   font-family:
     "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC",
     sans-serif;
   font-size: 14px;
-  text-shadow: 1px 1px 0 rgba(63, 18, 0, 0.72);
+  text-shadow: none;
 }
 
 .pixel-ui::after {
+  display: none;
   content: "";
   position: fixed;
   inset: 0;
@@ -97,119 +98,111 @@ textarea:focus-visible {
 .pixel-ui .rounded-xl,
 .pixel-ui .rounded-lg,
 .pixel-ui .rounded-md {
-  border-radius: 2px !important;
+  border-radius: 6px !important;
 }
 
 .pixel-ui .soft-shadow {
-  border-color: rgba(255, 141, 27, 0.55) !important;
-  background: #5d1f00 !important;
-  box-shadow:
-    3px 3px 0 rgba(66, 18, 0, 0.72),
-    inset 1px 1px 0 rgba(255, 190, 102, 0.16) !important;
+  border-color: #343b44 !important;
+  background: #181c20 !important;
+  box-shadow: 0 2px 8px #0003 !important;
 }
 
 .pixel-ui [class*="border-white"] {
-  border-color: rgba(255, 151, 48, 0.38) !important;
+  border-color: #343b44 !important;
 }
 
 .pixel-ui [class*="bg-white/"] {
-  background-color: rgba(255, 161, 58, 0.075) !important;
+  background-color: #ffffff06 !important;
 }
 
 .pixel-ui .text-slate-100,
 .pixel-ui .text-slate-200 {
-  color: #fff1d6 !important;
+  color: #e6edf3 !important;
 }
 
 .pixel-ui .text-slate-300,
 .pixel-ui .text-slate-400 {
-  color: #f7c58b !important;
+  color: #b8c2ce !important;
 }
 
 .pixel-ui .text-slate-500,
 .pixel-ui .text-slate-600,
 .pixel-ui .text-slate-700 {
-  color: #d38a48 !important;
+  color: #9da7b3 !important;
 }
 
 .vl-workbench {
-  background:
-    linear-gradient(180deg, rgba(255, 138, 0, 0.13), transparent 19%),
-    #8f3100 !important;
+  --vl-background: #111315;
+  --vl-surface: #181c20;
+  --vl-raised: #22272e;
+  --vl-border: #343b44;
+  --vl-text: #e6edf3;
+  --vl-muted: #9da7b3;
+  --vl-accent: #f59a45;
+  background: var(--vl-background) !important;
 }
 
 .vl-topbar {
-  border-color: #ff7a00 !important;
-  background: #ad4300 !important;
-  box-shadow:
-    inset 0 -2px 0 #6b2300,
-    inset 0 1px 0 rgba(255, 202, 132, 0.34);
+  border-color: var(--vl-border) !important;
+  background: var(--vl-surface) !important;
+  box-shadow: none;
 }
 
 .vl-sidebar {
-  border-color: #ff7a00 !important;
-  background:
-    linear-gradient(180deg, #9f3900 0%, #8c2f00 100%) !important;
+  border-color: var(--vl-border) !important;
+  background: var(--vl-surface) !important;
 }
 
 .vl-stage {
-  background: #7e2a00 !important;
+  background: var(--vl-background) !important;
 }
 
 .vl-header {
-  border-color: #ff7a00 !important;
-  background: #963500 !important;
+  border-color: var(--vl-border) !important;
+  background: var(--vl-surface) !important;
   backdrop-filter: none !important;
 }
 
 .vl-tabs {
-  border-color: #ff7a00 !important;
-  background: #7d2a00 !important;
+  border-color: var(--vl-border) !important;
+  background: var(--vl-surface) !important;
 }
 
 .vl-main {
   position: relative;
-  background-color: #842d00 !important;
-  background-image:
-    linear-gradient(rgba(255, 166, 70, 0.18) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 166, 70, 0.18) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 123, 0, 0.14), transparent 42%) !important;
-  background-size: 18px 18px, 18px 18px, 100% 100% !important;
+  background-color: var(--vl-background) !important;
+  background-image: none !important;
 }
 
 .vl-footer {
-  border-color: #ff7a00 !important;
-  background: #a23b00 !important;
+  border-color: var(--vl-border) !important;
+  background: var(--vl-surface) !important;
 }
 
 .vl-search {
-  border: 1px solid #f47a00;
-  background: #6f2500;
-  box-shadow:
-    inset 1px 1px 0 rgba(255, 184, 92, 0.16),
-    2px 2px 0 rgba(83, 24, 0, 0.55);
+  border: 1px solid var(--vl-border);
+  background: var(--vl-raised);
+  box-shadow: none;
 }
 
 .vl-search input {
   background: transparent;
-  color: #fff0d2;
+  color: #e6edf3;
   outline: none;
 }
 
 .vl-search input::placeholder {
-  color: #e0a05e;
+  color: #9da7b3;
 }
 
 .vl-dialog {
-  border-color: #ff8610 !important;
-  background: #6b2400 !important;
-  box-shadow:
-    5px 5px 0 rgba(66, 18, 0, 0.72),
-    inset 1px 1px 0 rgba(255, 199, 126, 0.2) !important;
+  border-color: var(--vl-border) !important;
+  background: var(--vl-raised) !important;
+  box-shadow: 0 16px 64px #0008 !important;
 }
 
 .vl-editor-surface {
-  background: #130b06 !important;
+  background: #111315 !important;
 }
 
 /* Render the PTY above the decorative scanlines, but below dialogs (z-50).
@@ -228,11 +221,8 @@ textarea:focus-visible {
 }
 
 .surface-grid {
-  background-color: #842d00;
-  background-image:
-    linear-gradient(rgba(255, 166, 70, 0.18) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 166, 70, 0.18) 1px, transparent 1px);
-  background-size: 18px 18px;
+  background-color: #111315;
+  background-image: none;
 }
 
 .soft-shadow {
@@ -243,7 +233,7 @@ textarea:focus-visible {
 
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: #e36600 #682100;
+  scrollbar-color: #566170 #181c20;
 }
 
 .scrollbar-thin::-webkit-scrollbar {
@@ -252,41 +242,41 @@ textarea:focus-visible {
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: #e36600;
-  border: 1px solid #ff9d38;
+  background: #566170;
+  border: 1px solid #343b44;
   border-radius: 0;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
-  background: #682100;
+  background: #181c20;
 }
 
 .field {
   width: 100%;
   min-height: 38px;
-  border: 1px solid #e46b00;
-  border-radius: 2px;
-  background: #4d1900;
+  border: 1px solid #566170;
+  border-radius: 6px;
+  background: #22272e;
   padding: 0 11px;
-  color: #fff0d2;
-  font-size: 12px;
+  color: #e6edf3;
+  font-size: 14px;
   outline: none;
   transition: border-color 100ms steps(2, end), background 100ms steps(2, end), box-shadow 100ms steps(2, end);
 }
 
 .field:focus {
   border-color: #ffae40;
-  background: #5e2000;
-  box-shadow: 2px 2px 0 #401300;
+  background: #22272e;
+  box-shadow: 0 0 0 2px #f59a4533;
 }
 
 .field::placeholder {
-  color: #c77738;
+  color: #9da7b3;
 }
 
 select.field option {
-  background: #4d1900;
-  color: #fff0d2;
+  background: #22272e;
+  color: #e6edf3;
 }
 
 
@@ -327,4 +317,23 @@ select.field option {
 
 .pixel-ui button {
   letter-spacing: 0.01em;
+}
+
+/* Hiding application routes must not unmount the workspace-owned PTY host. */
+.vl-workspace-host:not([hidden]) { display: flex; }
+[hidden] { display: none !important; }
+.vl-app-navigation { width: clamp(220px,20vw,286px); border-color: var(--vl-border); background: var(--vl-surface); }
+.vl-app-navigation .vl-sidebar { width: 100%; height: 100%; border-right: 0; }
+.vl-app-route { color: var(--vl-muted); }
+.vl-app-route:hover { background: var(--vl-raised); color: var(--vl-text); }
+.vl-app-route[aria-current="page"] { background: #f59a4517; color: #f8b16e; box-shadow: inset 3px 0 var(--vl-accent); }
+@media (max-width: 1023px) {
+  .vl-app-navigation { width: 124px; }
+  .vl-app-navigation:has(.vl-app-route[aria-current="page"]:nth-child(3)) { width: 220px; }
+  .vl-app-route { padding-inline: 8px; }
+}
+@media (max-width: 700px) {
+  .vl-app-navigation { width: 92px; }
+  .vl-app-navigation:has(.vl-app-route[aria-current="page"]:nth-child(3)) { width: 176px; }
+  .vl-app-navigation .vl-sidebar { min-width: 0; }
 }

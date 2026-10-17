@@ -1,4 +1,6 @@
 use crate::process::background_command;
+use crate::workspace_lifecycle::WorkspaceLifecycle;
+use tauri::Manager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -1210,8 +1212,12 @@ fn git_local_changes_blocking(request: LocalChangesRequest) -> Result<(), String
     }
 }
 #[tauri::command]
-pub async fn git_local_changes(request: LocalChangesRequest) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_local_changes_blocking(request))
+pub async fn git_local_changes(app: tauri::AppHandle, request: LocalChangesRequest) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&request.workspace_root, "Git local changes")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
+        git_local_changes_blocking(request)
+    })
         .await.map_err(|error| format!("Local changes action failed: {error}"))?
 }
 
@@ -1247,11 +1253,14 @@ fn require_no_tracked_changes(workspace: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn git_switch_branch(
+    app: tauri::AppHandle,
     repository_root: String,
     workspace_root: String,
     branch: String,
 ) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&workspace_root, "Git branch switch")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
         git_switch_branch_blocking(repository_root, workspace_root, branch)
     })
     .await
@@ -1324,8 +1333,12 @@ pub async fn open_workspace_directory(
 }
 
 #[tauri::command]
-pub async fn git_fetch_origin(repository_root: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || git_fetch_origin_blocking(repository_root))
+pub async fn git_fetch_origin(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git fetch")?;
+    tauri::async_runtime::spawn_blocking(move || {
+            let _reservation = reservation;
+            git_fetch_origin_blocking(repository_root)
+        })
         .await
         .map_err(|error| format!("Git fetch task failed: {error}"))?
 }
@@ -1339,8 +1352,10 @@ fn git_fetch_origin_blocking(repository_root: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn git_delete_local_branch(repository_root: String, branch: String) -> Result<(), String> {
+pub async fn git_delete_local_branch(app: tauri::AppHandle, repository_root: String, branch: String) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git branch deletion")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
         git_delete_local_branch_blocking(repository_root, branch)
     })
     .await
@@ -1387,8 +1402,10 @@ fn git_delete_local_branch_blocking(repository_root: String, branch: String) -> 
 }
 
 #[tauri::command]
-pub async fn git_delete_origin_branch(repository_root: String, branch: String) -> Result<(), String> {
+pub async fn git_delete_origin_branch(app: tauri::AppHandle, repository_root: String, branch: String) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git remote branch deletion")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
         git_delete_origin_branch_blocking(repository_root, branch)
     })
     .await
@@ -1460,8 +1477,10 @@ fn git_delete_origin_branch_blocking(repository_root: String, branch: String) ->
 }
 
 #[tauri::command]
-pub async fn git_pull_current(repository_root: String, workspace_root: String) -> Result<(), String> {
+pub async fn git_pull_current(app: tauri::AppHandle, repository_root: String, workspace_root: String) -> Result<(), String> {
+    let reservation = app.state::<WorkspaceLifecycle>().reserve(&workspace_root, "Git pull")?;
     tauri::async_runtime::spawn_blocking(move || {
+        let _reservation = reservation;
         git_pull_current_blocking(repository_root, workspace_root)
     })
     .await
@@ -1493,13 +1512,15 @@ pub struct WorkspaceMutationResult {
 
 #[tauri::command]
 pub async fn create_worktree(
+    app: tauri::AppHandle,
     repository_root: String,
     branch: String,
     base_ref: Option<String>,
     target_path: Option<String>,
 ) -> Result<WorkspaceMutationResult, String> {
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        create_worktree_blocking(repository_root, branch, base_ref, target_path)
+        create_worktree_blocking(repository_root, branch, base_ref, target_path, &lifecycle)
     })
     .await
     .map_err(|error| format!("Worktree creation task failed: {error}"))?
@@ -1510,7 +1531,9 @@ fn create_worktree_blocking(
     branch: String,
     base_ref: Option<String>,
     target_path: Option<String>,
+    lifecycle: &WorkspaceLifecycle,
 ) -> Result<WorkspaceMutationResult, String> {
+    let _repository = lifecycle.reserve(&repository_root, "Git worktree creation")?;
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -1530,6 +1553,7 @@ fn create_worktree_blocking(
         None => default_worktree_path(&repository_root, &branch)?,
     };
 
+    let _target = lifecycle.reserve_creation(&target.to_string_lossy(), "Git worktree creation target")?;
     if target.exists() {
         return Err(format!(
             "Workspace target already exists: {}",
@@ -1612,27 +1636,6 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
     Ok((state, entries.len() - untracked_count, untracked_count))
 }
 
-/// Check live native owners even when the frontend has unmounted or lost a
-/// workspace view. This is a conservative preflight; the V0.7 scheduler will
-/// need a shared lifecycle reservation to close start-vs-delete races.
-fn ensure_worktree_not_executing(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
-    use tauri::Manager;
-    if app.state::<crate::agent::AgentManager>().owns_workspace(path)? ||
-       app.state::<crate::agent_cli::CliAgentManager>().owns_workspace(path)? {
-        return Err("Workspace has an attached agent. Stop its agent runtime before removing this worktree.".into());
-    }
-    if app.state::<crate::run_registry::RunRegistry>().has_active_workspace(path)? {
-        return Err("Workspace has an active Run/Build job. Stop it and confirm exit before removing this worktree.".into());
-    }
-    if app.state::<crate::verification::VerificationManager>().owns_workspace(path)? {
-        return Err("Workspace has an active verification run. Cancel the run and confirm completion before removing this worktree.".into());
-    }
-    if app.state::<crate::execution::TerminalManager>().owns_workspace(path)? {
-        return Err("Workspace has an active terminal (or terminal startup). Close the terminal before removing this worktree.".into());
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn remove_worktree(
     app: tauri::AppHandle,
@@ -1641,9 +1644,9 @@ pub async fn remove_worktree(
     force: bool,
     expected_state: Option<WorktreeRemovalState>,
 ) -> Result<WorktreeRemovalResult, String> {
-    ensure_worktree_not_executing(&app, &worktree_path)?;
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        remove_worktree_blocking(repository_root, worktree_path, force, expected_state)
+        remove_worktree_blocking(repository_root, worktree_path, force, expected_state, &lifecycle)
     })
     .await
     .map_err(|error| format!("Worktree removal task failed: {error}"))?
@@ -1654,7 +1657,9 @@ fn remove_worktree_blocking(
     worktree_path: String,
     force: bool,
     expected_state: Option<WorktreeRemovalState>,
+    lifecycle: &WorkspaceLifecycle,
 ) -> Result<WorktreeRemovalResult, String> {
+    let _removal = lifecycle.begin_removal(&worktree_path)?;
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -2591,9 +2596,29 @@ mod tests {
             worktree.to_string_lossy().into_owned(),
             force,
             state,
+            &WorkspaceLifecycle::default(),
         )
     }
 
+    #[test]
+    fn reserved_subdirectory_writer_blocks_real_worktree_deregistration() {
+        let (sandbox, repo, worktree) = removal_fixture("remove-reserved");
+        fs::create_dir(worktree.join("source")).unwrap();
+        let lifecycle = WorkspaceLifecycle::default();
+        let writer = lifecycle.reserve(worktree.join("source").to_str().unwrap(), "terminal startup").unwrap();
+        assert!(remove_worktree_blocking(
+            repo.to_string_lossy().into_owned(), worktree.to_string_lossy().into_owned(),
+            false, None, &lifecycle,
+        ).is_err());
+        assert!(worktree.join("README.md").is_file());
+        assert!(git_read(repo.to_str().unwrap(), &["worktree", "list", "--porcelain"]).unwrap().contains(worktree.to_str().unwrap()));
+        drop(writer);
+        assert!(matches!(remove_worktree_blocking(
+            repo.to_string_lossy().into_owned(), worktree.to_string_lossy().into_owned(),
+            false, None, &lifecycle,
+        ).unwrap(), WorktreeRemovalResult::Removed));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
     #[test]
     fn dirty_worktree_requires_explicit_force_snapshot_and_keeps_branch() {
         let (sandbox, repo, worktree) = removal_fixture("remove-dirty");
@@ -2695,6 +2720,7 @@ mod tests {
             "feat/control-test".to_string(),
             Some("HEAD".to_string()),
             Some(target.to_string_lossy().to_string()),
+            &WorkspaceLifecycle::default(),
         )
         .expect("create worktree");
 
@@ -2710,6 +2736,7 @@ mod tests {
                 target.to_string_lossy().to_string(),
                 false,
                 None,
+                &WorkspaceLifecycle::default(),
             ).expect("remove worktree"),
             WorktreeRemovalResult::Removed
         ));

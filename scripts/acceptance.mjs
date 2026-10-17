@@ -71,6 +71,11 @@ try {
 
 console.log("\nAutomated checks passed.");
 console.log("\nDesktop acceptance checklist:");
+console.log("[ ] Task-first: create and accept a manual plan, explicitly prepare a workspace, execute/cancel/retry, verify, review and accept; execution success alone never means accepted delivery.");
+console.log("[ ] Task evidence: edit source without changing HEAD, restore it, replace a tool, then restart the application; historical evidence never silently becomes current. New verification requires new review and acceptance.");
+console.log("[ ] Task integration: rejected or stale dependencies block preview; native confirmation binds exact source commits and expires. Conflicts retain the worktree and require explicit resolution, never implicit merge replay.");
+console.log("[ ] Task tools: committed task changes appear against the accepted base; inline Run/Changes and workspace navigation preserve terminals. Cancel remains available while verification/integration is pending.");
+console.log("[ ] Task recovery: interrupted workspace preparation can be reconciled explicitly; corrupt task storage preserves direct workspace tools and never overwrites the original file.");
 console.log("[ ] Add repository opens the native folder picker and loads the selected Git repository.");
 console.log("[ ] Search filters repository/workspace lanes; Ctrl+K focuses it; Escape/clear resets it.");
 console.log("[ ] New Workspace creates an isolated branch/worktree; selecting it changes active workspace.");

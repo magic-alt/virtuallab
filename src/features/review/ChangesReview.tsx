@@ -37,11 +37,14 @@ export function ChangesReview({
   workspaceRoot,
   enabled,
   refreshRevision = 0,
+  taskBaseRef,
   onRefreshForRereview,
   onResolveLocalChanges,
   gitMutationPending = false,
 }: {
   refreshRevision?: number;
+  /** Task review is fixed to this approved commit; ordinary workspace review is unchanged. */
+  taskBaseRef?: string;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
   onResolveLocalChanges?: (action: LocalChangesAction, path?: string) => Promise<boolean>;
   gitMutationPending?: boolean;
@@ -64,9 +67,9 @@ export function ChangesReview({
   const [draftBody, setDraftBody] = useState("");
   const [advancedReview, setAdvancedReview] = useState(false);
   const [manageChanges, setManageChanges] = useState(false);
-  const [mode, setMode] = useState<DiffMode>("worktree");
+  const [mode, setMode] = useState<DiffMode>(taskBaseRef === undefined ? "worktree" : "base");
   const [layout, setLayout] = useState<ReviewLayout>("side-by-side");
-  const [baseRef, setBaseRef] = useState("main");
+  const [baseRef, setBaseRef] = useState(taskBaseRef ?? "main");
   const [baseFiles, setBaseFiles] = useState<DiffFileSummary[]>([]);
   const [result, setResult] = useState<DiffResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -98,6 +101,32 @@ export function ChangesReview({
     }
   }, [workspaceRoot, refreshRevision]);
 
+  useEffect(() => {
+    if (taskBaseRef === undefined) return;
+    const requestRevision = ++requestRevisionRef.current;
+    setMode("base");
+    setBaseRef(taskBaseRef);
+    setBaseFiles([]);
+    setResult(null);
+    setSelectedPath(null);
+    setSelectedReviewLine(null);
+    setDraftBody("");
+    setError(null);
+    setDiffOutdated(true);
+    setLoading(enabled && Boolean(taskBaseRef));
+    if (enabled && taskBaseRef) {
+      void gitDiff({ repositoryRoot, workspaceRoot, path: null, oldPath: null, mode: "base", baseRef: taskBaseRef })
+        .then((next) => {
+          if (requestRevision === requestRevisionRef.current) {setBaseFiles(next.files); setDiffOutdated(false);}
+        })
+        .catch((error) => {
+          if (requestRevision === requestRevisionRef.current) setError(error instanceof Error ? error.message : String(error));
+        })
+        .finally(() => {if (requestRevision === requestRevisionRef.current) setLoading(false);});
+    }
+    return () => {requestRevisionRef.current += 1;};
+  }, [taskBaseRef, repositoryRoot, workspaceRoot, snapshot.headSha, refreshRevision, enabled]);
+
   const requestRereview = async () => {
     if (!onRefreshForRereview || refreshing) return;
     setRefreshing(true);
@@ -115,7 +144,7 @@ export function ChangesReview({
   const selectedLocalChange = mode !== "base"
     ? snapshot.changes.find((change) => change.path === selectedPath)
     : undefined;
-  const canRecover = enabled && Boolean(onResolveLocalChanges) && !recovering && !gitMutationPending;
+  const canRecover = taskBaseRef === undefined && enabled && Boolean(onResolveLocalChanges) && !recovering && !gitMutationPending;
 
   const recoverLocalChanges = async (action: LocalChangesAction, path?: string) => {
     if (!canRecover || recoveryInFlight.current || !onResolveLocalChanges) return;
@@ -180,8 +209,8 @@ export function ChangesReview({
         workspaceRoot,
         path: file.path,
         oldPath: file.oldPath ?? null,
-        mode,
-        baseRef: mode === "base" ? baseRef.trim() || null : null,
+        mode: taskBaseRef === undefined ? mode : "base",
+        baseRef: taskBaseRef ?? (mode === "base" ? baseRef.trim() || null : null),
       });
       if (requestRevision === requestRevisionRef.current) {
         setResult(next);
@@ -198,7 +227,7 @@ export function ChangesReview({
   };
 
   const loadBaseFiles = async () => {
-    if (!enabled || !baseRef.trim()) return;
+    if (!enabled || !(taskBaseRef ?? baseRef.trim())) return;
     const requestRevision = ++requestRevisionRef.current;
     setLoading(true);
     setError(null);
@@ -212,7 +241,7 @@ export function ChangesReview({
         path: null,
         oldPath: null,
         mode: "base",
-        baseRef: baseRef.trim(),
+        baseRef: taskBaseRef ?? baseRef.trim(),
       });
       if (requestRevision === requestRevisionRef.current) {
         setBaseFiles(next.files);
@@ -229,6 +258,7 @@ export function ChangesReview({
   };
 
   const changeMode = (nextMode: DiffMode) => {
+    if (taskBaseRef !== undefined) return;
     requestRevisionRef.current += 1;
     setLoading(false);
     setMode(nextMode);
@@ -273,7 +303,7 @@ export function ChangesReview({
   return (
     <div className="flex h-full min-h-[560px] w-full flex-col gap-3" data-testid="changes-review-root">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border border-white/[0.07] bg-[#15100c]/92 px-3 py-2.5">
-        <div className="flex items-center gap-1">
+        {taskBaseRef === undefined && <div className="flex items-center gap-1">
           {(["worktree", "index"] as DiffMode[]).map((item) => (
             <Button
               key={item}
@@ -284,7 +314,7 @@ export function ChangesReview({
               {item === "index" ? "Staged" : "Worktree"}
             </Button>
           ))}
-        </div>
+        </div>}
 
         <div className="ml-auto flex items-center gap-1 border-l border-white/[0.08] pl-2">
           <Button
@@ -315,7 +345,7 @@ export function ChangesReview({
           }}>
           Advanced review{drafts.length > 0 ? ` (${drafts.length} drafts)` : ""}
         </Button>
-        {onResolveLocalChanges && (
+        {taskBaseRef === undefined && onResolveLocalChanges && (
           <Button size="sm" variant={manageChanges ? "primary" : "ghost"}
             aria-expanded={manageChanges} aria-controls="manage-local-changes"
             onClick={() => setManageChanges(!manageChanges)}>
@@ -324,12 +354,17 @@ export function ChangesReview({
         )}
       </div>
 
+      {taskBaseRef !== undefined && <div aria-label="Task committed comparison" className="text-xs text-slate-300">
+        任务提交差异：<code>{taskBaseRef}</code> → <code>{snapshot.headSha}</code>
+        <Button size="sm" variant="outline" disabled={!enabled || !taskBaseRef || loading} onClick={() => void loadBaseFiles()}>Reload task changes</Button>
+      </div>}
+
       <div aria-label="Local change summary" className="text-[11px] text-slate-400">
         Local changes: {snapshot.unstagedCount} unstaged · {snapshot.stagedCount} staged · {snapshot.untrackedCount} untracked.
         {" "}Untracked directories count as one entry.
       </div>
 
-      {onResolveLocalChanges && manageChanges && (
+      {taskBaseRef === undefined && onResolveLocalChanges && manageChanges && (
         <div id="manage-local-changes" aria-label="Local change recovery" className="flex shrink-0 flex-wrap items-center gap-2 border border-amber-400/20 bg-[#15100c]/95 px-3 py-2 text-xs">
           <div className="min-w-[190px] flex-1 text-slate-400">
             Need to switch branches or Pull? Back up with Git stash (including untracked files),
@@ -367,8 +402,9 @@ export function ChangesReview({
               <input
                 aria-label="Base ref"
                 className="field ml-1 h-8 min-h-8 w-44"
-                value={baseRef}
-                onChange={(event) => setBaseRef(event.target.value)}
+                value={taskBaseRef ?? baseRef}
+                readOnly={taskBaseRef !== undefined}
+                onChange={(event) => {if (taskBaseRef === undefined) setBaseRef(event.target.value);}}
                 placeholder="main"
               />
               <Button

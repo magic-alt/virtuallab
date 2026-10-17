@@ -141,6 +141,8 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 
 **Objective:** organize engineering Tasks and Verified Results above workspace-owned execution. The flagship workflow is **two parallel implementation tasks → user-confirmed local integration → fresh build/test → revision-bound review → human acceptance**. The minimal task home, evidence index and delivery gate move forward from V0.8/V0.9 into V0.7; general scheduling and advanced observation follow the working delivery loop.
 
+**2026-10-17 source update:** local Task-first services/UI, shared lifecycle reservations, bounded scheduling, candidate/integration adapters and evidence/review/acceptance software are now present. See [implementation and qualification boundaries](TASK_FIRST_CONTROL_CENTER.md). The unchecked gates below still require appropriate acceptance evidence; source presence alone does not close authenticated-provider, packaged-GUI, three-host or user-trial work. AI planning/Reviewer remain unavailable until read-only capability qualification.
+
 ### Release discipline
 
 - **Evidence before completion:** distinguish source implementation, automated checks, authenticated packaged-desktop acceptance and user validation. A merged PR establishes none of the other three by itself.
