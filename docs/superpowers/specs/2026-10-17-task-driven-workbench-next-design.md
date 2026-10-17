@@ -1,6 +1,6 @@
 # Task-driven Workbench: next delivery increment
 
-Status: written design approved by the user on 2026-10-17, with an instruction to implement. The concrete implementation plan is `docs/superpowers/plans/2026-10-17-task-driven-workbench-next.md`; the user approved inline execution with one final independent review. Source implementation is under final verification; host/provider qualification is separate.
+Status: written design approved by the user on 2026-10-17, with an instruction to implement. The concrete implementation plan is `docs/superpowers/plans/2026-10-17-task-driven-workbench-next.md`; the user approved inline execution with one final independent review. Source implementation and macOS automated verification are complete (`0961dac`); host/provider qualification is separate and remains open.
 
 ## Baseline and intent
 

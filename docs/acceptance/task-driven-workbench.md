@@ -4,6 +4,9 @@
 
 - Baseline: `feat/task-driven-workbench@1afa6ef`; inspect the implementation commit
   and clean/dirty state before each desktop/provider qualification.
+- Product source checkpoint: `0961dac` (implementation `2c54e7a` plus review fixes).
+  The final acceptance began on the matching working-tree changes before the fix
+  commit; no subsequent product-source change was made.
 - Current work: Profile library, task guidance/navigation and task Run inventory.
 - Local host: macOS 26.7.1 (25G241), Node 26.0.0, npm 12.0.2,
   cargo 1.98.1, rustc 1.98.1.
@@ -20,8 +23,28 @@
 - Host-permission native suite after Profile implementation: 324 passed, 0 failed.
   The sandbox-only run failed existing process-inspection and watcher tests;
   the host-permission rerun passed without weakening tests.
-- Final candidate checks and independent-review result: pending; update below
-  after running them on the implementation.
+- Independent review: `1afa6ef..2c54e7a`, four Important issues and one recovery
+  guidance issue (promoted from Minor) fixed in `0961dac`, each with failing then
+  passing regressions. No Critical issue was reported; no confirmed issue was
+  left deferred. Fix validation used tests; no independent re-review is claimed.
+- Final frontend suite: 327 passed / 1 pre-existing skipped; typecheck passed.
+  The final acceptance runner's earlier frontend stage had 326 passed / 1 skipped;
+  the additional export round-trip regression and full 327-test suite passed
+  separately without a subsequent product-source change.
+- Production build and macOS `cargo check --offline --locked --manifest-path
+  src-tauri/Cargo.toml`: passed. Six existing unused-code warnings remain.
+- `RUST_TEST_THREADS=4 npm run acceptance:local`: exited 0. Its locked native suite
+  passed 325 tests, 0 failed (329.31 seconds). Every native test and original
+  deadline remained enabled; test parallelism was limited to four on this host.
+- Earlier runner attempts failed at unchanged watcher UI timing assertions and
+  native integration-cancellation elapsed time under concurrent load. The affected
+  tests passed unchanged in isolated reruns; the final limited-concurrency runner
+  passed. These observations do not establish that timing sensitivity is absent.
+- New native backing-file replacement/deletion regression passed; Profile suite
+  12 passed. Disk-content changes are detected and preserved, not automatically
+  repaired. This is still a single-application manager, not interprocess locking.
+- `git diff --check` and local documentation links passed. No new native process,
+  shell or Git operation was introduced by the Profile library.
 
 ## Manual scenario: first task
 
@@ -74,9 +97,9 @@ provisioned host. No application-specific path or project connector is bundled.
 
 | Gate | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Final locked dependency install, frontend checks/build | Pending final run | Unperformed | Unperformed |
-| Locked Rust check/tests | Earlier local run passed; final pending | Unperformed | Unperformed |
-| `npm run acceptance:local` | Pending final run | Unperformed | Unperformed |
+| Locked dependency install, frontend checks/build | Passed | Unperformed | Unperformed |
+| Locked Rust check/tests | Passed: 325 native tests | Unperformed | Unperformed |
+| `npm run acceptance:local` | Passed with Rust test concurrency 4 | Unperformed | Unperformed |
 | Packaged GUI / CSP / native dialogs | Unperformed | Unperformed | Unperformed |
 | Authenticated two-Codex / three-worktree CMake delivery | Unperformed; project selection requested | Unperformed | Unperformed |
 

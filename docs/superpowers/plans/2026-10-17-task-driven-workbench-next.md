@@ -104,13 +104,14 @@
 **Files:** Modify `src/features/shell/WorkbenchShell.tasks.test.tsx`, applicable native/frontend regression tests, `docs/ARCHITECTURE.md`, `docs/TASK_FIRST_CONTROL_CENTER.md`, `docs/ROADMAP.md`; create `docs/acceptance/task-driven-workbench.md`.
 
 - [ ] Add failing integration regressions for Profile-store failure while repository tools remain available, terminal host identity retained through all new pages, delayed responses across repository removal, and navigation without execution. Extend native tests only where current integrated-failure/stale-lineage coverage leaves a real gap; preserve existing candidate/lifecycle/recovery guards.
-- [ ] Run those tests RED, implement missing wiring, then GREEN. Inspect new native command registration and wrappers: only list/save are added; no shell/process/Git capability broadening.
-- [ ] Document implemented Profile schema/revisions/frozen snapshots/failure isolation and actual navigation. Roadmap must distinguish implemented usability from outstanding V0.6/V0.7 qualification; retain unperformed gates unchecked.
-- [ ] Run `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, `cargo check --locked --manifest-path src-tauri/Cargo.toml`, `cargo test --locked --manifest-path src-tauri/Cargo.toml`, `npm run acceptance:local`, and `git diff --check`. Confirm every exit code and record exact counts and candidate revision. Fix failures without weakening checks.
-- [ ] Perform one independent whole-change review under the chosen execution workflow; fix material findings and rerun affected checks. Do not claim independent review without a separate reviewer. Keep any uncovered environment limitation in the ledger.
-- [ ] Prepare an acceptance record with host/app revision/tool/provider identities, commands, observed behavior and evidence paths. Run supported local GUI/provider checks when available; for a user-selected CMake project observe two independent Codex instances, three explicitly prepared worktrees, frozen sources, confirmed integration, integrated-only failure, explicit repair, invalidation/restart, fresh review/acceptance and passport lineage. No project/path is bundled in core. Do not invent a project selection or authentication.
+- [x] Run those tests RED, implement missing wiring, then GREEN. Inspect new native command registration and wrappers: only list/save are added; no shell/process/Git capability broadening.
+- [x] Document implemented Profile schema/revisions/frozen snapshots/failure isolation and actual navigation. Roadmap must distinguish implemented usability from outstanding V0.6/V0.7 qualification; retain unperformed gates unchecked.
+- [x] Run `npm ci`, `npm run typecheck`, `npm test`, `npm run build`, `cargo check --locked --manifest-path src-tauri/Cargo.toml`, `cargo test --locked --manifest-path src-tauri/Cargo.toml`, `npm run acceptance:local`, and `git diff --check`. Confirm every exit code and record exact counts and candidate revision. Fix failures without weakening checks.
+- [x] Perform one independent whole-change review under the chosen execution workflow; fix material findings and rerun affected checks. Do not claim independent review without a separate reviewer. Keep any uncovered environment limitation in the ledger.
+- [x] Prepare the acceptance record with host/app revision/tool identities, commands, automated observations and per-host unperformed entries.
+- [ ] Run actual local GUI/provider checks when available; for a user-selected CMake project observe two independent Codex instances, three explicitly prepared worktrees, frozen sources, confirmed integration, integrated-only failure, explicit repair, invalidation/restart, fresh review/acceptance and passport lineage. No project/path is bundled in core. Do not invent a project selection or authentication.
 - [ ] Validate Linux locked Rust check and Windows/macOS/Linux local acceptance from actual host/CI evidence. If inaccessible, leave each unperformed with its blocker and the exact command to run. Printed manual checklists, npm-only dogfooding and macOS tests cannot close these gates.
-- [ ] Leave a reviewable local branch/diff and report source completion, automated checks and outstanding qualification separately. Publishing a PR or any other remote mutation requires actual session authorization; never infer it from this plan.
+- [x] Leave a reviewable local branch/diff and report source completion, automated checks and outstanding qualification separately. Publishing a PR or any other remote mutation requires actual session authorization; never infer it from this plan.
 
 ## Preflight and execution ledger
 
@@ -120,7 +121,7 @@
 - Isolation and setup: at execution, inspect linked-worktree state and preserve all existing documentation edits. Apply `using-git-worktrees` without overwriting or discarding pending work. Run locked setup and baseline checks before implementation.
 - Baseline evidence from the prior audit only: frontend typecheck and 44 task/shell tests passed; macOS offline locked Rust check passed with unused-code warnings. Re-run required checks for the implementation; these are not completion evidence.
 - Tasks 1–4: source implemented and targeted tests passed. Profile tests first failed for missing library/clients; selectors/inventory first failed for missing modules; navigation reattachment, multiline paths and unknown-readiness counts were observed failing and then fixed.
-- Task 5: frontend 322 passed / 1 pre-existing skipped, typecheck/build passed; macOS locked Rust check passed (6 existing unused-code warnings), host-permission native suite 324 passed. Final review and acceptance runner pending; external qualification remains unperformed.
+- Task 5: local implementation, independent review/fix pass and macOS automated acceptance complete. Final frontend 327 passed / 1 pre-existing skipped; native 325 passed; typecheck/build/locked check and acceptance runner passed. External qualification remains unperformed.
 - Ruling: sandbox denied Git worktree ref creation, so use current feature checkout under the worktree skill fallback. Cost: implementation shares the selected checkout; existing documentation edits are preserved.
 - Ruling: recognize only Native's exact sole review-required blocker for the review queue. Unknown/additional blockers remain verification work. Cost if wording changes: the queue becomes empty; no false readiness is introduced.
 
@@ -136,8 +137,8 @@
   export parse visible advanced JSON; prepared and approved-but-unaccepted tasks
   stay actionable; failed integration guidance routes to explicit repair and
   verification. Focused UI tests 9 passed; Profile native tests 12 passed.
-- Post-fix frontend suite: 326 passed, 1 pre-existing skipped. Locked macOS Rust
-  check passed with the same 6 unused-code warnings. Final acceptance pending.
+- Post-fix frontend suite: 327 passed, 1 pre-existing skipped (including export round-trip coverage). Locked macOS Rust
+  check passed with the same 6 unused-code warnings. Final macOS acceptance exited 0 with 325 native tests passed, using four test threads and unchanged deadlines.
 - Earlier acceptance attempts exposed unchanged watcher UI timeouts and an
   integration-cancellation elapsed-time assertion under concurrent native load.
   Both affected suites/tests passed in isolated reruns without changing deadlines
@@ -155,3 +156,17 @@
   hosts remain unperformed until actual environment observations exist. Cost:
   this implementation does not close release/host/provider qualification.
 - Deferred minors: none; recovery guidance was promoted and fixed.
+
+
+## Final checkpoint
+
+- Implementation `2c54e7a`; independent-review fixes `0961dac`. Source kept on
+  `feat/task-driven-workbench` as authorized; no remote publication or merge.
+- Locked npm install, frontend typecheck/build, 327 frontend tests (1 prior skip),
+  macOS locked Rust check and full local acceptance passed. The runner's frontend
+  stage preceded the final export-only test addition (326 passed); the subsequent
+  full frontend suite passed 327. Native final suite passed 325 with four threads.
+- See `docs/acceptance/task-driven-workbench.md` for earlier timing failures,
+  final observations, host identities and each remaining qualification gate.
+- Actual GUI/provider/CMake acceptance and Linux/Windows host checks remain open;
+  they are not replaced by source tests or by the printed manual checklist.
