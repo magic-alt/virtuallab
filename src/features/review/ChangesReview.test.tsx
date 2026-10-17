@@ -195,50 +195,77 @@ describe("ChangesReview", () => {
     expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({ path: "src/b.ts", mode: "index" }));
   });
 
-  it("shows untracked files and grouped directories without requesting a tracked diff", async () => {
+  it("previews a new untracked file in Monaco without staging it", async () => {
     const user = userEvent.setup();
+    backend.gitDiff.mockResolvedValueOnce(response({
+      path: "new file.ts",
+      files: [{ path: "new file.ts", status: "?" }],
+      patch: "",
+      returnedBytes: 0,
+      originalText: "",
+      modifiedText: "export const answer = 42;\n",
+    }));
     const untrackedSnapshot: RepositorySnapshot = {
-      ...snapshot, dirtyCount: 2, stagedCount: 0, unstagedCount: 0, untrackedCount: 2,
-      changes: [
-        { path: "new file.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
-        { path: "generated/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
-      ],
+      ...snapshot, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
+      changes: [{ path: "new file.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" }],
     };
     render(<ChangesReview snapshot={untrackedSnapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "new file.ts" }));
-    expect(screen.getByText("Untracked file")).toBeInTheDocument();
-    expect(backend.gitDiff).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Mark reviewed" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "generated/" }));
-    expect(screen.getByText("Untracked directory")).toBeInTheDocument();
+    expect(await screen.findByTestId("monaco-review")).toHaveTextContent("new file.ts:side-by-side");
+    expect(screen.getByText(/No git add or staging performed/)).toBeInTheDocument();
+    expect(backend.gitDiff).toHaveBeenCalledWith({
+      repositoryRoot: "D:/repo", workspaceRoot: "D:/repo",
+      path: "new file.ts", oldPath: null, mode: "worktree", baseRef: null,
+    });
     await user.click(screen.getByRole("button", { name: "Staged" }));
     expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "generated/" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Untracked directory")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Advanced review" }));
     await user.click(screen.getByRole("button", { name: "Base" }));
     expect(screen.queryByRole("button", { name: "new file.ts" })).not.toBeInTheDocument();
   });
 
-  it("clears a loaded diff when selecting an untracked item", async () => {
+  it("expands a grouped untracked folder into individually previewable files", async () => {
     const user = userEvent.setup();
-    render(<ChangesReview snapshot={{ ...snapshot, dirtyCount: 3, untrackedCount: 1, changes: [
-      ...snapshot.changes,
-      { path: "新 file.ts", indexStatus: "?", worktreeStatus: "?", kind: "untracked" },
-    ] }} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
-    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
-    await screen.findByTestId("monaco-review");
-    await user.click(screen.getByRole("button", { name: "新 file.ts" }));
-    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
-    expect(screen.getByText("Untracked file")).toBeInTheDocument();
-    expect(backend.gitDiff).toHaveBeenCalledTimes(1);
-    await user.click(screen.getByRole("button", { name: "src/a.ts" }));
-    expect(await screen.findByTestId("monaco-review")).toBeInTheDocument();
+    backend.gitDiff
+      .mockResolvedValueOnce(response({
+        path: "generated/", files: [
+          { path: "generated/one.ts", status: "?" },
+          { path: "generated/nested/two.md", status: "?" },
+        ], patch: "", originalText: null, modifiedText: null, returnedBytes: 0,
+      }))
+      .mockResolvedValueOnce(response({
+        path: "generated/nested/two.md", files: [{path: "generated/nested/two.md", status: "?"}],
+        patch: "", originalText: "", modifiedText: "# Created\n", returnedBytes: 0,
+      }));
+    const untrackedSnapshot: RepositorySnapshot = {
+      ...snapshot, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
+      changes: [{ path: "generated/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" }],
+    };
+    render(<ChangesReview snapshot={untrackedSnapshot} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole("button", { name: "generated/" }));
+    expect(await screen.findByRole("button", { name: "generated/one.ts" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "generated/nested/two.md" })).toBeInTheDocument();
+    expect(screen.getByText(/Showing 2 untracked files/)).toBeInTheDocument();
+    expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: "generated/", mode: "worktree",
+    }));
+    await user.click(screen.getByRole("button", { name: "generated/nested/two.md" }));
+    expect(await screen.findByTestId("monaco-review")).toHaveTextContent("generated/nested/two.md");
+    expect(backend.gitDiff).toHaveBeenLastCalledWith(expect.objectContaining({
+      path: "generated/nested/two.md", mode: "worktree",
+    }));
+    await user.click(screen.getByRole("button", { name: "generated/" }));
+    expect(screen.queryByRole("button", { name: "generated/nested/two.md" })).not.toBeInTheDocument();
+    expect(backend.gitDiff).toHaveBeenCalledTimes(2);
   });
 
-  it("discards a pending tracked diff after selecting an untracked item", async () => {
-    let resolveDiff!: (value: ReturnType<typeof response>) => void;
-    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => { resolveDiff = resolve; }));
+  it("does not let a late tracked diff replace a newer untracked preview", async () => {
+    let finishTracked!: (value: ReturnType<typeof response>) => void;
+    backend.gitDiff.mockImplementationOnce(() => new Promise((resolve) => { finishTracked = resolve; }));
+    backend.gitDiff.mockResolvedValueOnce(response({
+      path: "new.ts", files: [{ path: "new.ts", status: "?" }],
+      originalText: "", modifiedText: "new file", patch: "", returnedBytes: 0,
+    }));
     const user = userEvent.setup();
     render(<ChangesReview snapshot={{ ...snapshot, dirtyCount: 3, untrackedCount: 1, changes: [
       ...snapshot.changes,
@@ -246,10 +273,29 @@ describe("ChangesReview", () => {
     ] }} repositoryRoot="D:/repo" workspaceRoot="D:/repo" enabled />);
     await user.click(screen.getByRole("button", { name: "src/a.ts" }));
     await user.click(screen.getByRole("button", { name: "new.ts" }));
-    await act(async () => { resolveDiff(response()); });
-    expect(screen.getByText("Untracked file")).toBeInTheDocument();
-    expect(screen.queryByTestId("monaco-review")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark reviewed" })).not.toBeInTheDocument();
+    expect(await screen.findByTestId("monaco-review")).toHaveTextContent("new.ts");
+    await act(async () => { finishTracked(response()); });
+    expect(screen.getByTestId("monaco-review")).toHaveTextContent("new.ts");
+    expect(screen.queryByText("Diff load failed")).not.toBeInTheDocument();
+  });
+
+  it("clears an expanded untracked folder on workspace refresh", async () => {
+    const user = userEvent.setup();
+    backend.gitDiff.mockResolvedValueOnce(response({
+      path: "generated/", files: [{path: "generated/one.md", status:"?"}],
+      patch: "", originalText: null, modifiedText: null,
+    }));
+    const untrackedSnapshot: RepositorySnapshot = {
+      ...snapshot, dirtyCount: 1, stagedCount: 0, unstagedCount: 0, untrackedCount: 1,
+      changes: [{ path: "generated/", indexStatus: "?", worktreeStatus: "?", kind: "untracked" }],
+    };
+    const view = render(<ChangesReview snapshot={untrackedSnapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={1} />);
+    await user.click(screen.getByRole("button", { name: "generated/" }));
+    expect(await screen.findByRole("button", { name: "generated/one.md" })).toBeInTheDocument();
+    view.rerender(<ChangesReview snapshot={untrackedSnapshot} repositoryRoot="D:/repo"
+      workspaceRoot="D:/repo" enabled refreshRevision={2} />);
+    expect(screen.queryByRole("button", { name: "generated/one.md" })).not.toBeInTheDocument();
   });
 
   it("discovers base files and sends rename identity", async () => {
