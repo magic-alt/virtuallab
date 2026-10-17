@@ -1286,6 +1286,25 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Positive npm fixtures need a clean interpreter context. Keep CI's Node
+    /// heap setting in the parent and never mutate the parallel test process.
+    #[cfg(unix)]
+    fn run_with_clean_node_environment(test: &str) -> bool {
+        const KEY: &str = "VL_CLEAN_NODE_FIXTURE";
+        if std::env::var(KEY).as_deref() == Ok(test) {
+            return false;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env(KEY, test)
+            .env_remove("NODE_OPTIONS")
+            .env_remove("NODE_PATH")
+            .status()
+            .unwrap();
+        assert!(status.success(), "isolated npm fixture failed: {test}");
+        true
+    }
+
     struct ProvenanceFixture(PathBuf);
     impl ProvenanceFixture {
         fn new() -> Self {
@@ -1515,6 +1534,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn npm_package_implementation_changes_are_observed() {
+        if run_with_clean_node_environment(
+            "task_evidence::tests::npm_package_implementation_changes_are_observed",
+        ) {
+            return;
+        }
         use std::os::unix::fs::{symlink, PermissionsExt};
         let fixture = ProvenanceFixture::new();
         let node = fixture.binary("node");
@@ -1746,6 +1770,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn npm_refuses_unknown_package_layout_even_with_a_native_node_interpreter() {
+        if run_with_clean_node_environment("task_evidence::tests::npm_refuses_unknown_package_layout_even_with_a_native_node_interpreter") { return; }
         use std::os::unix::fs::PermissionsExt;
         let fixture = ProvenanceFixture::new();
         let node = fixture.binary("node");

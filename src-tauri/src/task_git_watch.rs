@@ -197,7 +197,33 @@ impl GitWatchPlan {
         if event.paths.is_empty() {
             return true;
         }
+        let is_identity_ancestor = |path: &Path| {
+            self.exact
+                .iter()
+                .chain(self.trees.iter())
+                .any(|known| known.starts_with(path))
+        };
+        let is_lock = |path: &Path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".lock"))
+        };
         event.paths.iter().any(|raw| {
+            // inotify may deliver a queued Create/Modify after the lock was
+            // removed. Do not stat/canonicalize a known lock-only path: deletion
+            // between those syscalls is normal noise, not loss of observation.
+            // A metadata root itself may be named *.lock; its descendants must
+            // remain protected. Each rename path is evaluated independently.
+            if is_lock(raw)
+                && raw.is_absolute()
+                && !raw
+                    .components()
+                    .any(|part| matches!(part, Component::ParentDir))
+                && (raw.starts_with(&self.git_dir) || raw.starts_with(&self.common_dir))
+                && !is_identity_ancestor(raw)
+            {
+                return false;
+            }
             let Ok(path) = normalize_path(raw) else {
                 return true;
             };
@@ -217,11 +243,9 @@ impl GitWatchPlan {
             ) {
                 return false;
             }
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".lock"))
-            {
+            // Retain filtering after canonicalization for aliased paths, while
+            // never ignoring deletion/rename of a real metadata ancestor.
+            if is_lock(&path) && !is_identity_ancestor(&path) {
                 return false;
             }
             if direct {
@@ -781,5 +805,69 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(state.changed(), "real staged index replacement was ignored");
+    }
+    #[cfg(unix)]
+    #[test]
+    fn lock_only_events_do_not_require_successful_filesystem_normalization() {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new();
+        let p = f.plan();
+        let lock = p.git_dir.join("index.lock");
+        // A queued lock event can outlive its file. A dangling lock symlink gives
+        // a deterministic normalization failure instead of relying on a delete
+        // racing the callback's metadata -> canonicalize syscalls.
+        symlink(f.base.join("already-removed-lock-target"), &lock).unwrap();
+        assert!(normalize_path(&lock).is_err());
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+            EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+            EventKind::Remove(notify::event::RemoveKind::File),
+        ] {
+            assert!(
+                !p.invalidates(&event(kind, &[lock.clone()])),
+                "lock-only {kind:?} must not consult transient filesystem state"
+            );
+        }
+        // A mixed event must inspect the destination even when its source lock
+        // is unresolvable. Renaming a lock onto index is a real identity change.
+        assert!(p.invalidates(&event(
+            EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            &[lock.clone(), p.git_dir.join("index")],
+        )));
+        let mut rescan = Event::new(EventKind::Other).add_path(lock);
+        rescan.attrs.set_flag(notify::event::Flag::Rescan);
+        assert!(p.invalidates(&Ok(rescan)));
+        assert!(p.invalidates(&Err(notify::Error::generic("watch failed"))));
+    }
+
+    #[test]
+    fn lock_named_metadata_ancestor_removal_is_not_lock_noise() {
+        let f = Fixture::new();
+        let lane = f.base.join("separate-workspace");
+        let metadata = f.base.join("metadata.lock");
+        fs::create_dir(&lane).unwrap();
+        git(
+            &lane,
+            &[
+                "init",
+                "--initial-branch=main",
+                "--separate-git-dir",
+                metadata.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let p = GitWatchPlan::resolve(&lane, |args| git(&lane, args)).unwrap();
+        assert_eq!(p.git_dir.file_name().unwrap(), "metadata.lock");
+        for kind in [
+            EventKind::Remove(notify::event::RemoveKind::Folder),
+            EventKind::Modify(ModifyKind::Name(RenameMode::From)),
+        ] {
+            assert!(p.invalidates(&event(kind, &[p.git_dir.clone()])), "removal/rename of metadata.lock directory must invalidate its HEAD/index descendants");
+        }
+        assert!(!p.invalidates(&event(
+            EventKind::Create(CreateKind::File),
+            &[p.git_dir.join("index.lock")],
+        )));
     }
 }

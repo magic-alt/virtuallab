@@ -361,7 +361,10 @@ fn probe_codex_version(executable: &str) -> Result<String, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = crate::managed_process::spawn(&mut command)
-        .map_err(|_| "Codex version probe could not start")?;
+        .map_err(|error| format!(
+            "Codex version probe could not start (kind={:?}, code={:?})",
+            error.kind(), error.raw_os_error(),
+        ))?;
     let stdout = match child.stdout.take() {
         Some(stdout) => stdout,
         None => {
@@ -1052,6 +1055,9 @@ mod tests {
     }
     impl VersionFixture {
         fn new(body: &str) -> Self {
+            Self::with_shell(body, None)
+        }
+        fn with_shell(body: &str, shell: Option<&str>) -> Self {
             let root = std::env::temp_dir().join(format!(
                 "vl-version-probe-{}-{}",
                 std::process::id(),
@@ -1063,12 +1069,35 @@ mod tests {
             let executable = {
                 use std::os::unix::fs::PermissionsExt;
                 let file = root.join("codex");
-                std::fs::write(&file, format!("#!/usr/bin/env node\n{script}")).unwrap();
+                let launcher = if let Some(body) = shell {
+                    // Fixed-output cases test the probe, not Node startup. Write
+                    // the executable once; do not reopen/rewrite a published one.
+                    format!("#!/bin/sh\n[ \"$#\" -eq 1 ] && [ \"$1\" = '--version' ] || exit 64\nprintf '%s' \"$$\" > \"${{0%/*}}/parent.pid\"\n{body}\n")
+                } else {
+                    #[cfg(target_os = "macos")]
+                    let node =
+                        crate::process::macos_cli_path("node").expect("Node fixture interpreter");
+                    #[cfg(not(target_os = "macos"))]
+                    let node = {
+                        let directories: Vec<_> =
+                            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                                .collect();
+                        crate::cli_path::find_executable(std::path::Path::new("node"), &directories)
+                            .expect("Node fixture interpreter")
+                    };
+                    let node = std::fs::canonicalize(node).unwrap();
+                    let quoted_node =
+                        format!("'{}'", node.to_string_lossy().replace('\'', "'\\''"));
+                    std::fs::write(root.join("fixture.cjs"), &script).unwrap();
+                    format!("#!/bin/sh\nexec {quoted_node} \"${{0%/*}}/fixture.cjs\" \"$@\"\n")
+                };
+                std::fs::write(&file, launcher).unwrap();
                 std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
                 file
             };
             #[cfg(windows)]
             let executable = {
+                let _ = shell;
                 std::fs::write(root.join("fixture.cjs"), script).unwrap();
                 let file = root.join("codex.cmd");
                 std::fs::write(&file, "@echo off\r\nnode \"%~dp0fixture.cjs\" %*\r\n").unwrap();
@@ -1097,8 +1126,53 @@ mod tests {
     }
 
     #[test]
+    fn version_probe_spawn_error_reports_only_kind_and_code() {
+        let path =
+            std::env::temp_dir().join(format!("private-launcher-{}", crate::tasks::new_id()));
+        let error = probe_codex_version(path.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("kind=NotFound"), "{error}");
+        #[cfg(unix)]
+        assert!(error.contains("code=Some(2)"), "{error}");
+        assert!(!error.contains("private-launcher"));
+        assert!(!error.contains(&path.to_string_lossy().into_owned()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_fixture_pins_node_outside_child_path() {
+        use std::io::Read;
+        let fixture = VersionFixture::new("process.stdout.write('codex-cli 1.2.3');");
+        let mut command = crate::execution::process_command(fixture.executable.to_str().unwrap());
+        command
+            .arg("--version")
+            .env("PATH", &fixture.root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = crate::managed_process::spawn(&mut command).unwrap();
+        let mut output = String::new();
+        child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        let status = child.wait().unwrap();
+        child.terminate_remaining().unwrap();
+        assert!(
+            status.success(),
+            "fixture must not depend on the child's PATH"
+        );
+        assert_eq!(output, "codex-cli 1.2.3");
+        fixture.assert_stopped();
+    }
+
+    #[test]
     fn version_probe_accepts_codex_identity_and_discards_stderr() {
-        let fixture = VersionFixture::new("process.stderr.write('discard-private-stderr');process.stdout.write('codex-cli 1.2.3\\n');");
+        let fixture = VersionFixture::with_shell(
+            "process.stderr.write('discard-private-stderr');process.stdout.write('codex-cli 1.2.3\\n');",
+            Some("printf '%s' 'discard-private-stderr' >&2; printf 'codex-cli 1.2.3\\n'"),
+        );
         assert_eq!(
             probe_codex_version(fixture.executable.to_str().unwrap()).unwrap(),
             "codex-cli 1.2.3"
@@ -1145,22 +1219,10 @@ mod tests {
 
     #[test]
     fn version_probe_rejects_unsuccessful_exit() {
-        let fixture = VersionFixture::new(
+        let fixture = VersionFixture::with_shell(
             "process.stdout.write('codex-cli 1.2.3');process.exitCode=9;",
+            Some("printf '%s' 'codex-cli 1.2.3'; exit 9"),
         );
-        #[cfg(unix)]
-        // Avoid Node startup contention when the only behavior under test is
-        // the owned child's nonzero exit status. Keep the fixed argv check.
-        std::fs::write(
-            &fixture.executable,
-            r#"#!/bin/sh
-[ "$#" -eq 1 ] && [ "$1" = '--version' ] || exit 64
-printf '%s' "$$" > "${0%/*}/parent.pid"
-printf '%s' 'codex-cli 1.2.3'
-exit 9
-"#,
-        )
-        .unwrap();
         assert_eq!(
             probe_codex_version(fixture.executable.to_str().unwrap()),
             Err("Codex version probe exited unsuccessfully".into())
@@ -1170,11 +1232,11 @@ exit 9
 
     #[test]
     fn version_probe_capabilities_keep_path_and_sanitize_unavailable_metadata() {
-        for (body, available) in [
-            ("process.stdout.write('codex-cli 1.2.3');process.stderr.write('discard-private-stderr');", true),
-            ("process.stdout.write('unrelated-private-output');process.stderr.write('discard-private-stderr');", false),
+        for (body, shell, available) in [
+            ("process.stdout.write('codex-cli 1.2.3');process.stderr.write('discard-private-stderr');", "printf '%s' 'codex-cli 1.2.3'; printf '%s' 'discard-private-stderr' >&2", true),
+            ("process.stdout.write('unrelated-private-output');process.stderr.write('discard-private-stderr');", "printf '%s' 'unrelated-private-output'; printf '%s' 'discard-private-stderr' >&2", false),
         ] {
-            let fixture = VersionFixture::new(body);
+            let fixture = VersionFixture::with_shell(body, Some(shell));
             let capability = agent_harness_capabilities("codex".into(), Some(fixture.executable.to_string_lossy().into_owned())).unwrap();
             assert_eq!(capability.available, available, "{}", capability.detail);
             assert_eq!(capability.executable_path.as_deref(), fixture.executable.to_str());
