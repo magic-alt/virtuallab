@@ -1323,7 +1323,14 @@ mod tests {
         }
         fn binary(&self, name: &str) -> String {
             let path = self.0.join(name);
-            fs::hard_link(std::env::current_exe().unwrap(), &path).unwrap();
+            let source = std::env::current_exe().unwrap();
+            match fs::hard_link(&source, &path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::CrossesDevices => {
+                    fs::copy(&source, &path).unwrap();
+                }
+                Err(error) => panic!("Cannot create native tool fixture: {error}"),
+            }
             path.to_str().unwrap().into()
         }
         fn cmake(&self) -> (Value, String) {
@@ -1343,6 +1350,15 @@ mod tests {
         }
         fn ninja_cache(&self, compiler: &str, extra: &str) {
             let root = fs::canonicalize(&self.0).unwrap();
+            if cfg!(windows) {
+                // Windows compiler graphs are deliberately unqualified. Test
+                // that rejection without requiring a POSIX Ninja installation.
+                self.cache(
+                    compiler,
+                    &format!("CMAKE_GENERATOR:INTERNAL=Ninja\n{extra}"),
+                );
+                return;
+            }
             let ninja = observe_program("ninja").unwrap();
             self.cache(compiler, &format!("CMAKE_GENERATOR:INTERNAL=Ninja\nCMAKE_MAKE_PROGRAM:FILEPATH={}\nCMAKE_HOME_DIRECTORY:INTERNAL={}\n{extra}", ninja.executable.display(), root.display()));
             fs::write(root.join("build/build.ninja"), format!("rule compile\n  command = '{compiler}' -c source.c -o source.o\nbuild source.o: compile source.c\n")).unwrap();
@@ -1523,13 +1539,19 @@ mod tests {
         let other = fixture.binary("clang");
         profile["toolchainPrograms"] = json!([compiler, other]);
         fixture.ninja_cache(&compiler, "");
-        let first = fixture.observe(&profile, true).unwrap();
+        let first = fixture.observe(&profile, true);
         fixture.ninja_cache(&other, "");
-        let second = fixture.observe(&profile, true).unwrap();
-        assert_ne!(
-            first.0, second.0,
-            "declared set concealed actual compiler selection"
-        );
+        let second = fixture.observe(&profile, true);
+        if cfg!(windows) {
+            assert!(first.unwrap_err().contains("POSIX"));
+            assert!(second.unwrap_err().contains("POSIX"));
+        } else {
+            assert_ne!(
+                first.unwrap().0,
+                second.unwrap().0,
+                "declared set concealed actual compiler selection"
+            );
+        }
     }
     #[cfg(unix)]
     #[test]
@@ -1657,9 +1679,15 @@ mod tests {
         let fixture = ProvenanceFixture::new();
         let (profile, compiler) = fixture.cmake();
         fixture.ninja_cache(&compiler, "");
-        let before = fixture.observe(&profile, true).unwrap();
+        let before = fixture.observe(&profile, true);
         fixture.ninja_cache(&compiler, "UNRELATED_TOKEN:STRING=not-provenance\n");
-        let after = fixture.observe(&profile, true).unwrap();
+        let after = fixture.observe(&profile, true);
+        if cfg!(windows) {
+            assert!(before.unwrap_err().contains("POSIX"));
+            assert!(after.unwrap_err().contains("POSIX"));
+            return;
+        }
+        let (before, after) = (before.unwrap(), after.unwrap());
         assert_eq!(before.0, after.0);
         assert!(!serde_json::to_string(&after.1)
             .unwrap()

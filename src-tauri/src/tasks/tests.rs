@@ -581,6 +581,17 @@ fn symlinks_to_git_metadata_or_env_never_become_accepted_scopes() {
         );
     }
 }
+#[cfg(unix)]
+#[test]
+fn symlink_target_with_literal_backslash_is_not_reinterpreted_as_scope_components() {
+    let f = Fixture::new();
+    let repo = PathBuf::from(&f.repo);
+    fs::write(repo.join("source\\nested.rs"), "fixture").unwrap();
+    std::os::unix::fs::symlink("source\\nested.rs", repo.join("alias-source")).unwrap();
+    let mut d = draft("bad-native-path", &[]);
+    d.scope = vec!["alias-source".into()];
+    assert!(f.manager().accept_plan(f.request(vec![d])).is_err());
+}
 #[test]
 fn toolchain_declarations_preserve_paths_and_reject_secret_fingerprints() {
     let f = Fixture::new();
@@ -792,6 +803,56 @@ fn dependencies_cannot_cross_repository_and_list_uses_native_identity() {
         let alias = f.dir.join("alias");
         std::os::unix::fs::symlink(&f.repo, &alias).unwrap();
         assert_eq!(m.list(&[alias.to_str().unwrap().into()]).unwrap().len(), 2);
+    }
+}
+#[test]
+fn scope_and_profile_paths_use_native_canonical_repository_base() {
+    let f = Fixture::new();
+    let repo = PathBuf::from(&f.repo);
+    fs::create_dir_all(repo.join("Source Dir/代码 with spaces")).unwrap();
+    fs::write(
+        repo.join("Source Dir/代码 with spaces/nested.rs"),
+        "fixture",
+    )
+    .unwrap();
+    fs::create_dir(repo.join("Build Dir")).unwrap();
+    let mut roots = vec![f.repo.clone()];
+    #[cfg(unix)]
+    {
+        let alias = f.dir.join("repository-alias");
+        std::os::unix::fs::symlink(&repo, &alias).unwrap();
+        roots.push(alias.to_str().unwrap().into());
+    }
+    #[cfg(windows)]
+    {
+        // Native canonical paths are verbatim; durable identity keys are
+        // non-verbatim, slash-normalized and lower-case. Both must be usable.
+        roots.push(fs::canonicalize(&repo).unwrap().to_str().unwrap().into());
+        roots.push(validation::canonical_root(&f.repo).unwrap());
+        roots.push(f.repo.to_ascii_uppercase());
+    }
+    for root in roots {
+        let mut d = draft("native-paths", &[]);
+        d.scope = vec![
+            "Source Dir/代码 with spaces/nested.rs".into(),
+            "future-source/file".into(),
+        ];
+        d.profile = Some(
+            serde_json::json!({"schemaVersion":1,"id":"checks","name":"Checks",
+            "sourcePaths":["Source Dir/代码 with spaces/nested.rs"],"outputPaths":["Build Dir/future-output"],
+            "gates":[{"id":"build","label":"Build","kind":"build","required":true,"approval":"none",
+            "executor":{"type":"process","program":"cargo","args":["check"],"cwd":"workspace"}}]}),
+        );
+        validation::draft(&d, &root).unwrap();
+        #[cfg(windows)]
+        {
+            d.scope = vec!["sOuRcE dIr/代码 with spaces/NESTED.rs".into()];
+            validation::draft(&d, &root).unwrap();
+        }
+        for protected in [".GiT/config", ".EnV.local", "../outside"] {
+            d.scope = vec![protected.into()];
+            assert!(validation::draft(&d, &root).is_err());
+        }
     }
 }
 #[test]

@@ -1925,6 +1925,7 @@ mod review_tests {
             let root = fs::canonicalize(root).unwrap();
             let git = |args: &[&str]| crate::task_inputs::git(&root, args).unwrap();
             git(&["init", "-q"]);
+            git(&["config", "core.autocrlf", "false"]);
             git(&["config", "user.name", "Fixture"]);
             git(&["config", "user.email", "fixture@invalid"]);
             fs::write(root.join("source.txt"), "base").unwrap();

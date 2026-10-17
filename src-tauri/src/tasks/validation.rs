@@ -122,14 +122,19 @@ fn paths(values: &[String], required: bool, root: Option<&str>) -> Result<(), St
     if values.len() > 128 || (required && values.is_empty()) {
         return Err("Scope/path list must contain at most 128 paths.".into());
     }
+    // Durable identity keys normalize Windows case and verbatim prefixes.
+    // Filesystem containment must compare native canonical paths on both sides.
+    let base = root
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|_| "Repository path is unavailable.")?;
     let mut seen = HashSet::new();
     for path in values {
         relative(path)?;
         if !seen.insert(path) {
             return Err("Duplicate scope/profile path.".into());
         }
-        if let Some(root) = root {
-            let base = Path::new(root);
+        if let Some(base) = base.as_deref() {
             let mut candidate = base.join(path);
             loop {
                 match fs::symlink_metadata(&candidate) {
@@ -148,7 +153,12 @@ fn paths(values: &[String], required: bool, root: Option<&str>) -> Result<(), St
                                 .strip_prefix(base)
                                 .map_err(|_| "Invalid scope identity.")?;
                             let resolved = resolved.to_str().ok_or("Scope path is not Unicode.")?;
+                            // Native Windows separators are not request syntax;
+                            // on Unix a literal backslash remains disallowed.
+                            #[cfg(windows)]
                             relative(&resolved.replace('\\', "/"))?;
+                            #[cfg(not(windows))]
+                            relative(resolved)?;
                         }
                         break;
                     }

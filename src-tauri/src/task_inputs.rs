@@ -1057,6 +1057,7 @@ mod tests {
             ));
             fs::create_dir_all(&root).unwrap();
             git(&root, &["init", "--initial-branch=main"]).unwrap();
+            git(&root, &["config", "core.autocrlf", "false"]).unwrap();
             git(&root, &["config", "user.name", "Task Fixture"]).unwrap();
             git(&root, &["config", "user.email", "fixture@example.invalid"]).unwrap();
             fs::write(root.join("source.cpp"), "int main() {return 0;}\n").unwrap();

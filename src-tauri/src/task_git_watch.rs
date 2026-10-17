@@ -251,11 +251,13 @@ impl GitWatchPlan {
             if direct {
                 return true;
             }
-            // Removing/renaming a parent destroys observation of its descendants.
-            // Generic/coalesced directory changes must also fail closed.
+            // A newly created parent can hide later descendant writes from a
+            // nonrecursive watcher. Windows reports creation as Create(Any), so
+            // do not require a Folder hint. Removal/rename also breaks continuity.
+            // Generic/coalesced directory changes must fail closed as well.
             if matches!(
                 event.kind,
-                EventKind::Create(notify::event::CreateKind::Folder)
+                EventKind::Create(_)
                     | EventKind::Remove(_)
                     | EventKind::Modify(notify::event::ModifyKind::Name(_))
                     | EventKind::Any
@@ -868,6 +870,50 @@ mod tests {
         assert!(!p.invalidates(&event(
             EventKind::Create(CreateKind::File),
             &[p.git_dir.join("index.lock")],
+        )));
+    }
+    #[test]
+    fn windows_untyped_creation_of_packed_ref_parent_is_sticky() {
+        let f = Fixture::new();
+        git(&f.repo, &["pack-refs", "--all"]).unwrap();
+        let common = fs::canonicalize(f.repo.join(".git")).unwrap();
+        let ref_parent = common.join("refs/heads/task");
+        // A packed ref needs no loose file or nested parent. Ensure that state
+        // explicitly even on Git versions which retain empty ref directories.
+        if ref_parent.exists() {
+            fs::remove_dir(&ref_parent).unwrap();
+        }
+        let p = f.plan();
+        assert!(p.targets().iter().any(|target| {
+            target.path == common.join("refs/heads")
+                && matches!(target.mode, RecursiveMode::NonRecursive)
+        }));
+        assert!(!ref_parent.exists());
+        let state = GitWatchState::default();
+        // ReadDirectoryChangesW reports FILE_ACTION_ADDED as Create(Any), not
+        // Create(Folder). A nonrecursive parent watch cannot see the later ref
+        // file written inside this newly created directory.
+        assert!(
+            state.observe(
+                &p,
+                &event(EventKind::Create(CreateKind::Any), &[ref_parent]),
+            ),
+            "untyped parent creation must invalidate the packed current ref"
+        );
+        assert!(state.observe(
+            &p,
+            &event(
+                EventKind::Access(AccessKind::Read),
+                &[p.git_dir.join("HEAD")],
+            )
+        ));
+        assert!(!p.invalidates(&event(
+            EventKind::Create(CreateKind::Any),
+            &[common.join("refs/heads/unrelated")],
+        )));
+        assert!(!p.invalidates(&event(
+            EventKind::Create(CreateKind::Any),
+            &[common.join("refs/heads/task.lock")],
         )));
     }
 }

@@ -2611,7 +2611,12 @@ mod tests {
             false, None, &lifecycle,
         ).is_err());
         assert!(worktree.join("README.md").is_file());
-        assert!(git_read(repo.to_str().unwrap(), &["worktree", "list", "--porcelain"]).unwrap().contains(worktree.to_str().unwrap()));
+        let registered = parse_worktrees(
+            &git_read(repo.to_str().unwrap(), &["worktree", "list", "--porcelain"]).unwrap(),
+        );
+        // Git porcelain uses forward slashes on Windows; compare native identities.
+        let expected = crate::workspace_identity::key(worktree.to_str().unwrap());
+        assert!(registered.iter().any(|entry| crate::workspace_identity::key(&entry.path) == expected));
         drop(writer);
         assert!(matches!(remove_worktree_blocking(
             repo.to_string_lossy().into_owned(), worktree.to_string_lossy().into_owned(),
