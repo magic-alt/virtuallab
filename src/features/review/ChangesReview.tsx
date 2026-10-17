@@ -576,7 +576,8 @@ export function ChangesReview({
 
         <section className="vl-editor-surface flex min-h-0 min-w-0 flex-col overflow-hidden border border-white/[0.07]" data-testid="changes-review-editor">
           <div className="flex min-h-10 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
-            <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400">
+            <div className="mono min-w-0 flex-1 truncate text-[11px] text-slate-400"
+              title={result?.path ?? selectedPath ?? ""}>
               {result?.oldPath ? `${result.oldPath} → ${result.path}` : result?.path ?? selectedPath ?? "No file selected"}
             </div>
             {selectedReviewLine && (
@@ -666,7 +667,8 @@ export function ChangesReview({
               Large diff content was bounded before rendering. Review the complete file in an external editor if needed.
             </div>
           )}
-          <div className="mono border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600">
+          <div className="mono truncate border-t border-white/[0.06] px-3 py-2 text-[10px] text-slate-600"
+            title={selectedPath ?? workspaceRoot}>
             {selectedPath ?? workspaceRoot}
           </div>
         </section>
@@ -699,6 +701,12 @@ function FileRow({
   onSelect: () => void;
 }) {
   const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+  const noSlash = file.path.endsWith("/") ? file.path.slice(0, -1) : file.path;
+  const basename = noSlash.slice(noSlash.lastIndexOf("/") + 1);
+  const folder = noSlash.includes("/") ? noSlash.slice(0, noSlash.lastIndexOf("/") + 1) : "Repository root";
+  const displayName = file.oldPath
+    ? `${file.oldPath.slice(file.oldPath.lastIndexOf("/") + 1)} → ${basename}`
+    : file.path.endsWith("/") ? `${basename}/` : basename;
   return (
     <button
       aria-label={label}
@@ -714,8 +722,9 @@ function FileRow({
       <span className="mono flex min-w-8 shrink-0 items-center justify-center border border-white/[0.08] px-1 py-1 text-[10px] text-orange-300">
         {file.status}
       </span>
-      <span className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={label}>
-        {file.groupPath ? file.path.slice(file.groupPath.length) : label}
+      <span className="min-w-0 flex-1" title={label}>
+        <span className="mono block truncate text-xs text-slate-200">{displayName}</span>
+        <span className="mono mt-0.5 block truncate text-[10px] text-slate-500">{folder}</span>
       </span>
       {file.untracked && file.path.endsWith("/") && (
         expanded ? <ChevronDown className="shrink-0 text-orange-300" size={14} />
