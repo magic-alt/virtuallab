@@ -192,3 +192,22 @@ fn symlink_is_refused_without_touching_target() {
     assert!(TaskProfileLibrary::open(f.path()).is_err());
     assert_eq!(fs::read_to_string(target).unwrap(), "untouched");
 }
+
+#[test]
+fn externally_changed_regular_file_is_preserved_and_memory_does_not_advance() {
+    let f = Fixture::new();
+    let m = f.manager();
+    save(&m, "checks", None).unwrap();
+    for replacement in [
+        b"external corrupt data".to_vec(),
+        br#"{"schemaVersion":1,"records":[]}"#.to_vec(),
+    ] {
+        fs::write(f.path(), &replacement).unwrap();
+        assert!(save(&m, "checks", Some(1)).is_err());
+        assert_eq!(fs::read(f.path()).unwrap(), replacement);
+        assert_eq!(m.list().unwrap()[0].revision, 1);
+    }
+    fs::remove_file(f.path()).unwrap();
+    assert!(save(&m, "checks", Some(1)).is_err());
+    assert!(!f.path().exists());
+}

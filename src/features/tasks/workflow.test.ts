@@ -35,3 +35,11 @@ describe('native-derived task guidance',()=>{
   expect(taskQueues([task],{[task.id]:{...review,blockers:[...review.blockers,'源码已变化']}}).review).toEqual([]);
  });
 });
+it('keeps prepared tasks and verified tasks awaiting acceptance actionable on the dashboard',()=>{
+ const prepared=taskFixture({profile:newProfile()});const ready=readinessFixture({status:'ready',reviewCurrent:true});
+ expect(taskQueues([prepared],{[prepared.id]:readinessFixture({blockers:['任务尚未执行']})}).needsInput).toEqual([prepared]);expect(nextTaskStep(prepared).tab).toBe('执行');
+ const verified=taskFixture({profile:newProfile(),attempts:[attempt('succeeded')]});expect(taskQueues([verified],{[verified.id]:ready}).needsInput).toEqual([verified]);expect(nextTaskStep(verified,ready).tab).toBe('交付');
+});
+it('routes failed integration to explicit repair and verification instead of replaying a preview',()=>{
+ for(const state of ['failed','interrupted'] as const){const task=taskFixture({kind:'integration',profile:newProfile(),attempts:[{...attempt(state),phase:'integration'}]});const step=nextTaskStep(task,readinessFixture());expect(step.tab).toBe('证据');expect(step.detail).toMatch(/提交/);}
+});

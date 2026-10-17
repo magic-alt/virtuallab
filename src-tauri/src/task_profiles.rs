@@ -1,6 +1,7 @@
 //! App-data configuration only. Saving a library entry never changes an accepted Task.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs::{self, File, OpenOptions},
@@ -30,10 +31,14 @@ struct Generation {
     schema_version: u32,
     records: Vec<ProfileRecord>,
 }
+struct LibraryState {
+    generation: Generation,
+    persisted_digest: [u8; 32],
+}
 #[derive(Clone)]
 pub(crate) struct TaskProfileLibrary {
     path: Arc<PathBuf>,
-    state: Arc<Mutex<Generation>>,
+    state: Arc<Mutex<LibraryState>>,
     error: Option<Arc<String>>,
 }
 fn io_error(_: std::io::Error) -> String {
@@ -50,6 +55,33 @@ fn regular(path: &Path) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(io_error(e)),
     }
+}
+fn read_existing(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    regular(path)?;
+    match File::open(path) {
+        Ok(file) => {
+            let mut bytes = Vec::new();
+            file.take(MAX_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(io_error)?;
+            if bytes.len() > MAX_BYTES {
+                return Err("Profile library exceeds 9 MiB.".into());
+            }
+            Ok(Some(bytes))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io_error(e)),
+    }
+}
+fn digest(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+fn unchanged(path: &Path, expected: Option<[u8; 32]>) -> Result<(), String> {
+    let actual = read_existing(path)?.as_deref().map(digest);
+    if actual != expected {
+        return Err("Profile storage changed outside this manager; original data preserved. Reopen after explicit inspection/repair.".into());
+    }
+    Ok(())
 }
 fn validate(g: &Generation) -> Result<(), String> {
     if g.schema_version != 1 || g.records.len() > 128 {
@@ -88,10 +120,10 @@ fn encode(g: &Generation) -> Result<Vec<u8>, String> {
     serde_json::to_writer(&mut out, g).map_err(|_| "Profile library exceeds 9 MiB.".to_string())?;
     Ok(out.0)
 }
-fn persist(path: &Path, g: &Generation) -> Result<(), String> {
+fn persist(path: &Path, g: &Generation, expected: Option<[u8; 32]>) -> Result<[u8; 32], String> {
     validate(g)?;
     let bytes = encode(g)?;
-    regular(path)?;
+    unchanged(path, expected)?;
     let parent = path.parent().ok_or("Profile storage parent required.")?;
     fs::create_dir_all(parent).map_err(io_error)?;
     let temporary = parent.join(format!(".profiles-{}.tmp", crate::tasks::new_id()));
@@ -113,13 +145,13 @@ fn persist(path: &Path, g: &Generation) -> Result<(), String> {
             f.sync_all().map_err(io_error)?;
             f
         };
-        regular(path)?;
+        unchanged(path, expected)?;
         fs::rename(&temporary, path).map_err(io_error)?;
         #[cfg(unix)]
         {
             let _ = directory.sync_all();
         }
-        Ok(())
+        Ok(digest(&bytes))
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -132,43 +164,41 @@ impl TaskProfileLibrary {
         if !path.is_absolute() || path.file_name().is_none() {
             return Err("Profile library requires an absolute file path.".into());
         }
-        regular(&path)?;
-        let generation = match File::open(&path) {
-            Ok(file) => {
-                let mut bytes = Vec::new();
-                file.take(MAX_BYTES as u64 + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(io_error)?;
-                if bytes.len() > MAX_BYTES {
-                    return Err("Profile library exceeds 9 MiB.".into());
-                }
-                serde_json::from_slice::<Generation>(&bytes).map_err(|_| {
+        let (generation, persisted_digest) = match read_existing(&path)? {
+            Some(bytes) => {
+                let generation = serde_json::from_slice::<Generation>(&bytes).map_err(|_| {
                     "Corrupt/incompatible Profile library; explicit repair required.".to_string()
-                })?
+                })?;
+                (generation, digest(&bytes))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let g = Generation {
+            None => {
+                let generation = Generation {
                     schema_version: 1,
                     records: vec![],
                 };
-                persist(&path, &g)?;
-                g
+                let identity = persist(&path, &generation, None)?;
+                (generation, identity)
             }
-            Err(e) => return Err(io_error(e)),
         };
         validate(&generation)?;
         Ok(Self {
             path: Arc::new(path),
-            state: Arc::new(Mutex::new(generation)),
+            state: Arc::new(Mutex::new(LibraryState {
+                generation,
+                persisted_digest,
+            })),
             error: None,
         })
     }
     pub(crate) fn unavailable(error: String) -> Self {
         Self {
             path: Arc::new(PathBuf::new()),
-            state: Arc::new(Mutex::new(Generation {
-                schema_version: 1,
-                records: vec![],
+            state: Arc::new(Mutex::new(LibraryState {
+                generation: Generation {
+                    schema_version: 1,
+                    records: vec![],
+                },
+                persisted_digest: [0; 32],
             })),
             error: Some(Arc::new(error)),
         }
@@ -186,6 +216,7 @@ impl TaskProfileLibrary {
             .state
             .lock()
             .map_err(|_| "Profile library lock unavailable.")?
+            .generation
             .records
             .clone())
     }
@@ -206,30 +237,36 @@ impl TaskProfileLibrary {
             .state
             .lock()
             .map_err(|_| "Profile library lock unavailable.")?;
-        let existing = state.records.iter().position(|r| r.id == id);
-        let revision =
-            match (existing, request.expected_revision) {
-                (None, None) => 1,
-                (Some(i), Some(r)) if state.records[i].revision == r && r < MAX_REVISION => r + 1,
-                _ => return Err(
+        let existing = state.generation.records.iter().position(|r| r.id == id);
+        let revision = match (existing, request.expected_revision) {
+            (None, None) => 1,
+            (Some(i), Some(r)) if state.generation.records[i].revision == r && r < MAX_REVISION => {
+                r + 1
+            }
+            _ => {
+                return Err(
                     "Profile revision conflict. Reload the latest record or copy under a new ID."
                         .into(),
-                ),
-            };
+                )
+            }
+        };
         let record = ProfileRecord {
             id,
             revision,
             profile: request.profile,
             updated_at_ms: crate::tasks::now_ms(),
         };
-        let mut next = state.clone();
+        let mut next = state.generation.clone();
         if let Some(i) = existing {
             next.records[i] = record.clone();
         } else {
             next.records.push(record.clone());
         }
-        persist(&self.path, &next)?;
-        *state = next;
+        let persisted_digest = persist(&self.path, &next, Some(state.persisted_digest))?;
+        *state = LibraryState {
+            generation: next,
+            persisted_digest,
+        };
         Ok(record)
     }
 }

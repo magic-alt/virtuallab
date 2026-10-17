@@ -123,3 +123,35 @@
 - Task 5: frontend 322 passed / 1 pre-existing skipped, typecheck/build passed; macOS locked Rust check passed (6 existing unused-code warnings), host-permission native suite 324 passed. Final review and acceptance runner pending; external qualification remains unperformed.
 - Ruling: sandbox denied Git worktree ref creation, so use current feature checkout under the worktree skill fallback. Cost: implementation shares the selected checkout; existing documentation edits are preserved.
 - Ruling: recognize only Native's exact sole review-required blocker for the review queue. Unknown/additional blockers remain verification work. Cost if wording changes: the queue becomes empty; no false readiness is introduced.
+
+
+## Independent review and fix pass
+
+- Reviewer examined `1afa6ef..2c54e7a`: no Critical findings, four Important findings
+  and one initially Minor recovery-guidance finding. The recovery issue was
+  regraded Important because it directed a partially merged worktree to a refused
+  preview instead of the existing explicit repair/verification path.
+- Fixed with observed RED->GREEN: external regular-file replacement/deletion
+  preserves disk and memory; delayed reload preserves subsequent edits; Save and
+  export parse visible advanced JSON; prepared and approved-but-unaccepted tasks
+  stay actionable; failed integration guidance routes to explicit repair and
+  verification. Focused UI tests 9 passed; Profile native tests 12 passed.
+- Post-fix frontend suite: 326 passed, 1 pre-existing skipped. Locked macOS Rust
+  check passed with the same 6 unused-code warnings. Final acceptance pending.
+- Earlier acceptance attempts exposed unchanged watcher UI timeouts and an
+  integration-cancellation elapsed-time assertion under concurrent native load.
+  Both affected suites/tests passed in isolated reruns without changing deadlines
+  or product code. The final host run limits Rust test concurrency to four.
+- Final Ruling: retain the single-manager contract; the backing-file digest detects
+  external changes but supplies no cross-process locking. Cost if multiple app
+  managers race: detection is conservative, not an atomic interprocess CAS.
+- Final Ruling: task/tab/task-filter navigation persists as designed; inventory
+  selection/filters remain page-local. Cost: switching away from the evidence page
+  may reset its inventory controls; no broader persistence is promised.
+- Final Ruling: rename/delete/policy migration and complete archive discovery stay
+  deferred. Cost: users copy to a new Profile ID and use existing task evidence
+  rather than a general archive browser.
+- Final Ruling: packaged GUI/CSP, authenticated CMake/two-Codex delivery and other
+  hosts remain unperformed until actual environment observations exist. Cost:
+  this implementation does not close release/host/provider qualification.
+- Deferred minors: none; recovery guidance was promoted and fixed.

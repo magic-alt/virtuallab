@@ -447,8 +447,10 @@ positive revisions cannot exceed JavaScript's maximum safe integer. The narrow
 Null expectedRevision creates; exact revision updates; conflicts never overwrite
 records. Cloned managers serialize writes, atomically persist before memory
 publication, and preserve existing corrupt/nonregular/unsupported stores on open.
-One manager owns one path inside this application; this is not a cross-process
-locking protocol. A library failure cannot prevent direct workspace tools from
+The manager retains the last persisted file-content digest and rejects a changed,
+missing or replaced backing generation before replacement, preserving disk and
+memory. One manager owns one path inside this application; the change detector is
+not a cross-process locking or atomic compare-and-swap protocol. A library failure cannot prevent direct workspace tools from
 loading, and library validation never grants execution qualification.
 
 Library Profile definitions reuse task validation without a repository root.

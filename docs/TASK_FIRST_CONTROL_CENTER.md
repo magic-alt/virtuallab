@@ -36,6 +36,11 @@ Changing the library later cannot update the draft or an accepted task. Manual
 JSON and existing-task reuse remain available if library storage is unavailable.
 A task accepted without a Profile keeps that frozen policy; create a new plan
 with a configured Profile rather than assuming a settings edit repairs it.
+Saving/exporting uses the currently visible advanced JSON, with validation;
+“应用 JSON” also updates the structured form. A delayed reload cannot replace
+edits made after that reload began. If the backing library file is changed or
+removed outside the application, saving refuses to overwrite it: inspect/repair
+the file explicitly and reopen the application.
 
 The dashboard separates overlapping action queues and routes a task to the
 relevant detail tab. Unknown readiness is displayed as unknown, not a zero count.
