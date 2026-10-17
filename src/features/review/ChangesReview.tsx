@@ -721,7 +721,7 @@ function FileRow({
         expanded ? <ChevronDown className="shrink-0 text-orange-300" size={14} />
           : <ChevronRight className="shrink-0 text-slate-400" size={14} />
       )}
-      {file.untracked && <Badge tone="neutral">untracked</Badge>
+      {file.untracked && <Badge tone="neutral">untracked</Badge>}
     </button>
   );
 }
