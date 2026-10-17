@@ -3,6 +3,7 @@ mod task_inputs;
 mod task_evidence;
 mod task_git_watch;
 mod tasks;
+mod task_profiles;
 mod task_runtime;
 mod task_execution;
 mod workspace_lifecycle;
@@ -92,10 +93,18 @@ pub fn run() {
                 Err(_) => tasks::TaskManager::unavailable(std::path::PathBuf::new(), "Task application-data directory is unavailable".into()),
             };
             app.manage(manager);
+            let profiles = match app.path().app_data_dir() {
+                Ok(directory) => task_profiles::TaskProfileLibrary::open(directory.join("task-profiles-v1.json"))
+                    .unwrap_or_else(task_profiles::TaskProfileLibrary::unavailable),
+                Err(_) => task_profiles::TaskProfileLibrary::unavailable("Profile application-data directory is unavailable".into()),
+            };
+            app.manage(profiles);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             app_build::app_build_info,
+            task_profiles::task_profile_list,
+            task_profiles::task_profile_save,
             tasks::task_list,
             tasks::task_get,
             tasks::task_events,

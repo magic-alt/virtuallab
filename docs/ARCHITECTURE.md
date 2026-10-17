@@ -434,3 +434,46 @@ The native `agent_journal.rs` records only a fixed structural event allowlist. P
 `agent_journal_purge_all` deletes only VirtualLab's own application-metadata segments after an explicit frontend **native confirmation**. It neither deletes provider threads nor stops processes. The recovered-state pane shows whether the **current app process** has an Agent runtime registered. That is not proof that the provider's last task passed verification.
 
 Limits: Recovery inspects only the retained journal window and cannot resurrect a process/OS Job Object. No task DAG, exactly-once external side-effect execution, provider-verified completion or immutable release approval is implied. Authenticated cross-platform desktop testing remains separate from mock/unit CI.
+
+
+### Reusable task Profile configuration and task navigation
+
+The Task-driven Workbench increment adds a separate native `TaskProfileLibrary`
+managed independently of TaskManager. Application data `task-profiles-v1.json`
+holds `{schemaVersion:1, records:[{id, revision, profile, updatedAtMs}]}`. The
+library is bounded to 128 records, 64 KiB per Profile and 9 MiB per generation;
+positive revisions cannot exceed JavaScript's maximum safe integer. The narrow
+`task_profile_list` / `task_profile_save` commands expose configuration only.
+Null expectedRevision creates; exact revision updates; conflicts never overwrite
+records. Cloned managers serialize writes, atomically persist before memory
+publication, and preserve existing corrupt/nonregular/unsupported stores on open.
+The manager retains the last persisted file-content digest and rejects a changed,
+missing or replaced backing generation before replacement, preserving disk and
+memory. One manager owns one path inside this application; the change detector is
+not a cross-process locking or atomic compare-and-swap protocol. A library failure cannot prevent direct workspace tools from
+loading, and library validation never grants execution qualification.
+
+Library Profile definitions reuse task validation without a repository root.
+Accepting a plan still validates the copied Profile against the selected actual
+repository. A task's accepted Profile is immutable when the library changes.
+React reaches the library through `src/lib/taskProfiles.ts`, with a focused
+request-sequenced store, structured editor and bounded JSON import/export.
+Adapter configuration can be retained in advanced JSON but unsupported/hardware
+executors remain blocked. No new filesystem reader or process/Git API is exposed.
+
+The control center now separates dashboard queues, task list, Profile settings
+and an inventory of evidence-bearing task Attempts. Task selection, detail tab
+and filters live in the task store; root metadata retains valid navigation when
+the observer reattaches and clears removed-repository selection. The workspace
+host remains mounted. Queue guidance never invokes native operations. Missing
+native readiness produces unknown counts for readiness-dependent queues. The
+current native review-required blocker is recognized conservatively only when
+it is the sole blocker; unknown/additional blockers remain verification work.
+
+The Run inventory renders all persisted task evidence, including failed and
+superseded Attempts. It is not complete archive discovery, indexed retention or
+an artifact file-opening service. Current applicability is native task readiness,
+never a React SHA/digest comparison. Existing verification, integration,
+confirmation and human review/acceptance boundaries are unchanged. Authenticated
+providers, packaged desktop and three-host integrated delivery still require
+separate qualification records; see `docs/acceptance/task-driven-workbench.md`.

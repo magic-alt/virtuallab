@@ -1,10 +1,12 @@
+import { TaskEvidenceContext } from './TaskEvidenceContext';
 import { useEffect, useRef, useState } from 'react';
 import * as tasks from '@/lib/tasks';
 import { isDesktopRuntime } from '@/lib/backend';
-import { runTaskAction, runTaskCancellation, useTaskStore } from '@/stores/tasks';
-import type { IntegrationPreview, TaskReadiness, TaskRecord, TaskEvidence } from '@/types/tasks';
+import { runTaskAction, runTaskCancellation, useTaskStore, selectTask } from '@/stores/tasks';
+import type { IntegrationPreview, TaskReadiness, TaskRecord } from '@/types/tasks';
 import type { WorkspaceTab } from '@/types/workbench';
 import { statusLabels, taskStatus } from './model';
+import { nextTaskStep } from './workflow';
 import { TaskWorkspaceTools } from './TaskWorkspaceTools';
 
 const tabs = ['概览','执行','变更与审查','证据','交付'] as const;
@@ -13,15 +15,12 @@ export function TaskStatusSummary({task, readiness}: {task: TaskRecord; readines
   const status = taskStatus(task, readiness);
   return <dl className="task-status-grid">{[['执行',status.execution],['检查',status.checks],['交付就绪',status.readiness],['人工验收',status.acceptance]].map(([label,value]) => <div key={label}><dt>{label}</dt><dd data-status={value}>{statusLabels[value] ?? value}</dd></div>)}</dl>;
 }
-function TaskEvidenceContext({evidence}: {evidence: TaskEvidence}) {
-  return <><dl className="task-facts"><dt>Run</dt><dd>{evidence.runId}</dd><dt>HEAD</dt><dd>{evidence.headSha}</dd><dt>检查结果（历史观察）</dt><dd>{statusLabels[evidence.status]}</dd><dt>输入摘要</dt><dd>{evidence.inputDigest}</dd><dt>Profile 摘要</dt><dd>{evidence.profileDigest}</dd><dt>工具链摘要</dt><dd>{evidence.toolchainDigest}</dd><dt>Manifest 摘要</dt><dd>{evidence.manifestDigest ?? '历史记录（未绑定 manifest）'}</dd><dt>观察时间</dt><dd>{new Date(evidence.observedAtMs).toLocaleString()}</dd></dl>
-          <h3>Checks</h3><ul>{evidence.checks.map(check => <li key={check.gateId}>{check.gateId} · {statusLabels[check.status]}<p>{check.detail}</p></li>)}</ul><h3>Artifacts</h3><ul>{evidence.artifacts.map(artifact => <li key={artifact.id}><code>{artifact.path}</code> · {artifact.sha256 ?? '摘要不可用'}</li>)}</ul></>;
-}
 function TaskDecisionBinding({decision}: {decision: {runId?: string | null; toolchainDigest?: string | null}}) {
   return <dl className="task-facts"><dt>绑定 Run</dt><dd>{decision.runId ?? '历史记录（未绑定 Run）'}</dd><dt>绑定工具链摘要</dt><dd>{decision.toolchainDigest ?? '历史记录（工具链未绑定）'}</dd></dl>;
 }
 export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWorkspace: OpenTaskWorkspace}) {
-  const [tab, setTab] = useState<typeof tabs[number]>('概览');
+  const tab = useTaskStore(state => state.activeTaskId === task.id ? state.activeTaskTab : '概览');
+  const setTab = (value:typeof tabs[number]) => selectTask(task.id,value);
   const [branch,setBranch] = useState(''); const [targetPath,setTargetPath] = useState(''); const [executablePath,setExecutablePath] = useState('');
   const [preparationUncertain,setPreparationUncertain] = useState(false);
   const [preparationNotice,setPreparationNotice] = useState('');
@@ -56,7 +55,7 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
     const link = document.createElement('a');link.href = url;link.download = `task-${task.id.replace(/[^a-z0-9_-]/gi,'_')}-passport.json`;link.click();URL.revokeObjectURL(url);
   };
   return <article className="task-surface task-detail" aria-label="任务详情">
-    <header><p>{task.kind === 'integration' ? '集成任务' : '实现任务'} · {task.id}</p><h2>{task.title}</h2><p>{task.repositoryRoot}</p></header>
+    <header><p>{task.kind === 'integration' ? '集成任务' : '实现任务'} · {task.id}</p><h2>{task.title}</h2><aside className="task-node" aria-label="任务下一步"><strong>{nextTaskStep(task,readiness).label}</strong><p>{nextTaskStep(task,readiness).detail}</p><button onClick={()=>setTab(nextTaskStep(task,readiness).tab)}>查看相关操作</button></aside><p>{task.repositoryRoot}</p></header>
     <TaskStatusSummary task={task} readiness={readiness}/>
     {actionError && <p role="alert" className="task-error">{actionError}</p>}
     {readinessError && <p className="task-error">就绪来源不可用：{readinessError}</p>}
