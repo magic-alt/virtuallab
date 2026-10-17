@@ -499,7 +499,7 @@ export function ChangesReview({
                 ? "Load a base ref to compare committed changes. Local unstaged and untracked changes are not included."
                 : mode === "index"
                   ? "Staged changes only. Untracked entries are shown in Worktree."
-                  : "Unstaged changes and untracked entries. Select a tracked file for read-only Monaco review."}
+                  : "Unstaged and untracked files. Select a file to preview, or expand an untracked folder. Nothing is staged automatically."}
             </div>
           </div>
           <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto" data-testid="changes-file-list">
@@ -518,6 +518,7 @@ export function ChangesReview({
                   file={file}
                   active={file.path === selectedPath}
                   disabled={!enabled}
+                  expanded={Boolean(expandedUntracked[file.path])}
                   onSelect={() => void loadFile(file)}
                 />
               ))
@@ -587,20 +588,26 @@ export function ChangesReview({
             {(result?.truncated || result?.contentTruncated) && (
               <Badge tone="orange">truncated</Badge>
             )}
-            {result && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
+            {selectedUntracked && <Badge tone="neutral">untracked</Badge>}
+            {result && !selectedUntracked && <Badge tone="neutral">{result.returnedBytes} B patch</Badge>}
           </div>
 
+          {selectedUntracked && !selectedUntracked.path.endsWith("/") && textualResult && (
+            <div role="status" className="shrink-0 border-b border-white/[0.06] px-3 py-1.5 text-[11px] text-slate-400">
+              New untracked file · showing its current contents as additions. No git add or staging performed.
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-hidden" data-testid="changes-review-editor-body">
             {loading ? (
               <ReviewMessage icon="spinner" title="Loading Git diff…" />
             ) : error ? (
-              <ReviewMessage icon="error" title="Diff load failed" detail={error} />
-            ) : selectedUntracked ? (
+              <ReviewMessage icon="error" title={selectedUntracked ? "Preview failed" : "Diff load failed"} detail={error} />
+            ) : selectedUntracked?.path.endsWith("/") ? (
               <ReviewMessage
-                title={selectedUntracked.path.endsWith("/") ? "Untracked directory" : "Untracked file"}
-                detail={selectedUntracked.path.endsWith("/")
-                  ? "Git groups this directory as one local change. Its files are not staged; tracked diff review is unavailable here."
-                  : "This file is counted as a local change but is not staged. Tracked diff review is unavailable until the file is staged."}
+                title="Untracked directory"
+                detail={selectedUntrackedGroup
+                  ? `Showing ${selectedUntrackedGroup.files.length}${selectedUntrackedGroup.truncated ? "+" : ""} untracked files in the left list. Choose a child to preview it without staging.`
+                  : "Select the folder to expand its untracked files."}
               />
             ) : result?.binary ? (
               <ReviewMessage
@@ -682,11 +689,13 @@ function FileRow({
   file,
   active,
   disabled,
+  expanded,
   onSelect,
 }: {
   file: ReviewFile;
   active: boolean;
   disabled: boolean;
+  expanded: boolean;
   onSelect: () => void;
 }) {
   const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
@@ -695,6 +704,7 @@ function FileRow({
       aria-label={label}
       className={cn(
         "flex w-full items-center gap-3 border-b border-white/[0.05] px-3 py-3 text-left transition",
+        file.groupPath && "pl-8",
         active ? "bg-orange-400/[0.10]" : "hover:bg-white/[0.025]",
       )}
       disabled={disabled}
@@ -705,9 +715,13 @@ function FileRow({
         {file.status}
       </span>
       <span className="mono min-w-0 flex-1 truncate text-xs text-slate-300" title={label}>
-        {label}
+        {file.groupPath ? file.path.slice(file.groupPath.length) : label}
       </span>
-      {file.untracked && <Badge tone="neutral">untracked</Badge>}
+      {file.untracked && file.path.endsWith("/") && (
+        expanded ? <ChevronDown className="shrink-0 text-orange-300" size={14} />
+          : <ChevronRight className="shrink-0 text-slate-400" size={14} />
+      )}
+      {file.untracked && <Badge tone="neutral">untracked</Badge>
     </button>
   );
 }
