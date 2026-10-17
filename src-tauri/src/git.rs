@@ -547,6 +547,8 @@ fn git_origin_network(repo: &str, args: &[&str], pushing: bool) -> Result<String
 
 const MAX_DIFF_BYTES: usize = 512 * 1024;
 const MAX_DIFF_LINES: usize = 12_000;
+const MAX_UNTRACKED_LIST_BYTES: usize = 256 * 1024;
+const MAX_UNTRACKED_DISPLAY_FILES: usize = 200;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -590,6 +592,95 @@ pub struct DiffResponse {
     original_text: Option<String>,
     modified_text: Option<String>,
     content_truncated: bool,
+}
+
+/// Untracked files have no Git patch/index blob. Read them on demand, never
+/// staging them just to make Monaco review possible. A grouped directory
+/// returns a bounded list of non-ignored files instead of reading every file.
+fn untracked_review_response(
+    workspace_root: &str,
+    relative_path: &str,
+) -> Result<Option<DiffResponse>, String> {
+    let pathspec = format!(":(literal){relative_path}");
+    let (raw, list_truncated) = git_read_limited(
+        workspace_root,
+        &["ls-files", "--others", "--exclude-standard", "-z", "--", &pathspec],
+        MAX_UNTRACKED_LIST_BYTES,
+    )?;
+
+    // Truncation must never turn a partial filename into a selectable path.
+    let complete_length = raw.iter().rposition(|byte| *byte == 0)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let is_directory = relative_path.ends_with('/');
+    let mut paths: Vec<String> = raw[..complete_length]
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .filter(|path| {
+            if is_directory {
+                path.starts_with(relative_path)
+            } else {
+                path == relative_path
+            }
+        })
+        .collect();
+    if paths.is_empty() {
+        return Ok(None);
+    }
+
+    if is_directory {
+        // Porcelain status groups untracked directories, but the user must be
+        // able to inspect individual children without modifying the index.
+        let truncated = list_truncated || paths.len() > MAX_UNTRACKED_DISPLAY_FILES;
+        paths.truncate(MAX_UNTRACKED_DISPLAY_FILES);
+        return Ok(Some(DiffResponse {
+            mode: DiffMode::Worktree,
+            base_ref: None,
+            path: Some(relative_path.to_string()),
+            old_path: None,
+            files: paths.into_iter().map(|path| DiffFileSummary {
+                path, old_path: None, status: "?".to_string(),
+            }).collect(),
+            patch: String::new(),
+            binary: false,
+            truncated,
+            returned_bytes: 0,
+            original_text: None,
+            modified_text: None,
+            content_truncated: false,
+        }));
+    }
+
+    // Never follow untracked symlinks or read special files. This also avoids
+    // showing the contents of an ignored or sensitive symlink target.
+    let candidate = Path::new(workspace_root).join(relative_path);
+    let metadata = std::fs::symlink_metadata(&candidate)
+        .map_err(|error| format!("Cannot inspect untracked file {relative_path}: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("Untracked symlink or special file cannot be previewed safely".to_string());
+    }
+    let (bytes, content_truncated) =
+        read_workspace_file_limited(workspace_root, relative_path, MAX_DIFF_BYTES)?;
+    let binary = bytes.contains(&0) || std::str::from_utf8(&bytes).is_err();
+    Ok(Some(DiffResponse {
+        mode: DiffMode::Worktree,
+        base_ref: None,
+        path: Some(relative_path.to_string()),
+        old_path: None,
+        files: vec![DiffFileSummary {
+            path: relative_path.to_string(), old_path: None, status: "?".to_string(),
+        }],
+        patch: String::new(),
+        binary,
+        truncated: false,
+        returned_bytes: 0,
+        original_text: if binary { None } else { Some(String::new()) },
+        modified_text: if binary { None } else {
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        },
+        content_truncated,
+    }))
 }
 
 #[tauri::command]
@@ -643,6 +734,17 @@ fn git_diff_blocking(request: DiffRequest) -> Result<DiffResponse, String> {
         }
         _ => None,
     };
+
+    // git diff intentionally excludes untracked files. Resolve only the
+    // explicitly selected Worktree path, after worktree and path validation.
+    // Index and Base review continue to use their original Git semantics.
+    if request.mode == DiffMode::Worktree && old_path.is_none() {
+        if let Some(selected_path) = path.as_deref() {
+            if let Some(response) = untracked_review_response(&workspace_root, selected_path)? {
+                return Ok(response);
+            }
+        }
+    }
 
     let args = diff_args(
         request.mode,
