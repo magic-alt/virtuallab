@@ -136,18 +136,33 @@ describe("workbench quiet filesystem refresh", () => {
     const button = await screen.findByRole("button", { name: "Switch to main" });
     await waitFor(() => expect(button).toBeEnabled());
 
-    await changed();
-    await changed();
-    await changed();
-    expect(button).toBeEnabled();
-    expect(harness.inspect).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(harness.watchStart).toHaveBeenCalled());
+    await waitFor(() => expect(harness.listeners.has("workbench://event")).toBe(true));
+    const id = harness.watchStart.mock.lastCall?.[0] as string;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => {
+        for (let i = 0; i < 3; i += 1) {
+          harness.listeners.get("workbench://event")?.({ payload: { id, eventType: "fs.changed" } });
+        }
+      });
+      expect(button).toBeEnabled();
+      expect(harness.inspect).toHaveBeenCalledTimes(1);
 
-    await waitFor(() => expect(harness.inspectStatus).toHaveBeenCalledTimes(1), { timeout: 4000 });
-    await waitFor(() => expect(screen.getByTestId("live-status")).toHaveAttribute("data-dirty", "1"));
-    expect(harness.inspect).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Switch to main" })).toBe(button);
-    expect(button).toBeEnabled();
-    expect(harness.watchStart).toHaveBeenCalledTimes(1);
+      // Advance the debounce clock explicitly: this tests coalescing rather
+      // than spending the test's wall-clock budget waiting on a busy runner.
+      await act(async () => { await vi.advanceTimersByTimeAsync(849); });
+      expect(harness.inspectStatus).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(harness.inspectStatus).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("live-status")).toHaveAttribute("data-dirty", "1");
+      expect(harness.inspect).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("button", { name: "Switch to main" })).toBe(button);
+      expect(button).toBeEnabled();
+      expect(harness.watchStart).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not update review revisions or the branch list when status is identical", async () => {
