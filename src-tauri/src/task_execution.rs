@@ -1409,12 +1409,11 @@ impl TaskExecution {
                 let Ok(task) = manager.get(&entry.task_id) else {
                     continue;
                 };
-                if task.kind != "implementation" || prerequisites(&app, &task).is_err() {
-                    continue;
-                }
+                if task.kind != "implementation" { continue; }
                 let Ok(activity) = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root) else {
                     continue; // Detached queues stay pending until explicit re-import/cancel.
                 };
+                if prerequisites(&app, &task).is_err() { continue; }
                 let dispatched = execution.dispatch(&entry.task_id, |queued| {
                     manager.update(&queued.task_id, |record| {
                         let attempt = record.attempts.last_mut().ok_or("Attempt missing")?;
