@@ -961,7 +961,65 @@ impl ProcessManager {
         }
     }
 }
+fn terminal_lock_until<'a, T>(
+    mutex: &'a Mutex<T>, deadline: std::time::Instant,
+) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("Terminal state lock poisoned".into()),
+            Err(std::sync::TryLockError::WouldBlock) => {},
+        }
+        if std::time::Instant::now() >= deadline { return Err("Terminal shutdown timed out; retry after cleanup finishes".into()); }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 impl TerminalManager {
+    /// Cancel a fixed set of this worktree's terminals and wait for their
+    /// existing monitors/readers to observe process exit and release ownership.
+    pub(crate) fn stop_workspace_terminals(
+        &self, target: &std::path::Path, lifecycle: &WorkspaceLifecycle, timeout: Duration,
+    ) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + timeout;
+        // Use the identity frozen by target validation, for both matching and
+        // waiting. Path replacement must not retarget a session or fake release.
+        let snapshot = terminal_lock_until(&self.sessions, deadline)?.clone();
+        let mut targets = Vec::new();
+        for (id, session) in snapshot {
+            let matches = {
+                let state = terminal_lock_until(&session, deadline)?;
+                state._reservation.workspace_root() == target
+            };
+            if matches { targets.push((id, session)); }
+        }
+        {
+            // Match pointer identity before cancelling: a retired ID may have
+            // been reused by another workspace while the snapshot was read.
+            let sessions = terminal_lock_until(&self.sessions, deadline)?;
+            let mut pending = terminal_lock_until(&self.reservations, deadline)?;
+            if pending.keys().any(|id| !sessions.contains_key(id)) {
+                return Err("A terminal is still starting or stopping; wait for completion and retry removal.".into());
+            }
+            for (id, captured) in &targets {
+                if sessions.get(id).is_some_and(|current| Arc::ptr_eq(current, captured)) {
+                    if let Some(cancelled) = pending.get_mut(id) { *cancelled = true; }
+                }
+            }
+        }
+        // Keeping these Arcs would itself retain WorkspaceReservation forever.
+        drop(targets);
+        loop {
+            // Map removal precedes the reader's final Arc drop; the native
+            // reservation, rather than map absence, is the release authority.
+            if lifecycle.try_is_reserved_identity(target)? == Some(false) { return Ok(()); }
+            if std::time::Instant::now() >= deadline {
+                return Err("Terminal shutdown is not complete; the worktree was kept. Retry after cleanup finishes.".into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// A terminal whose shell still owns a worktree blocks deletion. Startup
     /// reservations are also treated as busy until they can be attributed.
     pub fn owns_workspace(&self, path: &str) -> Result<bool, String> {
@@ -987,5 +1045,154 @@ impl TerminalManager {
                 }
             }
         }
+    }
+}
+
+
+#[cfg(test)]
+mod worktree_terminal_stop_tests {
+    use super::*;
+    use std::{fs, path::{Path, PathBuf}, time::Instant};
+
+    struct Fixture {
+        root: PathBuf,
+        manager: TerminalManager,
+        lifecycle: WorkspaceLifecycle,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("virtuallab-terminal-stop-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+            for name in ["target 中文", "other"] {
+                fs::create_dir_all(root.join(name).join(".git")).unwrap();
+            }
+            Self { root, manager: TerminalManager::default(), lifecycle: WorkspaceLifecycle::default() }
+        }
+        fn start(&self, id: &str, cwd: &Path) {
+            let reservation = self.lifecycle.reserve(cwd.to_str().unwrap(), "terminal").unwrap();
+            let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
+            let (shell, args) = default_shell();
+            let mut command = CommandBuilder::new(shell);
+            for arg in args { command.arg(arg); }
+            configure_terminal_command(&mut command, cwd.to_str().unwrap());
+            let child = pair.slave.spawn_command(command).unwrap();
+            #[cfg(unix)]
+            let process = crate::terminal_process::TerminalProcess::capture(child.process_id().unwrap()).unwrap();
+            let session = Arc::new(Mutex::new(TerminalSession {
+                cwd: cwd.to_string_lossy().into_owned(),
+                #[cfg(unix)]
+                process,
+                master: Some(pair.master), writer: writer.clone(), child, _reservation: reservation,
+            }));
+            self.manager.sessions.lock().unwrap().insert(id.into(), session.clone());
+            self.manager.reservations.lock().unwrap().insert(id.into(), false);
+            let manager = self.manager.clone();
+            let monitor = session.clone();
+            let monitor_id = id.to_string();
+            thread::spawn(move || loop {
+                if manager.reservations.lock().unwrap().get(&monitor_id).copied().unwrap_or(true) {
+                    monitor.lock().unwrap().terminate().unwrap();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            });
+            let manager = self.manager.clone();
+            let id = id.to_string();
+            thread::spawn(move || {
+                let _ = read_terminal_output(&mut *reader, &writer, |_| {});
+                session.lock().unwrap().terminate().unwrap();
+                manager.sessions.lock().unwrap().remove(&id);
+                manager.reservations.lock().unwrap().remove(&id);
+            });
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.manager.shutdown();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.manager.sessions.lock().unwrap().is_empty() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn stops_target_terminal_started_in_subdirectory_and_observes_reservation_release() {
+        let fixture = Fixture::new();
+        let target = fixture.root.join("target 中文");
+        let nested = target.join("source");
+        fs::create_dir(&nested).unwrap();
+        fixture.start("target", &nested);
+        fixture.start("unrelated", &fixture.root.join("other"));
+        fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_secs(10)).unwrap();
+        assert!(!fixture.lifecycle.is_reserved(target.to_str().unwrap()).unwrap());
+        assert!(fixture.lifecycle.is_reserved(fixture.root.join("other").to_str().unwrap()).unwrap());
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("unrelated"), Some(&false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_symlink_cannot_redirect_a_captured_terminal_reservation() {
+        let fixture = Fixture::new();
+        let original = fixture.root.join("target 中文");
+        let other = fixture.root.join("other");
+        fixture.start("original", &original);
+        fixture.start("other", &other);
+        fs::rename(&original, fixture.root.join("moved-original")).unwrap();
+        std::os::unix::fs::symlink(&other, &original).unwrap();
+        fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(other.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_secs(10)).unwrap();
+        assert!(fixture.manager.sessions.lock().unwrap().contains_key("original"), "replacing a path must not retarget its old terminal");
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("original"), Some(&false));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacement_during_shutdown_cannot_report_release_before_the_final_session_owner_drops() {
+        let fixture = Fixture::new();
+        let original = fixture.root.join("target 中文");
+        fixture.start("target", &original);
+        // Model the reader's final ownership after the manager entry is gone.
+        let held = fixture.manager.sessions.lock().unwrap().get("target").unwrap().clone();
+        let manager = fixture.manager.clone();
+        let lifecycle = fixture.lifecycle.clone();
+        let path = WorkspaceLifecycle::resolve_identity(original.to_str().unwrap()).unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let _ = send.send(manager.stop_workspace_terminals(&path, &lifecycle, Duration::from_secs(5)));
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while fixture.manager.reservations.lock().unwrap().get("target") == Some(&false) {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        fs::rename(&original, fixture.root.join("moved-original")).unwrap();
+        std::os::unix::fs::symlink(fixture.root.join("other"), &original).unwrap();
+        assert!(matches!(receive.recv_timeout(Duration::from_millis(100)), Err(std::sync::mpsc::RecvTimeoutError::Timeout)), "path replacement is not reservation release");
+        drop(held);
+        receive.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn unattributed_startup_fails_closed_before_stopping_any_terminal() {
+        let fixture = Fixture::new();
+        let target = fixture.root.join("target 中文");
+        fixture.start("target", &target);
+        fixture.manager.reservations.lock().unwrap().insert("pending-start".into(), false);
+        assert!(fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_secs(1)).is_err());
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("target"), Some(&false));
+        fixture.manager.reservations.lock().unwrap().remove("pending-start");
+    }
+
+    #[test]
+    fn nonterminal_writer_times_out_without_releasing_its_reservation() {
+        let fixture = Fixture::new();
+        let target = fixture.root.join("target 中文");
+        let writer = fixture.lifecycle.reserve(target.to_str().unwrap(), "agent").unwrap();
+        assert!(fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_millis(30)).is_err());
+        assert!(fixture.lifecycle.is_reserved(target.to_str().unwrap()).unwrap());
+        drop(writer);
     }
 }

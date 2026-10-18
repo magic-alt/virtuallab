@@ -40,6 +40,17 @@ fn identity(root: &str) -> Result<PathBuf, String> {
 }
 
 impl WorkspaceLifecycle {
+    pub(crate) fn resolve_identity(root: &str) -> Result<PathBuf, String> { identity(root) }
+
+    /// Query an already-resolved identity without following a replacement path.
+    pub(crate) fn try_is_reserved_identity(&self, root: &Path) -> Result<Option<bool>, String> {
+        match self.0.try_lock() {
+            Ok(claims) => Ok(Some(claims.contains_key(root))),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => Err("Workspace lifecycle lock poisoned".into()),
+        }
+    }
+
     pub fn reserve(&self, root: &str, owner: &str) -> Result<WorkspaceReservation, String> {
         if owner.trim().is_empty() {
             return Err("Workspace owner must not be empty".into());
@@ -137,6 +148,11 @@ impl WorkspaceLifecycle {
     }
 }
 
+impl WorkspaceReservation {
+    /// Immutable owner identity, including terminals started below a worktree root.
+    pub(crate) fn workspace_root(&self) -> &Path { &self.key }
+}
+
 impl Drop for WorkspaceReservation {
     fn drop(&mut self) {
         // A poisoned service rejects new claims; recovering here only releases
@@ -176,6 +192,29 @@ mod tests {
         fs::create_dir_all(root.join("other")).unwrap();
         root
     }
+    #[test]
+    fn terminal_shutdown_deadline_includes_waiting_for_the_lifecycle_lock() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let target = identity(root.to_str().unwrap()).unwrap();
+        let held = service.0.lock().unwrap();
+        let worker = service.clone();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (send, receive) = std::sync::mpsc::channel();
+        let job = thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = crate::execution::TerminalManager::default().stop_workspace_terminals(
+                &target, &worker, std::time::Duration::from_millis(30));
+            let _ = send.send(result);
+        });
+        ready.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let result = receive.recv_timeout(std::time::Duration::from_millis(200));
+        drop(held);
+        job.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(matches!(result, Ok(Err(_))), "a held lifecycle lock must not outlive the shutdown deadline");
+    }
+
     #[test]
     fn competing_starts_have_exactly_one_owner_even_with_same_owner_label() {
         let service = WorkspaceLifecycle::default();

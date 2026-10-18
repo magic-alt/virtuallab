@@ -139,8 +139,9 @@ export function WorkbenchShell() {
     }
     const key = normalizePath(path);
     latestSnapshotRequestRef.current = key;
+    let selectionKey = key;
     const ownsSelection = () =>
-      latestSnapshotRequestRef.current === key &&
+      latestSnapshotRequestRef.current === selectionKey &&
       useWorkbenchStore.getState().activeRepositoryId === ownerId;
 
     const existing = snapshotLoadsRef.current.get(key);
@@ -149,7 +150,13 @@ export function WorkbenchShell() {
         // A filesystem watch refresh may have started before git switch ended.
         // Wait for it, then *reinspect* the new HEAD instead of displaying
         // the snapshot that captured the previous branch.
-        return existing.catch(() => undefined).then(() => loadSnapshot(path, true, ownerId, background));
+        return existing.then(
+          (next) => ownsSelection() ? loadSnapshot(path, true, ownerId, background) : next,
+          (cause) => {
+            if (!ownsSelection()) throw cause;
+            return loadSnapshot(path, true, ownerId, background);
+          },
+        );
       }
       // An older request may have lost ownership of the UI when the user
       // switched worktrees. Re-selecting its path must commit its snapshot.
@@ -187,10 +194,42 @@ export function WorkbenchShell() {
 
     // Invalidates any older lightweight status request before a full inspection.
     fullInspectionEpochRef.current += 1;
+    let recovered = false;
     const request = inspectRepository(path)
+      .catch(async (cause) => {
+        const repository = useWorkbenchStore.getState().repositories.find((item) => item.id === ownerId);
+        if (!ownsSelection() || !repository || normalizePath(repository.path) === key) throw cause;
+
+        // A CLI may have removed the selected worktree. Read its registered
+        // repository before changing selection; a transient Git error must not
+        // move the user away from a worktree that is still registered.
+        let primary: RepositorySnapshot;
+        try { primary = await inspectRepository(repository.path); }
+        catch { throw cause; }
+        if (!ownsSelection() ||
+            primary.worktrees.some((tree) => normalizePath(tree.path) === key) ||
+            !primary.worktrees.some((tree) => normalizePath(tree.path) === normalizePath(primary.root))) throw cause;
+        recovered = true;
+        return primary;
+      })
       .then((next) => {
-        snapshotCacheRef.current.set(key, next);
+        if (recovered && !ownsSelection()) return next;
+        snapshotCacheRef.current.set(normalizePath(next.root), next);
         if (ownsSelection()) {
+          if (recovered) {
+            snapshotCacheRef.current.delete(key);
+            selectionKey = normalizePath(next.root);
+            latestSnapshotRequestRef.current = selectionKey;
+            saveWorkspaceState({
+              repositoryId: ownerId!, activeWorktreePath: next.root,
+              activeTab: "overview", updatedAt: Date.now(),
+            });
+            setTab("overview");
+            setError(null);
+            // A foreground re-selection may have joined this background read.
+            // It is satisfied by recovery even though its old path lost ownership.
+            setLoading(false);
+          }
           activePathRef.current = next.root;
           setSnapshot(next);
           setSnapshotRevision((revision) => revision + 1);
@@ -214,7 +253,7 @@ export function WorkbenchShell() {
 
     snapshotLoadsRef.current.set(key, request);
     return request;
-  }, []);
+  }, [saveWorkspaceState]);
 
   useEffect(() => {
     if (!activeRepository) {
@@ -248,23 +287,7 @@ export function WorkbenchShell() {
           updatedAt: Date.now(),
         });
       })
-      .catch(() => {
-        if (cancelled || useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||
-            preferredPath === activeRepository.path ||
-            latestSnapshotRequestRef.current !== normalizePath(preferredPath)) return;
-        void loadSnapshot(activeRepository.path)
-          .then((next) => {
-            if (!stillSelected(activeRepository.path)) return;
-            saveWorkspaceState({
-              repositoryId,
-              activeWorktreePath: next.root,
-              activeTab: "overview",
-              updatedAt: Date.now(),
-            });
-            setTab("overview");
-          })
-          .catch(() => undefined);
-      });
+      .catch(() => undefined); // loadSnapshot owns recovery and error reporting.
     return () => { cancelled = true; };
   }, [activeRepository, loadSnapshot, saveWorkspaceState]);
 
@@ -307,9 +330,13 @@ export function WorkbenchShell() {
             setSnapshotRevision((revision) => revision + 1);
           }
         })
-        .catch(() => {
-          // A watcher read may race an external Git operation. Keep the last
-          // valid snapshot; subsequent watcher events retry the inspection.
+        .catch(async () => {
+          if (!ownsSelection() || gitMutationInFlightRef.current ||
+              snapshotLoadsRef.current.has(key) || fullInspectionEpochRef.current !== epoch) return;
+          // A source event can be the last event before a directory disappears.
+          // Full inspection can confirm removal and recover through its owner.
+          try { await loadSnapshot(path, true, ownerId, true); }
+          catch { /* A transient failure keeps the last valid snapshot. */ }
         })
         .finally(() => {
           statusLoadsRef.current.delete(key);
@@ -819,6 +846,7 @@ export function WorkbenchShell() {
           onSelectWorkspace={(path) => {
             if (!activeRepository || !workspaceReady || gitMutationInFlightRef.current || loading) return;
             const repositoryId = activeRepository.id;
+            setError(null);
             void loadSnapshot(path)
               .then((next) => {
                 if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId ||

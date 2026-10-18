@@ -262,9 +262,39 @@ export async function removeWorktreeAfterConfirmation(
   );
   if (!confirmed) return false;
 
-  const initial = await invoke<WorktreeRemovalResult>("remove_worktree", {
-    repositoryRoot, worktreePath, force: false, expectedState: null,
-  });
+  let terminalStopOffered = false;
+  const remove = async (force: boolean, expectedState: WorktreeRemovalState | null): Promise<WorktreeRemovalResult | null> => {
+    try {
+      return await invoke<WorktreeRemovalResult>("remove_worktree", {
+        repositoryRoot, worktreePath, force, expectedState,
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.startsWith("Workspace is reserved by terminal;") && !terminalStopOffered) {
+        terminalStopOffered = true;
+        const stopConfirmed = await confirm(
+          `Stop the terminals in this worktree, then retry removal?\n\n${worktreePath}\n\n` +
+          "This ends their shells and running commands, including any agent CLI inside those terminals. " +
+          "Save important work first. Other workspaces and separately managed Agents/Run tasks are kept. " +
+          "Removal waits for terminal shutdown and still requires a separate confirmation for dirty files.",
+          { title: "Stop worktree terminals", kind: "warning", okLabel: "Stop and retry", cancelLabel: "Cancel" },
+        );
+        if (!stopConfirmed) return null;
+        await invoke<void>("stop_worktree_terminals", { repositoryRoot, worktreePath });
+        return remove(force, expectedState);
+      }
+      if (message.startsWith("Workspace is reserved by terminal;")) {
+        throw new Error(
+          `Cannot remove worktree "${worktreePath}" while a terminal is running there. ` +
+          "Select that workspace lane, open Terminal, and use Stop or Close for its sessions. " +
+          "Wait for shutdown to finish, then retry removal.",
+        );
+      }
+      throw cause;
+    }
+  };
+  const initial = await remove(false, null);
+  if (!initial) return false;
   if (initial.status === "removed") return true;
   if (initial.status !== "needsForce") throw new Error("Unexpected worktree removal response.");
 
@@ -283,9 +313,8 @@ export async function removeWorktreeAfterConfirmation(
   );
   if (!forceConfirmed) return false;
 
-  const removed = await invoke<WorktreeRemovalResult>("remove_worktree", {
-    repositoryRoot, worktreePath, force: true, expectedState: initial.state,
-  });
+  const removed = await remove(true, initial.state);
+  if (!removed) return false;
   if (removed.status !== "removed") {
     throw new Error("Worktree changed before force removal. Retry and review its latest contents.");
   }
