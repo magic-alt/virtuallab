@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { inspectVersions, setVersion } from "./version.mjs";
 
 const repoRoot = process.cwd();
+const baselineVersion = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")).version;
 const versionFiles = [
   "package.json",
   "package-lock.json",
@@ -27,7 +28,7 @@ function withFixture(run) {
 describe("application version management", () => {
   it("starts with synchronized manifests and lockfiles", () => {
     const report = inspectVersions(repoRoot);
-    expect(report.version).toBe("0.5.0");
+    expect(report.version).toBe(baselineVersion);
     expect(report.problems).toEqual([]);
   });
 
@@ -41,8 +42,8 @@ describe("application version management", () => {
     npmLock.packages[""].version = "0.2.0";
     writeFileSync(lockPath, JSON.stringify(npmLock));
     expect(inspectVersions(root).problems).toEqual([
-      "package-lock.json packages[\"\"] is 0.2.0; expected 0.5.0",
-      "src-tauri/tauri.conf.json is 0.2.0; expected 0.5.0",
+      `package-lock.json packages[\"\"] is 0.2.0; expected ${baselineVersion}`,
+      `src-tauri/tauri.conf.json is 0.2.0; expected ${baselineVersion}`,
     ]);
   }));
 

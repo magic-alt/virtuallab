@@ -1,0 +1,49 @@
+name: Automatic version assessment
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: automatic-version-assessment
+  cancel-in-progress: false
+
+jobs:
+  assess:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # Only trusted default-branch code is executed with the write token.
+      # Do not download artifacts or check out a PR/workflow_run head here.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Assess merged PRs and maintain a draft version PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { pathToFileURL } = await import('node:url');
+            const { resolve } = await import('node:path');
+            const moduleUrl = pathToFileURL(resolve('scripts/version-automation.mjs')).href;
+            const { runVersionAutomation } = await import(moduleUrl);
+            const result = await runVersionAutomation({ github, context, core });
+            core.info(`Version assessment: ${result.status}`);

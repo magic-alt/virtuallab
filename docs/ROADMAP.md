@@ -155,6 +155,7 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 - **Platform and privacy:** Windows/macOS/Linux local-first design and CI; real GUI/provider qualification is recorded per host/version. Do not read, display, store or export sensitive environment-variable values or `.env` contents. No named user repository, device or lab dependency.
 - **Tracking:** retain [Epic #17](https://github.com/magic-alt/virtuallab/issues/17) and #18–#25. This document proposes revised slice ownership; remote issue descriptions were not changed by this documentation update. Their existing acceptance requirements remain open unless evidence closes them.
 - **Versions:** V0.7-A/B/C are delivery slices, not automatic package versions or release tags. Follow [version policy](VERSIONING.md).
+- **Automatic version assessment:** merged PRs can propose a patch while the next milestone remains open. A minor proposal requires all mapped milestone checklists and their explicit **Release qualification** entries below, including earlier gates, to be accepted. These entries record reviewed exit-gate evidence; automation never checks them on behalf of a human. See `.github/version-policy.json` and [version assessment](VERSIONING.md#automatic-version-assessment).
 
 ### V0.6 — Reliable execution foundation (P0; next)
 
@@ -166,6 +167,8 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 - [ ] [#19](https://github.com/magic-alt/virtuallab/issues/19) — record real Codex executable, version, capabilities, authentication and failure behavior on each claimed host; retain explicit permission boundaries and other-provider qualification backlog.
 
 **Exit gate:** forced interruption/restart does not produce false running/success states or automatic replay; duplicate native starts and startup/removal races are prevented; managed descendants do not leak and unrelated workspaces survive. No parallel release before this gate.
+
+- [ ] Release qualification for V0.6: exit-gate evidence reviewed and accepted; cross-platform lifecycle/recovery and authenticated execution requirements above are satisfied.
 
 ### V0.7-A — Task and evidence foundation (P1)
 
@@ -192,6 +195,8 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 
 **Exit gate:** two independently passing branches can still fail integrated build/test and must then block delivery. Only fresh integrated evidence plus required review permits readiness; human acceptance is separately recorded for that same revision. PR, release and deployment actions remain independent confirmations.
 
+- [ ] Release qualification for V0.7: V0.7-A/B/C exit-gate evidence reviewed and accepted, including the real two-Codex/three-worktree integrated-delivery lane.
+
 ### V0.8 — Verified Review Loop and evidence hardening (P1)
 
 - [ ] [#22](https://github.com/magic-alt/virtuallab/issues/22) — independent read-only Reviewer → structured feedback → sequential Fixer → native Verifier → re-review, with failures and comments tied to actual revisions/checks.
@@ -201,6 +206,8 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 
 **Exit gate:** a fix invalidates previous review/readiness and requires fresh verification; evidence tampering and missing provenance fail closed. All GitHub writes remain human-confirmed.
 
+- [ ] Release qualification for V0.8: review-loop and evidence-hardening exit-gate evidence reviewed and accepted.
+
 ### V0.9 — Target-user validation and workflow refinement (P2)
 
 - [ ] [#24](https://github.com/magic-alt/virtuallab/issues/24) — improve first-use setup, actionable failures, task search, recovery and keyboard/accessibility behavior; deepen graph/observability only where the MVP reveals a need.
@@ -209,6 +216,8 @@ The current bridge contract is documented in `docs/V0.4_V0.5_AGENT_FOUNDATION.md
 - [ ] [#20](https://github.com/magic-alt/virtuallab/issues/20) / [#24](https://github.com/magic-alt/virtuallab/issues/24) — extend scheduling/observability based on measured bottlenecks; token/cost data stays unknown when the provider does not report it.
 
 **Exit gate:** record pilot results and remaining friction, not a claimed market advantage. Zero observed false greens is necessary but does not prove their absence; any reproduced false green blocks release until fixed.
+
+- [ ] Release qualification for V0.9: target-user validation and workflow-refinement exit-gate evidence reviewed and accepted.
 
 ### V1.0 — Qualified local desktop delivery (P2)
 

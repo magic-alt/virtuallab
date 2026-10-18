@@ -19,6 +19,7 @@
     "icons:generate": "node scripts/generate-icons.mjs",
     "icons:check": "node scripts/generate-icons.mjs --check",
     "version:check": "node scripts/version.mjs check",
+    "version:assess": "node scripts/version-assess.mjs",
     "version:set": "node scripts/version.mjs set"
   },
   "dependencies": {
