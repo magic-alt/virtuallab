@@ -74,7 +74,7 @@ For code review, select a changed file (tracked or untracked text) and choose un
 
 ## Application version
 
-The current application version is **0.5.0**. This is distinct from roadmap feature milestones and does not imply a published GitHub Release. `package.json` is the authoritative version; Tauri, Cargo, and both lockfiles must match. Run `npm run version:check` to verify consistency, or `npm run version:set -- 0.5.1` for a controlled bump. See the [versioning and release policy](docs/VERSIONING.md) for tags, CI enforcement, and packaged About metadata.
+The current application version comes from `package.json`; Tauri, Cargo, and both lockfiles must match. It is distinct from roadmap feature milestones and does not imply a published GitHub Release. After successful main CI, automatic assessment maintains a draft version PR from merged changes and explicit roadmap qualification. Run `npm run version:assess` for a read-only preview and `npm run version:check` for consistency. Manual overrides remain available through `npm run version:set -- X.Y.Z`. See the [versioning and release policy](docs/VERSIONING.md) for setup, review, tags and packaged About metadata.
 
 ## Build and install
 

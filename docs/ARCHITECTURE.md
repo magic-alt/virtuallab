@@ -433,6 +433,29 @@ Dangerous frontend actions use the typed `confirmNativeAction` gate. An unavaila
 Production CSP restricts scripts to local assets and connections to local IPC, with local/blob workers and inline styles for Monaco. Development alone adds Vite loopback HTTP/WebSocket origins. No remote editor CDN or `unsafe-eval` is enabled. Real WebView acceptance remains required on Windows/macOS/Linux. Agent timeline payloads are bounded to 16 KiB per event in addition to the existing 300-event workspace limit; full transcripts are not persisted.
 
 
+## Repository version assessment boundary
+
+Application version assessment is repository maintenance tooling in `scripts/`
+and `.github/`, separate from the desktop/native execution and approval APIs.
+`version-assessment.mjs` evaluates merged-PR metadata and explicit roadmap
+qualification against `.github/version-policy.json`; `version-assess.mjs` exposes
+a read-only local preview through fixed Git/gh executable-and-argument vectors.
+The committed version baseline follows first-parent history, ignoring dependency
+and script edits that retain the same version. Milestones, including the combined
+V0.7-A/B/C slices, require checked acceptance and explicit human-reviewed exit
+qualification; source presence never supplies that evidence.
+
+`version-automation.mjs` runs only trusted default-branch code after successful
+main CI, or an explicit default-branch dispatch. It reads complete live GitHub PR
+metadata, rejects stale main snapshots, and maintains a single draft version PR
+using structured GitHub APIs. Only the five application version files and a
+revision-bound assessment document enter its proposed tree. Updates fast-forward
+the reserved bot branch without force and return ready PRs to draft. The human
+Ready-for-review event starts ordinary PR CI; review and merge remain human
+decisions. No desktop command, arbitrary shell interface, auto-merge, tag,
+GitHub Release, deployment or hardware authority is added. See [version
+policy](VERSIONING.md) for repository permissions, limitations and qualification.
+
 ## Post-merge release audit reliability
 
 Verification process gates use the same Windows Job Object / Unix process-group ownership as Run, Build and Agent through ManagedChild. Every terminal path (leader exit, cancellation, timeout or wait error) confirms process-tree termination before joining output readers. Reader completion has a separate three-second deadline: failed cleanup or missing EOF produces a failed gate rather than a successful verdict or an unbounded join. Deliberate Unix process-group/session escape remains outside this ownership boundary; a failed reader deadline can leave a bounded drainer until that pipe closes.
