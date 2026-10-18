@@ -492,4 +492,19 @@ describe("workbench branch switching with untracked artifacts", () => {
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).not.toBe("/fixtures/other");
   });
 
+
+  it("clears a previous removal error when selecting another workspace lane", async () => {
+    const user = userEvent.setup();
+    harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path));
+    harness.removeWorktree.mockRejectedValueOnce(new Error("Workspace is reserved by terminal; wait for observed completion."));
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
+    await screen.findByText(/Workspace is reserved by terminal/);
+    await user.click(screen.getByRole("button", { name: /feat\/joint17-brake.*fixtures/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Switch to feat/joint17-brake" })).toHaveTextContent("active"));
+    expect(screen.queryByText(/Workspace is reserved by terminal/)).not.toBeInTheDocument();
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linkedPath);
+  });
+
 });

@@ -400,6 +400,31 @@ Windows executable resolution skips extensionless POSIX shims and accepts `.exe/
 
 Filesystem watch starts reserve generations before blocking initialization. Stop invalidates the slot immediately; a late or superseded watcher cannot be installed, and watcher destruction occurs outside the shared lock. Callbacks also reject obsolete generations.
 
+If inspection of a selected or restored linked worktree fails, the shell reads
+its selected repository's primary worktree inventory. Only a successful inventory
+that excludes the failed path and includes the primary permits recovery. Recovery
+replaces the branch/worktree snapshot, drops the failed path's cache, persists
+Overview selection and clears the obsolete error. Status-only watch failures also
+request full inspection. Still-registered worktrees and unavailable primaries keep
+their selection; delayed/queued refreshes cannot override a newer selection.
+Recovery changes only UI state. Explicit lane navigation clears previous action
+errors without moving terminal/agent sessions between workspaces.
+
+Worktree removal blocked by a terminal offers a separate native **Stop and retry**
+confirmation. This ends that worktree's terminal shells and their commands,
+including agent CLIs inside those terminals. Cancellation or dialog failure does
+not request shutdown. The typed `stop_worktree_terminals` adapter revalidates an
+exact registered, non-primary worktree before cancellation. `TerminalManager`
+matches immutable reservation identity (including subdirectory starts), snapshots
+a fixed set, and verifies session pointer identity before marking cancellation.
+Unattributed startup reservations fail closed. No other workspace or separately
+managed Agent/Run session is stopped. A bounded wait uses the existing terminal
+monitors/readers and waits for native lifecycle reservation release, rather than
+assuming map removal or a stop request means completion. The original removal is
+retried once, retaining all lifecycle/registration checks and the exact force
+snapshot. New terminal starts or shutdown-side file changes cannot bypass native
+occupancy checks or the independent dirty-worktree confirmation.
+
 Dangerous frontend actions use the typed `confirmNativeAction` gate. An unavailable or cancelled native dialog fails closed. GitHub actions recheck the current workspace/PR/HEAD and draft after the asynchronous dialog; native merge/comment preflight remains authoritative. No remote merge, deletion or comment is performed by release automation.
 
 Production CSP restricts scripts to local assets and connections to local IPC, with local/blob workers and inline styles for Monaco. Development alone adds Vite loopback HTTP/WebSocket origins. No remote editor CDN or `unsafe-eval` is enabled. Real WebView acceptance remains required on Windows/macOS/Linux. Agent timeline payloads are bounded to 16 KiB per event in addition to the existing 300-event workspace limit; full transcripts are not persisted.

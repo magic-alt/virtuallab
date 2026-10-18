@@ -137,4 +137,89 @@ describe("worktree removal native confirmation", () => {
     expect(native.confirm).not.toHaveBeenCalled();
     expect(native.invoke).not.toHaveBeenCalled();
   });
+
+  it("stops only the target worktree terminals after an extra confirmation, then retries removal", async () => {
+    let finishStop!: () => void;
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.")
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishStop = resolve; }))
+      .mockResolvedValueOnce({ status: "removed" });
+    const operation = removeWorktreeAfterConfirmation(repositoryRoot, worktreePath);
+    await vi.waitFor(() => expect(native.invoke).toHaveBeenCalledTimes(2));
+    expect(native.confirm).toHaveBeenNthCalledWith(2,
+      expect.stringContaining(worktreePath), expect.objectContaining({ title: "Stop worktree terminals", kind: "warning" }));
+    expect(native.confirm.mock.calls[1][0]).toMatch(/commands|agent/i);
+    expect(native.invoke).toHaveBeenNthCalledWith(2, "stop_worktree_terminals", { repositoryRoot, worktreePath });
+    finishStop();
+    await expect(operation).resolves.toBe(true);
+    expect(native.invoke).toHaveBeenNthCalledWith(3, "remove_worktree", {
+      repositoryRoot, worktreePath, force: false, expectedState: null,
+    });
+  });
+
+  it("cancelling the terminal stop gate leaves terminals and the worktree unchanged", async () => {
+    native.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.");
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).resolves.toBe(false);
+    expect(native.invoke).toHaveBeenCalledExactlyOnceWith("remove_worktree", {
+      repositoryRoot, worktreePath, force: false, expectedState: null,
+    });
+  });
+
+  it("terminal stop failure never retries removal or offers force", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.")
+      .mockRejectedValueOnce(new Error("Terminal cleanup failed"));
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).rejects.toThrow("Terminal cleanup failed");
+    expect(native.invoke).toHaveBeenCalledTimes(2);
+    expect(native.confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the exact force snapshot when stopping a terminal that appeared during the force dialog", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockResolvedValueOnce(dirty)
+      .mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.")
+      .mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("Worktree changed since force-removal confirmation"));
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).rejects.toThrow("Worktree changed");
+    expect(native.invoke).toHaveBeenNthCalledWith(3, "stop_worktree_terminals", { repositoryRoot, worktreePath });
+    expect(native.invoke).toHaveBeenNthCalledWith(4, "remove_worktree", {
+      repositoryRoot, worktreePath, force: true, expectedState: snapshot,
+    });
+  });
+
+  it("never repeatedly stops new terminals or automatically stops other writer kinds", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.")
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.");
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).rejects.toThrow(/retry/i);
+    expect(native.invoke).toHaveBeenCalledTimes(3);
+    expect(native.confirm).toHaveBeenCalledTimes(2);
+    native.invoke.mockReset().mockRejectedValueOnce(new Error("Workspace is reserved by agent codex; wait for observed completion."));
+    native.confirm.mockReset().mockResolvedValue(true);
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).rejects.toThrow(/agent codex/);
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(native.confirm).toHaveBeenCalledTimes(1);
+  });
+
+
+  it("a dirty worktree discovered after terminal shutdown still requires force confirmation", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.")
+      .mockResolvedValueOnce(undefined).mockResolvedValueOnce(dirty).mockResolvedValueOnce({ status: "removed" });
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).resolves.toBe(true);
+    expect(native.confirm).toHaveBeenCalledTimes(3);
+    expect(native.confirm.mock.calls[2][1].title).toBe("Force remove dirty worktree");
+    expect(native.invoke).toHaveBeenNthCalledWith(4, "remove_worktree", {
+      repositoryRoot, worktreePath, force: true, expectedState: snapshot,
+    });
+  });
+
+  it("an unavailable terminal stop dialog cannot terminate a session", async () => {
+    native.confirm.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("stop dialog unavailable"));
+    native.invoke.mockRejectedValueOnce("Workspace is reserved by terminal; wait for observed completion.");
+    await expect(removeWorktreeAfterConfirmation(repositoryRoot, worktreePath)).rejects.toThrow("stop dialog unavailable");
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+  });
+
 });

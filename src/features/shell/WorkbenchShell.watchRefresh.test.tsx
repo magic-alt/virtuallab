@@ -75,6 +75,34 @@ function status(next: RepositorySnapshot): WorktreeStatus {
   return { root, currentBranch, headSha, dirtyCount, stagedCount, unstagedCount, untrackedCount, changes };
 }
 
+const linked = "/fixtures/linked workspace 工程";
+
+function linkedSnapshot(): RepositorySnapshot {
+  return {
+    ...snapshot(linked), name: "virtuallab",
+    worktrees: [
+      { path: primary, branch: "main", head: "2222222222", detached: false },
+      { path: linked, branch: initialBranch, head: initialHead, detached: false },
+    ],
+    branches: [
+      { name: "main", local: true, remote: true, worktreePath: primary },
+      { name: initialBranch, local: true, remote: false, worktreePath: linked },
+      { name: "feat/already-deleted", local: false, remote: true, worktreePath: null },
+    ],
+  };
+}
+
+function rememberLinkedWorkspace() {
+  useWorkbenchStore.setState({
+    workspaceStates: {
+      "repo-1": {
+        repositoryId: "repo-1", activeWorktreePath: linked,
+        activeTab: "changes", updatedAt: 1,
+      },
+    },
+  });
+}
+
 async function changed(eventType = "fs.changed") {
   await waitFor(() => expect(harness.watchStart).toHaveBeenCalled());
   await waitFor(() => expect(harness.listeners.has("workbench://event")).toBe(true));
@@ -200,4 +228,175 @@ describe("workbench quiet filesystem refresh", () => {
     expect(screen.getByRole("heading", { name: "second-repo" })).toBeInTheDocument();
     expect(screen.getByTestId("live-status")).toHaveAttribute("data-dirty", "0");
   });
+
+  it.each(["git.changed", "fs.changed"])(
+    "recovers an externally removed active worktree after %s and drops stale branch actions",
+    async (eventType) => {
+      let removed = false;
+      harness.inspect.mockImplementation(async (path: string) => {
+        if (path === linked) {
+          if (removed) throw new Error(`fatal: cannot change to '${linked}': No such file or directory`);
+          return linkedSnapshot();
+        }
+        return snapshot(primary, "main", "2222222222");
+      });
+      harness.inspectStatus.mockRejectedValue(new Error("Workspace directory was removed"));
+      rememberLinkedWorkspace();
+      render(<WorkbenchShell />);
+      const staleDelete = await screen.findByRole("button", { name: "Delete origin branch origin/feat/already-deleted" });
+      await waitFor(() => expect(staleDelete).toBeEnabled());
+
+      removed = true;
+      await changed(eventType);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active");
+        expect(screen.queryByRole("button", { name: "Delete origin branch origin/feat/already-deleted" })).not.toBeInTheDocument();
+      }, { timeout: 4000 });
+      expect(screen.getByRole("button", { name: "Switch to main" })).toBeEnabled();
+      expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toMatchObject({
+        activeWorktreePath: primary, activeTab: "overview",
+      });
+      expect(screen.queryByText(/fatal: cannot change/)).not.toBeInTheDocument();
+    },
+  );
+
+  it("restores a missing saved worktree to the primary workspace without leaving a fatal error", async () => {
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linked) throw new Error(`fatal: cannot change to '${linked}': No such file or directory`);
+      return snapshot(primary, "main", "2222222222");
+    });
+    rememberLinkedWorkspace();
+    render(<WorkbenchShell />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Switch to main" })).toHaveTextContent("active"));
+    expect(screen.queryByText(/fatal: cannot change/)).not.toBeInTheDocument();
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(primary);
+  });
+
+  it("keeps a registered worktree selected on a transient inspection failure", async () => {
+    harness.inspect.mockImplementation(async (path: string) => path === linked ? linkedSnapshot() : {
+      ...linkedSnapshot(), root: primary, currentBranch: "main", headSha: "2222222222",
+    });
+    rememberLinkedWorkspace();
+    render(<WorkbenchShell />);
+    const active = await screen.findByRole("button", { name: `Switch to ${initialBranch}` });
+    await waitFor(() => expect(active).toBeEnabled());
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linked) throw new Error("Temporary Git index read failure");
+      return { ...linkedSnapshot(), root: primary, currentBranch: "main", headSha: "2222222222" };
+    });
+    await changed("git.changed");
+    await waitFor(() => expect(harness.inspect).toHaveBeenCalledTimes(3), { timeout: 3000 });
+    expect(active).toHaveTextContent("active");
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linked);
+  });
+
+  it("does not let a delayed recovery select a workspace in the previous repository", async () => {
+    let finishRecovery!: (value: RepositorySnapshot) => void;
+    harness.inspect.mockImplementation(async (path: string) => path === linked ? linkedSnapshot() : snapshot(path));
+    rememberLinkedWorkspace();
+    useWorkbenchStore.setState({ repositories: [
+      { id: "repo-1", name: "virtuallab", path: primary, lastOpenedAt: 1 },
+      { id: "repo-2", name: "second-repo", path: secondary, lastOpenedAt: 2 },
+    ] });
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await screen.findByRole("button", { name: `Switch to ${initialBranch}` });
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linked) throw new Error("Worktree was removed");
+      if (path === primary) return new Promise<RepositorySnapshot>((resolve) => { finishRecovery = resolve; });
+      return snapshot(path);
+    });
+    await changed("git.changed");
+    await waitFor(() => expect(finishRecovery).toBeDefined(), { timeout: 3000 });
+    await user.click(screen.getByRole("button", { name: /second-repo.*fixtures\/second-repo/ }));
+    await screen.findByRole("heading", { name: "second-repo" });
+
+    await act(async () => { finishRecovery(snapshot(primary, "main", "2222222222")); });
+    expect(screen.getByRole("heading", { name: "second-repo" })).toBeInTheDocument();
+    expect(useWorkbenchStore.getState().workspaceStates["repo-2"]?.activeWorktreePath).toBe(secondary);
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linked);
+  });
+
+
+  it("unlocks foreground selection that joins a background recovery after switching away and back", async () => {
+    let finishRecovery!: (value: RepositorySnapshot) => void;
+    harness.inspect.mockImplementation(async (path: string) => path === linked ? linkedSnapshot() : snapshot(path));
+    rememberLinkedWorkspace();
+    useWorkbenchStore.setState({ repositories: [
+      { id: "repo-1", name: "virtuallab", path: primary, lastOpenedAt: 1 },
+      { id: "repo-2", name: "second-repo", path: secondary, lastOpenedAt: 2 },
+    ] });
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await screen.findByRole("button", { name: `Switch to ${initialBranch}` });
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linked) throw new Error("Worktree was removed");
+      if (path === primary) return new Promise<RepositorySnapshot>((resolve) => { finishRecovery = resolve; });
+      return snapshot(path);
+    });
+    await changed("git.changed");
+    await waitFor(() => expect(finishRecovery).toBeDefined(), { timeout: 3000 });
+    await user.click(screen.getByRole("button", { name: /second-repo.*fixtures\/second-repo/ }));
+    await screen.findByRole("heading", { name: "second-repo" });
+    await user.click(screen.getByRole("button", { name: /virtuallab.*fixtures\/virtuallab/ }));
+    await act(async () => { finishRecovery(snapshot(primary, "main", "2222222222")); });
+
+    await waitFor(() => {
+      const main = screen.getByRole("button", { name: "Switch to main" });
+      expect(main).toHaveTextContent("active");
+      expect(main).toBeEnabled();
+    });
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(primary);
+  });
+
+
+  it("does not let a queued refresh reclaim a removed path after another worktree is selected", async () => {
+    const other = "/fixtures/another worktree";
+    const otherBranch = "feat/other";
+    const before = linkedSnapshot();
+    before.worktrees.push({ path: other, branch: otherBranch, head: "3333333333", detached: false });
+    before.branches.push({ name: otherBranch, local: true, remote: false, worktreePath: other });
+    const remaining: RepositorySnapshot = {
+      ...before, root: primary, currentBranch: "main", headSha: "2222222222",
+      worktrees: before.worktrees.filter((tree) => tree.path !== linked),
+      branches: before.branches.filter((branch) => branch.name !== initialBranch && branch.name !== "feat/already-deleted"),
+    };
+    let finishRecovery!: (value: RepositorySnapshot) => void;
+    let deferRecovery = true;
+    harness.inspect.mockResolvedValue(before);
+    rememberLinkedWorkspace();
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    const otherButton = await screen.findByRole("button", { name: `Open worktree for ${otherBranch}` });
+    await waitFor(() => expect(otherButton).toBeEnabled());
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linked) throw new Error("Worktree was removed");
+      if (path === primary && deferRecovery) {
+        deferRecovery = false;
+        return new Promise<RepositorySnapshot>((resolve) => { finishRecovery = resolve; });
+      }
+      return { ...remaining, root: path, currentBranch: path === other ? otherBranch : "main" };
+    });
+    await changed("git.changed");
+    await waitFor(() => expect(finishRecovery).toBeDefined(), { timeout: 3000 });
+    // Deliver the second debounced event while the first inspection is pending.
+    vi.useFakeTimers();
+    try {
+      act(() => harness.listeners.get("workbench://event")?.({
+        payload: { id: harness.watchStart.mock.lastCall?.[0] as string, eventType: "git.changed" },
+      }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(450); });
+    } finally { vi.useRealTimers(); }
+    await user.click(otherButton);
+    await waitFor(() => expect(screen.getByRole("button", { name: `Switch to ${otherBranch}` })).toHaveTextContent("active"));
+    const inspections = harness.inspect.mock.calls.length;
+    await act(async () => { finishRecovery(remaining); });
+
+    expect(screen.getByRole("button", { name: `Switch to ${otherBranch}` })).toHaveTextContent("active");
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(other);
+    expect(harness.inspect).toHaveBeenCalledTimes(inspections);
+  });
+
 });

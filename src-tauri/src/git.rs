@@ -1743,6 +1743,36 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
     Ok((state, entries.len() - untracked_count, untracked_count))
 }
 
+// Stop is scoped to an exact registered, non-primary worktree. Resolve before
+// any cancellation so an unrelated path can never terminate terminal sessions.
+fn resolve_terminal_stop_target(repository_root: &str, worktree_path: &str) -> Result<std::path::PathBuf, String> {
+    let requested = WorkspaceLifecycle::resolve_identity(worktree_path)?;
+    let (repository, workspace) = resolve_git_workspace(repository_root, worktree_path)?;
+    if std::fs::canonicalize(worktree_path).map_err(|error| error.to_string())? !=
+        std::fs::canonicalize(&workspace).map_err(|error| error.to_string())? ||
+        requested != WorkspaceLifecycle::resolve_identity(&workspace)? {
+        return Err("Terminal stop target must be an exact registered worktree root".into());
+    }
+    let inventory = parse_worktrees(&git_read(&repository, &["worktree", "list", "--porcelain"])?);
+    let primary = inventory.first().ok_or("Repository has no registered worktrees")?;
+    if requested == WorkspaceLifecycle::resolve_identity(&primary.path)? {
+        return Err("Refusing to stop primary-worktree terminals for worktree removal".into());
+    }
+    Ok(requested)
+}
+
+#[tauri::command]
+pub async fn stop_worktree_terminals(
+    app: tauri::AppHandle, repository_root: String, worktree_path: String,
+) -> Result<(), String> {
+    let terminals = app.state::<crate::execution::TerminalManager>().inner().clone();
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let workspace = resolve_terminal_stop_target(&repository_root, &worktree_path)?;
+        terminals.stop_workspace_terminals(&workspace, &lifecycle, std::time::Duration::from_secs(10))
+    }).await.map_err(|error| format!("Worktree terminal shutdown task failed: {error}"))?
+}
+
 #[tauri::command]
 pub async fn remove_worktree(
     app: tauri::AppHandle,
@@ -2805,6 +2835,21 @@ mod tests {
             state,
             &WorkspaceLifecycle::default(),
         )
+    }
+
+    #[test]
+    fn terminal_stop_target_must_be_registered_nonprimary_and_an_exact_worktree_root() {
+        let (sandbox, repo, worktree) = removal_fixture("terminal-stop-target");
+        assert!(resolve_terminal_stop_target(repo.to_str().unwrap(), repo.to_str().unwrap()).is_err());
+        assert!(resolve_terminal_stop_target(repo.to_str().unwrap(), sandbox.to_str().unwrap()).is_err());
+        let foreign = sandbox.join("foreign-repository");
+        fs::create_dir(&foreign).unwrap();
+        git_ok(&foreign, &["init"]);
+        assert!(resolve_terminal_stop_target(repo.to_str().unwrap(), foreign.to_str().unwrap()).is_err());
+        fs::create_dir(worktree.join("source")).unwrap();
+        assert!(resolve_terminal_stop_target(repo.to_str().unwrap(), worktree.join("source").to_str().unwrap()).is_err());
+        assert_eq!(resolve_terminal_stop_target(repo.to_str().unwrap(), worktree.to_str().unwrap()).unwrap(), WorkspaceLifecycle::resolve_identity(worktree.to_str().unwrap()).unwrap());
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     #[test]
