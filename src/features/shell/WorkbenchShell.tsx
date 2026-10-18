@@ -21,6 +21,8 @@ import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
   createWorktree,
+  detachRepositoryAfterConfirmation,
+  restoreRepositoryRegistration,
   deleteLocalBranchAfterConfirmation,
   deleteOriginBranchAfterConfirmation,
   gitFetchOrigin,
@@ -417,6 +419,9 @@ export function WorkbenchShell() {
   }, [activeRepository, loadSnapshot, refreshWorkingTree, snapshot.root]);
 
   const addLocalRepository = async () => {
+    if (gitMutationInFlightRef.current || !isDesktopRuntime()) return;
+    gitMutationInFlightRef.current = true;
+    setGitBusy(true);
     try {
       const path = await chooseRepositoryDirectory();
       if (!path) return;
@@ -424,6 +429,7 @@ export function WorkbenchShell() {
       // Inspect before registering a new repository: a failed dialog or an
       // invalid folder must not modify the current repository's selection.
       const next = await inspectRepository(path);
+      await restoreRepositoryRegistration(next.root);
       snapshotCacheRef.current.set(normalizePath(next.root), next);
       const existing = useWorkbenchStore.getState().repositories.find(
         (item) => normalizePath(item.path) === normalizePath(next.root));
@@ -451,6 +457,28 @@ export function WorkbenchShell() {
       setTab("overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      gitMutationInFlightRef.current = false;
+      setGitBusy(false);
+    }
+  };
+
+  const detachLocalRepository = async (id: string) => {
+    const record = useWorkbenchStore.getState().repositories.find((repo) => repo.id === id);
+    if (!record || gitMutationInFlightRef.current || !isDesktopRuntime()) return;
+    gitMutationInFlightRef.current = true;
+    setGitBusy(true);
+    setError(null);
+    try {
+      if (!await detachRepositoryAfterConfirmation(record.path)) return;
+      useTaskNotifications.getState().discardRepository(record.path, id);
+      snapshotCacheRef.current.delete(normalizePath(record.path));
+      removeRepository(id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      gitMutationInFlightRef.current = false;
+      setGitBusy(false);
     }
   };
 
@@ -826,13 +854,9 @@ export function WorkbenchShell() {
           isPreview={isPreview}
           onAdd={addLocalRepository}
           filterQuery={searchQuery}
-          repositoryActionsEnabled={native}
+          repositoryActionsEnabled={native && !gitBusy}
           onSelect={selectRepository}
-          onRemove={(id) => {
-            const repository = useWorkbenchStore.getState().repositories.find((item) => item.id === id);
-            if (repository) useTaskNotifications.getState().discardRepository(repository.path, id);
-            removeRepository(id);
-          }}
+          onRemove={(id) => { void detachLocalRepository(id); }}
           onOpenRepositoryFolder={(path) => void openFolder(path, path)}
           editor={preferredEditor}
           onOpenRepositoryEditor={(path) => void openEditor(path, path)}

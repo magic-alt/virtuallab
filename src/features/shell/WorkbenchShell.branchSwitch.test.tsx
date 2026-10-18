@@ -2,11 +2,15 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
+import { useTaskNotifications } from "@/stores/taskNotifications";
 import { useWorkbenchStore } from "@/stores/workbench";
 import type { RepositorySnapshot } from "@/types/workbench";
 
 const harness = vi.hoisted(() => ({
   currentBranch: "codex/pr-15",
+  detach: vi.fn(),
+  restore: vi.fn(),
+  choose: vi.fn(),
   inspect: vi.fn(),
   switchBranch: vi.fn(),
   openEditor: vi.fn(),
@@ -38,7 +42,9 @@ vi.mock("@/lib/backend", () => ({
   gitPullCurrent: vi.fn(),
   deleteLocalBranchAfterConfirmation: vi.fn(),
   deleteOriginBranchAfterConfirmation: harness.deleteOriginBranch,
-  chooseRepositoryDirectory: vi.fn(),
+  chooseRepositoryDirectory: harness.choose,
+  detachRepositoryAfterConfirmation: harness.detach,
+  restoreRepositoryRegistration: harness.restore,
   createWorktree: vi.fn(),
   removeWorktreeAfterConfirmation: harness.removeWorktree,
   watchStart: harness.watchStart,
@@ -111,6 +117,13 @@ function linkedSnapshot(path: string, hasLinkedWorktree = true): RepositorySnaps
 describe("workbench branch switching with untracked artifacts", () => {
   beforeEach(() => {
     harness.currentBranch = "codex/pr-15";
+    harness.detach.mockReset().mockResolvedValue(true);
+    harness.restore.mockReset().mockResolvedValue(undefined);
+    harness.choose.mockReset().mockResolvedValue(repoRoot);
+    useTaskNotifications.setState({ notices: [{
+      id: "notice-1", workspaceRoot: "/external/linked", repositoryId: "repo-1",
+      source: "terminal", title: "Finished", detail: "done", severity: "complete", createdAt: 1, read: false,
+    }] });
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
     harness.openEditor.mockReset().mockResolvedValue(undefined);
@@ -131,6 +144,62 @@ describe("workbench branch switching with untracked artifacts", () => {
       activeRepositoryId: "repo-1",
       workspaceStates: {},
     });
+  });
+
+  it("keeps repository and notices until native detach succeeds and blocks duplicate removal", async () => {
+    let finish!: (approved: boolean) => void;
+    harness.detach.mockReturnValue(new Promise<boolean>((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    const remove = await screen.findByRole("button", { name: "Remove virtuallab" });
+    await user.click(remove);
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
+    expect(useTaskNotifications.getState().notices).toHaveLength(1);
+    expect(remove).toBeDisabled();
+    await user.click(remove);
+    expect(harness.detach).toHaveBeenCalledTimes(1);
+    finish(true);
+    await waitFor(() => expect(useWorkbenchStore.getState().repositories).toHaveLength(0));
+    expect(useTaskNotifications.getState().notices).toHaveLength(0);
+  });
+
+  it.each(["cancel", "busy"])("preserves repository and notices after %s", async (result) => {
+    if (result === "cancel") harness.detach.mockResolvedValue(false);
+    else harness.detach.mockRejectedValue(new Error("Workspace is reserved by terminal"));
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    const remove = await screen.findByRole("button", { name: "Remove virtuallab" });
+    await user.click(remove);
+    await waitFor(() => expect(remove).toBeEnabled());
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(1);
+    expect(useWorkbenchStore.getState().activeRepositoryId).toBe("repo-1");
+    expect(useTaskNotifications.getState().notices).toHaveLength(1);
+    if (result === "busy") expect(await screen.findByText("Workspace is reserved by terminal")).toBeInTheDocument();
+  });
+
+  it("waits for native restoration before re-adding a removed repository", async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(await screen.findByRole("button", { name: "Remove virtuallab" }));
+    await waitFor(() => expect(useWorkbenchStore.getState().repositories).toHaveLength(0));
+    let restore!: () => void;
+    harness.restore.mockReturnValue(new Promise<void>((resolve) => { restore = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Add repository" }));
+    await waitFor(() => expect(harness.restore).toHaveBeenCalledWith(repoRoot));
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(0);
+    restore();
+    await waitFor(() => expect(useWorkbenchStore.getState().repositories).toHaveLength(1));
+  });
+
+  it("does not register a repository when native restore fails", async () => {
+    harness.restore.mockRejectedValue(new Error("Cannot restore inventory"));
+    useWorkbenchStore.setState({ repositories: [], activeRepositoryId: null, workspaceStates: {} });
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole("button", { name: "工程仓库" }));
+    await user.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByText("Cannot restore inventory")).toBeInTheDocument();
+    expect(useWorkbenchStore.getState().repositories).toHaveLength(0);
   });
 
   it("opens selected, linked and repository roots in the chosen IDE without switching Git", async () => {

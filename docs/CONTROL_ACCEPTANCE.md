@@ -300,3 +300,12 @@ A green CI means tests/builds passed on that commit, not that provider credentia
 ## Cross-project one-click workflow acceptance
 
 See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix. Manually verify detected npm and Tauri scripts, Qt CMake configure/build, Windows Keil UV4 batch build, a customized two-step profile across two worktrees, cancellation and stop-on-failure. Confirm that a cancelled Deploy prompt creates no process and that no implicit firmware flashing or remote publish occurs. Build workflow output is transient and must not be claimed as durable verification evidence.
+
+
+## Safe repository removal and re-import
+
+- Open two repositories and an external linked worktree (include spaces/Unicode in its path). Start a terminal, Agent, Run or verification in the linked worktree. Confirm **Remove repository**: removal must fail, preserve the selected repository and its notification inbox, and leave the worker running.
+- Cancel/close the native confirmation: no repository, selection or notification changes. While confirmation/native preflight is pending, duplicate remove and add operations are disabled.
+- Stop the worker and wait for observed shutdown. Confirm removal again: only the workbench record and its owned notices disappear; files, commits, branches and all worktree registrations remain. Other repositories and their notices remain available.
+- Re-add the repository through the native folder picker: its validated registered worktrees become runnable again. A failed native restore must not add a frontend record. Historical Tasks/evidence remain historical; removal does not accept, delete or replay them.
+- Race a native worker startup/worktree creation against removal: either the worker wins and removal is refused, or removal wins and new reservations are refused until re-import. External Git/process changes are outside this process-local protocol. Missing registered paths reject removal rather than silently pruning or deleting Git state.
