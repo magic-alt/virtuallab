@@ -11,6 +11,8 @@ import { TaskDashboard } from './TaskDashboard';
 import { TaskList } from './TaskList';
 import { TaskDetail } from './TaskDetail';
 import { TaskPlanWizard } from './TaskPlanWizard';
+import { TemplateWorkbench } from './templates/TemplateWorkbench';
+import { TaskWorkflowGuide } from './templates/TaskWorkflowGuide';
 import './tasks.css';
 export { useTaskObserver } from './useTaskObserver';
 
@@ -50,6 +52,7 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
       {activeRepository && roots.has(workspaceKey(activeRepository.path)) && <div className="task-row"><button onClick={() => onOpenWorkspace(activeRepository.path,'agents',activeRepository.path)}>打开 Provider / Agents 配置</button><button onClick={() => onOpenWorkspace(activeRepository.path,'run',activeRepository.path)}>打开 Run 配置</button></div>}
       <h3>执行与恢复</h3><p>默认并发 2，队列最多 32 个叶任务。重启后未知结果标记为中断，不自动重放 Git 操作。任务工作区必须显式创建。</p>
     </section> : <>
+      {(view === 'home' || view === 'tasks') && <TemplateWorkbench repositories={repositories} activeRepository={activeRepository}/>}
       {view === 'evidence' && <p>下方检查结果为 Attempt 的原生观察记录；交付就绪与验收适用性会在每次刷新重新计算。旧 Run v1 记录仅作历史参考。</p>}
       <section className="task-surface">
         <div className="task-filters"><label>搜索任务<input placeholder="标题、目标或范围" value={searchQuery ?? query} readOnly={searchQuery !== undefined} onChange={event => setTaskFilters({query:event.target.value})}/></label>
@@ -59,7 +62,7 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
         {view === 'evidence' ? <TaskEvidenceInventory tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || '原生来源不可用' : null} onOpenTask={selectTask}/> : view === 'home' ? <TaskDashboard tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || '原生来源不可用' : null} onOpenTask={selectTask}/> : <TaskList tasks={filtered} readiness={state.readiness} repositories={repositories} selectedId={selected?.id??null} onOpenTask={selectTask}/>}
         {!filtered.length && !state.loading && !unavailable && <p>{tasks.length ? '没有匹配筛选条件的任务。' : '尚无任务。创建手动计划后再显式准备工作区和开始执行。'}</p>}
       </section>
-      {selected ? <TaskDetail key={selected.id} task={selected} onOpenWorkspace={onOpenWorkspace}/> : tasks.length > 0 && <p>选择一个任务查看详情。</p>}
+      {selected ? <><TaskWorkflowGuide task={selected} readiness={state.readiness[selected.id]} onNavigate={tab => selectTask(selected.id, tab)}/><TaskDetail key={selected.id} task={selected} onOpenWorkspace={onOpenWorkspace}/></> : tasks.length > 0 && <p>选择一个任务查看详情。</p>}
     </>}
     {creating && <TaskPlanWizard repositories={repositories} activeRepository={activeRepository} onClose={() => setCreating(false)}/>}
   </main>;
