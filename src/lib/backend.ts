@@ -98,16 +98,27 @@ export async function gitSwitchBranch(repositoryRoot: string, workspaceRoot: str
   return invoke("git_switch_branch", { repositoryRoot, workspaceRoot, branch });
 }
 
-export async function gitDeleteLocalBranch(repositoryRoot: string, branch: string): Promise<void> {
-  requireDesktop();
-  return invoke("git_delete_local_branch", { repositoryRoot, branch });
+interface LocalBranchDeletionState {
+  repositoryRoot: string;
+  branch: string;
+  branchHeadSha: string;
+  comparisonRef: string;
+  comparisonHeadSha: string;
 }
 
-/**
- * Destructive Git operations must be gated by a Tauri-native confirmation.
- * Never fall back to window.confirm(): macOS WKWebView can suppress its UI.
- * A cancelled or unavailable dialog must never invoke the Rust command.
- */
+type LocalBranchDeletionResult =
+  | { status: "deleted" }
+  | { status: "needsForce"; state: LocalBranchDeletionState };
+
+async function gitDeleteLocalBranch(
+  repositoryRoot: string, branch: string,
+  force: boolean, expectedState: LocalBranchDeletionState | null,
+): Promise<LocalBranchDeletionResult> {
+  requireDesktop();
+  return invoke("git_delete_local_branch", { repositoryRoot, branch, force, expectedState });
+}
+
+/** Both destructive steps require native confirmation; cancellation never forces. */
 export async function deleteLocalBranchAfterConfirmation(
   repositoryRoot: string,
   branch: string,
@@ -115,7 +126,7 @@ export async function deleteLocalBranchAfterConfirmation(
   requireDesktop();
   const confirmed = await confirm(
     `Delete the LOCAL branch "${branch}"?\n\n` +
-      "This does not delete a branch on GitHub. Git will refuse to delete a branch with unmerged commits. " +
+      "This does not delete a branch on GitHub. A branch with unmerged commits requires a separate force-delete confirmation. " +
       "Stale origin branches are removed with Fetch.",
     {
       title: "Delete local Git branch",
@@ -124,9 +135,26 @@ export async function deleteLocalBranchAfterConfirmation(
       cancelLabel: "Cancel",
     },
   );
-
   if (!confirmed) return false;
-  await gitDeleteLocalBranch(repositoryRoot, branch);
+  const result = await gitDeleteLocalBranch(repositoryRoot, branch, false, null);
+  if (result.status === "deleted") return true;
+  if (result.status !== "needsForce") throw new Error("Unexpected branch deletion response.");
+
+  const forceConfirmed = await confirm(
+    `Local branch "${branch}" is not fully merged into ${result.state.comparisonRef}.\n\n` +
+      `Repository: ${repositoryRoot}\nCommit: ${result.state.branchHeadSha}\n\n` +
+      "Force delete this local branch? Commits unique to this branch may become unreachable and be lost. " +
+      "Keep or back up any work you still need before continuing. This does not delete a branch on GitHub.",
+    {
+      title: "Force delete unmerged local branch",
+      kind: "warning",
+      okLabel: "Force delete",
+      cancelLabel: "Cancel",
+    },
+  );
+  if (!forceConfirmed) return false;
+  const deleted = await gitDeleteLocalBranch(repositoryRoot, branch, true, result.state);
+  if (deleted.status !== "deleted") throw new Error("Branch changed before force deletion. Retry and review the latest branch.");
   return true;
 }
 
