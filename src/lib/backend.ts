@@ -53,6 +53,24 @@ export async function inspectRepository(path: string): Promise<RepositorySnapsho
   return invoke<RepositorySnapshot>("inspect_repository", { path });
 }
 
+/** Remove only workbench registration after native ownership checks. */
+export async function detachRepositoryAfterConfirmation(repositoryRoot: string): Promise<boolean> {
+  requireDesktop();
+  const approved = await confirm(
+    `Remove repository "${repositoryRoot}" from the workbench?\n\n` +
+      "Repository files, Git branches and worktrees will be kept. Stop active terminals, agents and other native work in all linked worktrees first.",
+    { title: "Remove repository", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
+  );
+  if (!approved) return false;
+  await invoke<void>("repository_detach", { repositoryRoot });
+  return true;
+}
+
+export async function restoreRepositoryRegistration(repositoryRoot: string): Promise<void> {
+  requireDesktop();
+  await invoke<void>("repository_restore", { repositoryRoot });
+}
+
 /** Source edits only require Git HEAD and porcelain status, not branch/Worktree inventory. */
 export async function inspectWorktreeStatus(path: string): Promise<WorktreeStatus> {
   requireDesktop();

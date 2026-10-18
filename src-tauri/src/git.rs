@@ -1743,6 +1743,54 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
     Ok((state, entries.len() - untracked_count, untracked_count))
 }
 
+// Authoritative inventory includes linked worktrees outside the repository.
+fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
+    let repository = git_read(root, &["rev-parse", "--show-toplevel"])?;
+    let paths = parse_worktrees(&git_read(repository.trim(), &["worktree", "list", "--porcelain"])?)
+        .into_iter().map(|tree| tree.path).collect::<Vec<_>>();
+    if paths.is_empty() { return Err("Git reported no registered worktrees".into()); }
+    Ok(paths)
+}
+
+fn repository_inventory_identities(paths: &[String]) -> Result<std::collections::BTreeSet<std::path::PathBuf>, String> {
+    paths.iter().map(|path| WorkspaceLifecycle::resolve_identity(path)).collect()
+}
+
+fn detach_repository_blocking(root: &str, lifecycle: &WorkspaceLifecycle) -> Result<(), String> {
+    detach_repository_with_inventory(lifecycle, || repository_registered_paths(root))
+}
+
+fn detach_repository_with_inventory(
+    lifecycle: &WorkspaceLifecycle,
+    mut inventory: impl FnMut() -> Result<Vec<String>, String>,
+) -> Result<(), String> {
+    let paths = inventory()?;
+    let expected = repository_inventory_identities(&paths)?;
+    lifecycle.detach_repository(&paths, || {
+        let current = repository_inventory_identities(&inventory()?)?;
+        if expected != current {
+            return Err("Repository worktree inventory changed during removal. Retry after refreshing.".into());
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub async fn repository_detach(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || detach_repository_blocking(&repository_root, &lifecycle))
+        .await.map_err(|error| format!("Repository removal task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn repository_restore(app: tauri::AppHandle, repository_root: String) -> Result<(), String> {
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let paths = repository_registered_paths(&repository_root)?;
+        lifecycle.restore_repository(&paths)
+    }).await.map_err(|error| format!("Repository restore task failed: {error}"))?
+}
+
 // Stop is scoped to an exact registered, non-primary worktree. Resolve before
 // any cancellation so an unrelated path can never terminate terminal sessions.
 fn resolve_terminal_stop_target(repository_root: &str, worktree_path: &str) -> Result<std::path::PathBuf, String> {
@@ -2575,6 +2623,58 @@ mod tests {
         assert_eq!(snapshot.worktrees.len(), 1);
 
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn repository_detach_covers_external_worktrees_and_reimport_without_git_mutation() {
+        let (sandbox, repo) = init_fixture_repo("repository-detach");
+        let sibling = sandbox.join("external workspace 中文");
+        let lifecycle = WorkspaceLifecycle::default();
+        let root = repo.to_string_lossy().into_owned();
+        create_worktree_blocking(root.clone(), "external".into(), None,
+            Some(sibling.to_string_lossy().into_owned()), &lifecycle).unwrap();
+        let before = git_read(&root, &["worktree", "list", "--porcelain"]).unwrap();
+        let head = git_read(&root, &["rev-parse", "HEAD"]).unwrap();
+        let owner = lifecycle.reserve(&sibling.to_string_lossy(), "terminal").unwrap();
+        assert!(detach_repository_blocking(&root, &lifecycle).is_err());
+        assert!(lifecycle.reserve(&root, "primary process").is_ok());
+        drop(owner);
+        detach_repository_blocking(&root, &lifecycle).unwrap();
+        assert!(lifecycle.reserve(&sibling.to_string_lossy(), "terminal").is_err());
+        let target = sandbox.join("future workspace");
+        assert!(create_worktree_blocking(root.clone(), "future".into(), None,
+            Some(target.to_string_lossy().into_owned()), &lifecycle).is_err());
+        assert!(!target.exists());
+        assert_eq!(git_read(&root, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(git_read(&root, &["worktree", "list", "--porcelain"]).unwrap(), before);
+        assert!(repo.join("README.md").exists());
+        assert!(sibling.join("README.md").exists());
+        lifecycle.restore_repository(&repository_registered_paths(&root).unwrap()).unwrap();
+        assert!(lifecycle.reserve(&root, "agent").is_ok());
+        assert!(lifecycle.reserve(&sibling.to_string_lossy(), "terminal").is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn repository_detach_rejects_changed_inventory_without_blocking_any_worktree() {
+        let (sandbox, repo) = init_fixture_repo("repository-inventory-race");
+        let root = repo.to_string_lossy().into_owned();
+        let sibling = sandbox.join("new external workspace 中文");
+        let lifecycle = WorkspaceLifecycle::default();
+        let mut reads = 0;
+        let result = detach_repository_with_inventory(&lifecycle, || {
+            let paths = repository_registered_paths(&root)?;
+            reads += 1;
+            if reads == 1 {
+                create_worktree_blocking(root.clone(), "external".into(), None,
+                    Some(sibling.to_string_lossy().into_owned()), &lifecycle)?;
+            }
+            Ok(paths)
+        });
+        assert!(result.is_err());
+        assert!(lifecycle.reserve(&root, "agent").is_ok());
+        assert!(lifecycle.reserve(&sibling.to_string_lossy(), "terminal").is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     fn init_fixture_repo(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {

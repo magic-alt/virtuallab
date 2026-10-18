@@ -846,6 +846,8 @@ pub(crate) async fn verify_task_internal(
 ) -> Result<TaskRecord, String> {
     let manager = app.state::<TaskManager>().inner().clone();
     let task = manager.get(&task_id)?;
+    let _activity = app.state::<crate::workspace_lifecycle::WorkspaceLifecycle>()
+        .begin_repository_activity(&task.repository_root)?;
     let workspace = root(&task)?;
     let profile = task.profile.clone().ok_or("任务没有指定验收 Profile")?;
     let candidate = task

@@ -1,12 +1,45 @@
 //! Atomic workspace writer/removal reservations. This is not an OS sandbox.
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 #[derive(Clone, Default, Debug)]
-pub struct WorkspaceLifecycle(Arc<Mutex<HashMap<PathBuf, String>>>);
+pub struct WorkspaceLifecycle(Arc<Mutex<LifecycleState>>);
+
+#[derive(Default, Debug)]
+struct LifecycleState {
+    claims: HashMap<PathBuf, String>,
+    detached: HashSet<PathBuf>,
+    activities: HashMap<PathBuf, usize>,
+}
+
+/// Nonexclusive task lifetime; nested native writers retain their own exclusive
+/// reservations. Arc ownership follows independently spawned task observers.
+pub(crate) struct RepositoryActivity {
+    lifecycle: WorkspaceLifecycle,
+    key: PathBuf,
+}
+
+impl Drop for RepositoryActivity {
+    fn drop(&mut self) {
+        let mut state = self.lifecycle.0.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = state.activities.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 { state.activities.remove(&self.key); }
+        }
+    }
+}
+
+impl LifecycleState {
+    fn require_attached(&self, key: &Path) -> Result<(), String> {
+        if self.detached.iter().any(|root| key.starts_with(root)) {
+            return Err("Repository was removed from the workbench. Re-add it before starting native work.".into());
+        }
+        Ok(())
+    }
+}
 
 /// A unique, non-cloneable claim. Keep it in the runtime until process-tree
 /// exit is observed; requesting cancellation does not release ownership.
@@ -45,7 +78,7 @@ impl WorkspaceLifecycle {
     /// Query an already-resolved identity without following a replacement path.
     pub(crate) fn try_is_reserved_identity(&self, root: &Path) -> Result<Option<bool>, String> {
         match self.0.try_lock() {
-            Ok(claims) => Ok(Some(claims.contains_key(root))),
+            Ok(claims) => Ok(Some(claims.claims.contains_key(root))),
             Err(std::sync::TryLockError::WouldBlock) => Ok(None),
             Err(std::sync::TryLockError::Poisoned(_)) => Err("Workspace lifecycle lock poisoned".into()),
         }
@@ -63,12 +96,13 @@ impl WorkspaceLifecycle {
         // removal completed, missing paths fail closed instead of acquiring a
         // second identity for a dangling alias.
         let key = identity(root)?;
-        if let Some(current) = claims.get(&key) {
+        claims.require_attached(&key)?;
+        if let Some(current) = claims.claims.get(&key) {
             return Err(format!(
                 "Workspace is reserved by {current}; wait for observed completion."
             ));
         }
-        claims.insert(key.clone(), owner.to_owned());
+        claims.claims.insert(key.clone(), owner.to_owned());
         Ok(WorkspaceReservation {
             lifecycle: self.clone(),
             key,
@@ -125,14 +159,61 @@ impl WorkspaceLifecycle {
         }
         #[cfg(windows)]
         let key = PathBuf::from(key.to_string_lossy().to_lowercase());
-        if let Some(current) = claims.get(&key) {
+        claims.require_attached(&key)?;
+        if let Some(current) = claims.claims.get(&key) {
             return Err(format!("Workspace is reserved by {current}"));
         }
-        claims.insert(key.clone(), owner.to_owned());
+        claims.claims.insert(key.clone(), owner.to_owned());
         Ok(WorkspaceReservation {
             lifecycle: self.clone(),
             key,
         })
+    }
+
+    pub(crate) fn begin_repository_activity(&self, root: &str) -> Result<Arc<RepositoryActivity>, String> {
+        let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
+        let key = identity(root)?;
+        state.require_attached(&key)?;
+        *state.activities.entry(key.clone()).or_default() += 1;
+        Ok(Arc::new(RepositoryActivity { lifecycle: self.clone(), key }))
+    }
+
+    /// All-or-nothing detach under the existing writer/startup mutex. The
+    /// second Git inventory read runs while new native starts/creation are
+    /// excluded; failure must leave every workspace attached and runnable.
+    pub fn detach_repository(
+        &self,
+        roots: &[String],
+        validate_inventory: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        if roots.is_empty() {
+            return Err("Cannot remove a repository with no registered worktrees".into());
+        }
+        let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
+        let keys = roots.iter().map(|root| identity(root)).collect::<Result<Vec<_>, _>>()?;
+        for key in &keys {
+            if state.activities.keys().any(|active| active.starts_with(key) || key.starts_with(active)) {
+                return Err("Repository has an active task operation; cancel or wait for completion before removing it.".into());
+            }
+            if let Some((_, owner)) = state.claims.iter()
+                .find(|(claimed, _)| claimed.starts_with(key) || key.starts_with(claimed)) {
+                return Err(format!("Workspace is reserved by {owner}; stop native work and wait for observed completion before removing the repository."));
+            }
+        }
+        validate_inventory()?;
+        state.detached.extend(keys);
+        Ok(())
+    }
+
+    /// Only an explicit validated re-import restores native startup rights.
+    pub fn restore_repository(&self, roots: &[String]) -> Result<(), String> {
+        if roots.is_empty() {
+            return Err("Cannot restore an empty repository worktree inventory".into());
+        }
+        let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
+        let keys = roots.iter().map(|root| identity(root)).collect::<Result<Vec<_>, _>>()?;
+        for key in keys { state.detached.remove(&key); }
+        Ok(())
     }
 
     pub fn begin_removal(&self, root: &str) -> Result<WorkspaceReservation, String> {
@@ -144,7 +225,7 @@ impl WorkspaceLifecycle {
             .0
             .lock()
             .map_err(|_| "Workspace lifecycle lock poisoned")?;
-        Ok(claims.contains_key(&identity(root)?))
+        Ok(claims.claims.contains_key(&identity(root)?))
     }
 }
 
@@ -162,7 +243,7 @@ impl Drop for WorkspaceReservation {
             .0
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        claims.remove(&self.key);
+        claims.claims.remove(&self.key);
     }
 }
 
@@ -192,6 +273,117 @@ mod tests {
         fs::create_dir_all(root.join("other")).unwrap();
         root
     }
+    #[test]
+    fn repository_detach_is_atomic_and_preserves_active_sibling_owners() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let paths = vec![root.to_string_lossy().into_owned(), root.join("other").to_string_lossy().into_owned()];
+        let owner = service.reserve(&paths[1], "terminal").unwrap();
+        assert!(service.detach_repository(&paths, || Ok(())).is_err());
+        assert!(service.reserve(&paths[0], "agent").is_ok());
+        assert!(service.is_reserved(&paths[1]).unwrap());
+        drop(owner);
+        service.detach_repository(&paths, || Ok(())).unwrap();
+        assert!(service.reserve(&paths[0], "agent").is_err());
+        assert!(service.reserve(&paths[1], "build").is_err());
+        assert!(service.reserve_creation(&root.join("future").to_string_lossy(), "creation").is_err());
+        service.restore_repository(&paths).unwrap();
+        assert!(service.reserve(&paths[0], "agent").is_ok());
+        assert!(service.reserve(&paths[1], "build").is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repository_detach_inventory_failure_leaves_all_paths_runnable() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let paths = vec![root.to_string_lossy().into_owned(), root.join("other").to_string_lossy().into_owned()];
+        assert!(service.detach_repository(&paths, || Err("inventory changed".into())).is_err());
+        assert!(service.reserve(&paths[0], "agent").is_ok());
+        assert!(service.reserve(&paths[1], "terminal").is_ok());
+        assert!(service.detach_repository(&[], || Ok(())).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repository_detach_blocks_nested_owners_and_preserves_unrelated_workspaces() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let child = root.join("other");
+        let nested = child.join("nested");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        let paths = vec![child.to_string_lossy().into_owned()];
+        let owner = service.reserve(&nested.to_string_lossy(), "nested owner").unwrap();
+        assert!(service.detach_repository(&paths, || Ok(())).is_err());
+        drop(owner);
+        service.detach_repository(&paths, || Ok(())).unwrap();
+        assert!(service.reserve(&nested.to_string_lossy(), "nested owner").is_err());
+        assert!(service.reserve(&root.to_string_lossy(), "unrelated owner").is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_repository_detach_and_start_have_exactly_one_winner() {
+        let root = fixture();
+        for _ in 0..32 {
+            let service = WorkspaceLifecycle::default();
+            let start = Arc::new(Barrier::new(2));
+            let finish = Arc::new(Barrier::new(2));
+            let worker_service = service.clone();
+            let (worker_start, worker_finish, worker_root) = (start.clone(), finish.clone(), root.clone());
+            let worker = thread::spawn(move || {
+                worker_start.wait();
+                let claim = worker_service.reserve(&worker_root.to_string_lossy(), "agent");
+                worker_finish.wait();
+                claim.is_ok()
+            });
+            start.wait();
+            let detached = service.detach_repository(&[root.to_string_lossy().into_owned()], || Ok(())).is_ok();
+            finish.wait();
+            let started = worker.join().unwrap();
+            assert_ne!(detached, started);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn detached_repository_alias_stays_blocked_until_explicit_restore() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let actual = root.join("other");
+        let alias = root.join("alias");
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        service.detach_repository(&[actual.to_string_lossy().into_owned()], || Ok(())).unwrap();
+        assert!(service.reserve(&alias.join(".").to_string_lossy(), "agent").is_err());
+        // Failed restoration cannot partially lift an existing detached mark.
+        assert!(service.restore_repository(&[alias.to_string_lossy().into_owned(), root.join("missing").to_string_lossy().into_owned()]).is_err());
+        assert!(service.reserve(&alias.to_string_lossy(), "agent").is_err());
+        service.restore_repository(&[alias.to_string_lossy().into_owned()]).unwrap();
+        assert!(service.reserve(&actual.to_string_lossy(), "agent").is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repository_activity_blocks_detach_across_child_writer_gaps() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let path = root.to_string_lossy().into_owned();
+        let activity = service.begin_repository_activity(&path).unwrap();
+        let worker_activity = activity.clone();
+        let writer = service.reserve(&path, "verification runner").unwrap();
+        drop(writer);
+        assert!(service.detach_repository(&[path.clone()], || Ok(())).is_err());
+        drop(activity);
+        assert!(service.detach_repository(&[path.clone()], || Ok(())).is_err());
+        drop(worker_activity);
+        service.detach_repository(&[path.clone()], || Ok(())).unwrap();
+        assert!(service.begin_repository_activity(&path).is_err());
+        service.restore_repository(&[path.clone()]).unwrap();
+        assert!(service.begin_repository_activity(&path).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn terminal_shutdown_deadline_includes_waiting_for_the_lifecycle_lock() {
         let service = WorkspaceLifecycle::default();

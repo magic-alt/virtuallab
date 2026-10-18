@@ -161,6 +161,7 @@ export function ProjectSidebar({
                   </button>
                   <button
                     aria-label={`Remove ${repository.name}`}
+                    disabled={!repositoryActionsEnabled}
                     className="rounded-md p-1.5 text-slate-700 opacity-0 transition hover:bg-white/[0.06] hover:text-rose-300 group-hover:opacity-100"
                     onClick={() => onRemove(repository.id)}
                     type="button"

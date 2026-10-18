@@ -598,6 +598,7 @@ use tauri::{AppHandle, Manager};
 /// success, failure and cancellation path. Waking always follows slot release.
 pub(crate) struct ManualExecutionSlot {
     slot: Option<ExecutionSlot>,
+    _activity: Arc<crate::workspace_lifecycle::RepositoryActivity>,
     app: AppHandle,
 }
 impl TaskExecution {
@@ -606,8 +607,11 @@ impl TaskExecution {
         app: AppHandle,
         task_id: &str,
     ) -> Result<ManualExecutionSlot, String> {
+        let task = app.state::<TaskManager>().get(task_id)?;
+        let activity = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root)?;
         Ok(ManualExecutionSlot {
             slot: Some(self.claim(task_id)?),
+            _activity: activity,
             app,
         })
     }
@@ -1166,8 +1170,10 @@ pub(crate) async fn task_reconcile_workspace(
     let manager = app.state::<TaskManager>().inner().clone();
     let task = manager.get(&request.task_id)?;
     let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    let activity = lifecycle.begin_repository_activity(&task.repository_root)?;
     let worker_manager = manager.clone();
     let updated = tauri::async_runtime::spawn_blocking(move || {
+        let _activity = activity;
         reconcile_preparation(&worker_manager, &task, &lifecycle)
     })
     .await
@@ -1225,6 +1231,7 @@ pub(crate) async fn task_prepare_workspace(
     let operation = execution.operation(&request.task_id)?;
     let manager = app.state::<TaskManager>().inner().clone();
     let task = manager.get(&request.task_id)?;
+    let _activity = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root)?;
     if task.workspace_root.is_some() || !task.attempts.is_empty() {
         return Err(
             "Task already has a workspace or execution history; manual reconciliation required"
@@ -1285,6 +1292,7 @@ fn enqueue(app: &AppHandle, request: StartRequest, retry: bool) -> Result<TaskRe
     let operation = execution.operation(&request.task_id)?;
     let manager = app.state::<TaskManager>().inner().clone();
     let task = manager.get(&request.task_id)?;
+    let _activity = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root)?;
     if task.kind != "implementation" {
         return Err("Integration requires native preview and explicit confirmation".into());
     }
@@ -1401,9 +1409,11 @@ impl TaskExecution {
                 let Ok(task) = manager.get(&entry.task_id) else {
                     continue;
                 };
-                if task.kind != "implementation" || prerequisites(&app, &task).is_err() {
-                    continue;
-                }
+                if task.kind != "implementation" { continue; }
+                let Ok(activity) = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root) else {
+                    continue; // Detached queues stay pending until explicit re-import/cancel.
+                };
+                if prerequisites(&app, &task).is_err() { continue; }
                 let dispatched = execution.dispatch(&entry.task_id, |queued| {
                     manager.update(&queued.task_id, |record| {
                         let attempt = record.attempts.last_mut().ok_or("Attempt missing")?;
@@ -1419,6 +1429,7 @@ impl TaskExecution {
                     publish(&app, &manager);
                     let worker_app = app.clone();
                     tauri::async_runtime::spawn(async move {
+                        let _activity = activity;
                         worker(worker_app, queued, slot).await;
                     });
                 }

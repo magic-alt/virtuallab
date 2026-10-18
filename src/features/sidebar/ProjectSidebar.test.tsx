@@ -42,7 +42,7 @@ function props() {
 }
 
 describe("ProjectSidebar controls", () => {
-  it("wires repository and workspace controls", async () => {
+  it("wires repository controls", async () => {
     const user = userEvent.setup();
     const p = props();
     render(<ProjectSidebar {...p} />);
@@ -59,6 +59,12 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /remove sample-beta/i }));
     expect(p.onRemove).toHaveBeenCalledWith("repo-2");
+  });
+
+  it("wires workspace and editor controls", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<ProjectSidebar {...p} />);
 
     await user.click(screen.getByRole("button", { name: /^new$/i }));
     expect(p.onNewWorkspace).toHaveBeenCalledTimes(1);
@@ -75,6 +81,12 @@ describe("ProjectSidebar controls", () => {
 
     await user.click(screen.getByRole("button", { name: /remove workspace/i }));
     expect(p.onRemoveWorkspace).toHaveBeenCalled();
+  });
+
+  it("wires branch switching and guarded deletion controls", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    render(<ProjectSidebar {...p} />);
 
     await user.click(screen.getByRole("button", { name: /switch to feat\/remote-only/i }));
     expect(p.onSwitchBranch).toHaveBeenCalledWith("feat/remote-only");
