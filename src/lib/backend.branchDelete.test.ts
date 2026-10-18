@@ -23,7 +23,7 @@ describe("native local branch deletion confirmation", () => {
     });
     native.confirm.mockReset();
     native.invoke.mockReset();
-    native.invoke.mockResolvedValue(undefined);
+    native.invoke.mockResolvedValue({ status: "deleted" });
   });
 
   afterEach(() => {
@@ -53,7 +53,7 @@ describe("native local branch deletion confirmation", () => {
     expect(native.invoke).toHaveBeenCalledTimes(1);
     expect(native.invoke).toHaveBeenCalledWith("git_delete_local_branch", {
       repositoryRoot: "/repo",
-      branch: "feat/merged",
+      branch: "feat/merged", force: false, expectedState: null,
     });
     expect(window.confirm).not.toHaveBeenCalled();
   });
@@ -77,6 +77,52 @@ describe("native local branch deletion confirmation", () => {
       .rejects.toThrow("desktop runtime");
     expect(native.confirm).not.toHaveBeenCalled();
     expect(native.invoke).not.toHaveBeenCalled();
+  });
+
+  const state = {
+    repositoryRoot: "/repo", branch: "feat/unmerged",
+    branchHeadSha: "a".repeat(40), comparisonRef: "HEAD", comparisonHeadSha: "b".repeat(40),
+  };
+
+  it("requires a separate native force confirmation bound to the unmerged snapshot", async () => {
+    let approveForce!: (approved: boolean) => void;
+    native.confirm.mockResolvedValueOnce(true).mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { approveForce = resolve; }),
+    );
+    native.invoke.mockResolvedValueOnce({ status: "needsForce", state }).mockResolvedValueOnce({ status: "deleted" });
+    const deletion = deleteLocalBranchAfterConfirmation("/repo/工作 tree", "feat/unmerged");
+    await vi.waitFor(() => expect(native.confirm).toHaveBeenCalledTimes(2));
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+    expect(native.confirm).toHaveBeenLastCalledWith(
+      expect.stringContaining('feat/unmerged'),
+      expect.objectContaining({ title: "Force delete unmerged local branch", okLabel: "Force delete", cancelLabel: "Cancel" }),
+    );
+    approveForce(true);
+    await expect(deletion).resolves.toBe(true);
+    expect(native.invoke).toHaveBeenLastCalledWith("git_delete_local_branch", {
+      repositoryRoot: "/repo/工作 tree", branch: "feat/unmerged", force: true, expectedState: state,
+    });
+  });
+
+  it("keeps an unmerged branch when the force dialog is cancelled", async () => {
+    native.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    native.invoke.mockResolvedValueOnce({ status: "needsForce", state });
+    await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/unmerged")).resolves.toBe(false);
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not force delete if the second native dialog fails", async () => {
+    native.confirm.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("dialog denied"));
+    native.invoke.mockResolvedValueOnce({ status: "needsForce", state });
+    await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/unmerged")).rejects.toThrow("dialog denied");
+    expect(native.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows stale-state failures after force approval without retrying deletion", async () => {
+    native.confirm.mockResolvedValue(true);
+    native.invoke.mockResolvedValueOnce({ status: "needsForce", state }).mockRejectedValueOnce(new Error("Branch changed; retry"));
+    await expect(deleteLocalBranchAfterConfirmation("/repo", "feat/unmerged")).rejects.toThrow("Branch changed");
+    expect(native.invoke).toHaveBeenCalledTimes(2);
   });
 
   it("does not mask a Rust Git rejection after approval", async () => {

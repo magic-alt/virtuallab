@@ -1458,18 +1458,41 @@ fn git_fetch_origin_blocking(repository_root: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalBranchDeletionState {
+    repository_root: String,
+    branch: String,
+    branch_head_sha: String,
+    comparison_ref: String,
+    comparison_head_sha: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum LocalBranchDeletionResult {
+    Deleted,
+    NeedsForce { state: LocalBranchDeletionState },
+}
+
 #[tauri::command]
-pub async fn git_delete_local_branch(app: tauri::AppHandle, repository_root: String, branch: String) -> Result<(), String> {
+pub async fn git_delete_local_branch(
+    app: tauri::AppHandle, repository_root: String, branch: String,
+    force: bool, expected_state: Option<LocalBranchDeletionState>,
+) -> Result<LocalBranchDeletionResult, String> {
     let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git branch deletion")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _reservation = reservation;
-        git_delete_local_branch_blocking(repository_root, branch)
+        git_delete_local_branch_blocking(repository_root, branch, force, expected_state)
     })
     .await
     .map_err(|error| format!("Git branch deletion task failed: {error}"))?
 }
 
-fn git_delete_local_branch_blocking(repository_root: String, branch: String) -> Result<(), String> {
+fn git_delete_local_branch_blocking(
+    repository_root: String, branch: String,
+    force: bool, expected_state: Option<LocalBranchDeletionState>,
+) -> Result<LocalBranchDeletionResult, String> {
     let root = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -1503,8 +1526,81 @@ fn git_delete_local_branch_blocking(repository_root: String, branch: String) -> 
         ));
     }
 
-    // -d refuses unmerged commits; -D and force deletion are intentionally unsupported.
-    git(&root, &["branch", "-d", "--", branch])?;
+
+    let branch_head_sha = git_read(&root, &["rev-parse", "--verify", &local_ref])?.trim().to_string();
+    // Match git branch -d: compare with a resolvable upstream, otherwise HEAD.
+    // Use Git ancestry/exit codes, never localized stderr, to identify unmerged work.
+    let upstream = git_read(&root, &["for-each-ref", "--format=%(upstream)", &local_ref])?;
+    let upstream = upstream.trim();
+    let upstream_head = if upstream.is_empty() { None } else {
+        git_read_optional(&root, &["rev-parse", "--verify", &format!("{upstream}^{{commit}}")])
+    };
+    let (comparison_ref, comparison_head_sha) = match upstream_head {
+        Some(sha) => (upstream.to_string(), sha.trim().to_string()),
+        None => ("HEAD".to_string(), git_read(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?.trim().to_string()),
+    };
+    let state = LocalBranchDeletionState {
+        repository_root: std::fs::canonicalize(&root).map_err(|error| error.to_string())?.to_string_lossy().into_owned(),
+        branch: branch.to_string(), branch_head_sha, comparison_ref, comparison_head_sha,
+    };
+    if force && expected_state.as_ref() != Some(&state) {
+        return Err("Branch or merge target changed before force deletion. Retry and review the latest branch.".into());
+    }
+    let ancestry = background_command("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .arg("-C").arg(&root)
+        .args(["merge-base", "--is-ancestor", &state.branch_head_sha, &state.comparison_head_sha])
+        .output().map_err(|error| format!("Failed to inspect branch ancestry: {error}"))?;
+    let merged = match ancestry.status.code() {
+        Some(0) => true,
+        Some(1) => false,
+        _ => return Err(format!("Cannot inspect branch ancestry: {}", String::from_utf8_lossy(&ancestry.stderr).trim())),
+    };
+    if !merged && !force { return Ok(LocalBranchDeletionResult::NeedsForce { state }); }
+    if merged && force {
+        return Err("Branch is now fully merged. Retry ordinary deletion.".into());
+    }
+    if force {
+        force_delete_local_branch_ref(&root, &state)?;
+    } else {
+        git(&root, &["branch", "-d", "--", branch])?;
+    }
+    Ok(LocalBranchDeletionResult::Deleted)
+}
+
+fn force_delete_local_branch_ref(root: &str, state: &LocalBranchDeletionState) -> Result<(), String> {
+    use std::io::Write;
+    let local_ref = format!("refs/heads/{}", state.branch);
+    // Repeat ownership immediately before the mutation adapter. The ref
+    // transaction itself enforces the approved branch and comparison OIDs.
+    let worktrees = parse_worktrees(&git_read(root, &["worktree", "list", "--porcelain"])?);
+    if worktrees.iter().any(|tree| tree.branch.as_deref() == Some(&state.branch)) {
+        return Err("Branch became checked out before force deletion. Switch that worktree first.".into());
+    }
+    let protocol = format!(
+        "start\0verify {}\0{}\0option no-deref\0delete {}\0{}\0prepare\0commit\0",
+        state.comparison_ref, state.comparison_head_sha, local_ref, state.branch_head_sha,
+    );
+    let mut child = background_command("git")
+        .arg("-C").arg(root).args(["update-ref", "--stdin", "-z"])
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|error| format!("Failed to launch branch deletion: {error}"))?;
+    let written = child.stdin.take().ok_or("Branch deletion input unavailable")?
+        .write_all(protocol.as_bytes());
+    if let Err(error) = written {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Cannot submit branch deletion: {error}"));
+    }
+    let output = child.wait_with_output().map_err(|error| format!("Branch deletion failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("Force deletion refused; branch or merge target may have changed. Retry and review the latest state. {}", String::from_utf8_lossy(&output.stderr).trim()));
+    }
+    // Match branch -D's local tracking-config cleanup without touching a ref
+    // another client may have recreated. Cleanup failure cannot undo deletion.
+    if git_read(root, &["show-ref", "--verify", "--quiet", &local_ref]).is_err() {
+        let _ = git(root, &["config", "--local", "--remove-section", &format!("branch.{}", state.branch)]);
+    }
     Ok(())
 }
 
@@ -2364,24 +2460,24 @@ mod tests {
         let path = repo.to_string_lossy().to_string();
         git_ok(&repo, &["branch", "-M", "main"]);
         git_ok(&repo, &["branch", "feat/merged"]);
-        assert!(git_delete_local_branch_blocking(path.clone(), "main".to_string())
+        assert!(git_delete_local_branch_blocking(path.clone(), "main".to_string(), false, None)
             .unwrap_err().contains("default branch"));
 
         // Removing a safe, unused branch must not depend on untracked files.
         fs::write(repo.join("untracked.txt"), "keep").unwrap();
-        git_delete_local_branch_blocking(path.clone(), "feat/merged".to_string())
+        git_delete_local_branch_blocking(path.clone(), "feat/merged".to_string(), false, None)
             .expect("delete fully merged local branch");
         assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/merged"]).is_err());
         fs::remove_file(repo.join("untracked.txt")).unwrap();
 
         git_ok(&repo, &["switch", "-c", "feat/active"]);
-        assert!(git_delete_local_branch_blocking(path.clone(), "feat/active".to_string())
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/active".to_string(), false, None)
             .unwrap_err().contains("checked out"));
         git_ok(&repo, &["switch", "main"]);
 
         let lane = sandbox.join("lane");
         git_ok(&repo, &["worktree", "add", "-b", "feat/occupied", lane.to_str().unwrap(), "HEAD"]);
-        assert!(git_delete_local_branch_blocking(path.clone(), "feat/occupied".to_string())
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/occupied".to_string(), false, None)
             .unwrap_err().contains("checked out"));
         git_ok(&repo, &["worktree", "remove", lane.to_str().unwrap()]);
 
@@ -2390,10 +2486,103 @@ mod tests {
         git_ok(&repo, &["add", "feature-only.txt"]);
         git_ok(&repo, &["commit", "-m", "unmerged work"]);
         git_ok(&repo, &["switch", "main"]);
-        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".to_string()).is_err());
+        let state = match git_delete_local_branch_blocking(path.clone(), "feat/unmerged".to_string(), false, None).unwrap() {
+            LocalBranchDeletionResult::NeedsForce { state } => state,
+            result => panic!("Unmerged branch must request confirmation: {result:?}"),
+        };
         assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_ok());
-        assert!(git_delete_local_branch_blocking(path.clone(), "feat/no-such-branch".to_string()).is_err());
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, None).is_err());
+        assert!(git_delete_local_branch_blocking(path.clone(), "main".into(), true, Some(state.clone())).is_err());
+        git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, Some(state)).unwrap();
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_err());
+
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/no-such-branch".to_string(), false, None).is_err());
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn force_delete_local_branch_rejects_stale_commits_and_new_worktree_owners() {
+        let (sandbox, repo) = init_fixture_repo("force-branch-stale");
+        let path = repo.to_string_lossy().into_owned();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("feature.txt"), "version one").unwrap();
+        git_ok(&repo, &["add", "feature.txt"]);
+        git_ok(&repo, &["commit", "-m", "unmerged"]);
+        git_ok(&repo, &["switch", "main"]);
+        let state = match git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), false, None).unwrap() {
+            LocalBranchDeletionResult::NeedsForce { state } => state,
+            _ => panic!("Expected unmerged preflight"),
+        };
+        git_ok(&repo, &["switch", "feat/unmerged"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, Some(state.clone())).unwrap_err().contains("checked out"));
+        fs::write(repo.join("feature.txt"), "version two").unwrap();
+        git_ok(&repo, &["commit", "-am", "changed during dialog"]);
+        git_ok(&repo, &["switch", "main"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, Some(state)).unwrap_err().contains("changed"));
+        let state = match git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), false, None).unwrap() {
+            LocalBranchDeletionResult::NeedsForce { state } => state,
+            _ => panic!("Expected unmerged preflight"),
+        };
+        let lane = sandbox.join("linked workspace 中文");
+        git_ok(&repo, &["worktree", "add", lane.to_str().unwrap(), "feat/unmerged"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, Some(state)).unwrap_err().contains("checked out"));
+        git_ok(&repo, &["worktree", "remove", lane.to_str().unwrap()]);
+        assert!(git_read(&path, &["show-ref", "--verify", "--quiet", "refs/heads/feat/unmerged"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn local_branch_deletion_uses_upstream_and_rejects_changed_merge_target() {
+        let (sandbox, repo) = init_fixture_repo("force-branch-upstream");
+        let path = repo.to_string_lossy().into_owned();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("feature.txt"), "unmerged work").unwrap();
+        git_ok(&repo, &["add", "feature.txt"]);
+        git_ok(&repo, &["commit", "-m", "unmerged"]);
+        git_ok(&repo, &["branch", "integration"]);
+        git_ok(&repo, &["switch", "main"]);
+        let state = match git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), false, None).unwrap() {
+            LocalBranchDeletionResult::NeedsForce { state } => state,
+            _ => panic!("Expected unmerged preflight"),
+        };
+        fs::write(repo.join("main.txt"), "new main commit").unwrap();
+        git_ok(&repo, &["add", "main.txt"]);
+        git_ok(&repo, &["commit", "-m", "merge target changed"]);
+        assert!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), true, Some(state)).unwrap_err().contains("changed"));
+        git_ok(&repo, &["branch", "--set-upstream-to=integration", "feat/unmerged"]);
+        assert!(matches!(git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), false, None).unwrap(), LocalBranchDeletionResult::Deleted));
+        // A nonstandard origin default is protected in force mode as well.
+        git_ok(&repo, &["branch", "release/stable"]);
+        git_ok(&repo, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release/stable"]);
+        assert!(git_delete_local_branch_blocking(path, "release/stable".into(), true, None).unwrap_err().contains("default branch"));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn force_branch_ref_transaction_never_deletes_a_replaced_tip() {
+        let (sandbox, repo) = init_fixture_repo("force-branch-atomic");
+        let path = repo.to_string_lossy().into_owned();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("feature.txt"), "version one").unwrap();
+        git_ok(&repo, &["add", "feature.txt"]);
+        git_ok(&repo, &["commit", "-m", "unmerged"]);
+        git_ok(&repo, &["switch", "main"]);
+        let state = match git_delete_local_branch_blocking(path.clone(), "feat/unmerged".into(), false, None).unwrap() {
+            LocalBranchDeletionResult::NeedsForce { state } => state,
+            _ => panic!("Expected preflight"),
+        };
+        // Replace the tip after preflight but before the exact mutation adapter.
+        git_ok(&repo, &["branch", "-f", "feat/unmerged", "main"]);
+        assert!(force_delete_local_branch_ref(&path, &state).is_err());
+        assert_eq!(git_read(&path, &["rev-parse", "refs/heads/feat/unmerged"]).unwrap(), git_read(&path, &["rev-parse", "HEAD"]).unwrap());
+        git_ok(&repo, &["update-ref", "refs/heads/feat/unmerged", &state.branch_head_sha]);
+        git_ok(&repo, &["commit", "--allow-empty", "-m", "comparison changed just before mutation"]);
+        assert!(force_delete_local_branch_ref(&path, &state).is_err());
+        assert_eq!(git_read(&path, &["rev-parse", "refs/heads/feat/unmerged"]).unwrap().trim(), state.branch_head_sha);
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     #[test]

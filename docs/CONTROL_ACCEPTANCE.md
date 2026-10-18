@@ -309,3 +309,11 @@ See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix
 - Stop the worker and wait for observed shutdown. Confirm removal again: only the workbench record and its owned notices disappear; files, commits, branches and all worktree registrations remain. Other repositories and their notices remain available.
 - Re-add the repository through the native folder picker: its validated registered worktrees become runnable again. A failed native restore must not add a frontend record. Historical Tasks/evidence remain historical; removal does not accept, delete or replay them.
 - Race a native worker startup/worktree creation against removal: either the worker wins and removal is refused, or removal wins and new reservations are refused until re-import. External Git/process changes are outside this process-local protocol. Missing registered paths reject removal rather than silently pruning or deleting Git state.
+
+
+## Unmerged local branch deletion
+
+- Create a local branch with a unique commit, switch away, and select its trash action under Git branches. Confirm ordinary deletion: a separate native warning must name the branch, repository and commit and offer **Force delete / Cancel** instead of leaving an unhandled Git error.
+- Cancel/close either dialog, or deny dialog permissions: the branch and commits remain; no forced mutation occurs. Default branches and branches checked out in any linked worktree remain protected even in force mode.
+- Approve the second warning: only the local branch is deleted; current checkout, files and remote branch remain. The branch inventory refreshes normally.
+- While the second warning is open, change the branch tip, upstream or comparison HEAD externally, or check out the branch in another worktree. Approval must reject the stale/protected state and retain the branch; retry must show the latest state.
