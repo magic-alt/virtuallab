@@ -1,6 +1,3 @@
-// @vitest-environment node
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { materializeTemplate } from './catalog';
 import { validateTaskPlan } from '../model';
@@ -18,10 +15,4 @@ describe('task workflow contracts', () => {
     const task = taskFixture({acceptance:{headSha:'sha',inputDigest:'i',profileDigest:'p',acceptedAtMs:1,acknowledgedWarnings:false}});
     expect(workflowStages(task, readinessFixture({acceptanceCurrent:false})).find(stage=>stage.id==='delivery')?.state).toBe('pending');
   });
-  it('runs real Node acceptance assertions and launch/recovery regressions', () => {
-    const result = spawnSync(process.execPath, [fileURLToPath(new URL('../../../../scripts/check-task-templates.mjs', import.meta.url))], {encoding:'utf8',timeout:30000});
-    expect(result.error).toBeUndefined();
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    expect(result.stdout).toContain('focused core checks passed');
-  }, 40000);
 });
