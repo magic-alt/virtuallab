@@ -13,6 +13,9 @@ function stableVersion(value) {
 
 function validatePolicy(policy) {
   if (policy?.schemaVersion !== 1 || !Array.isArray(policy.milestones)) throw new Error("Unsupported version policy.");
+  if (policy.automaticPatchOnMain !== undefined && typeof policy.automaticPatchOnMain !== "boolean") {
+    throw new Error("automaticPatchOnMain policy must be boolean.");
+  }
   let previousMinor = -1;
   const usedSections = new Set();
   for (const milestone of policy.milestones) {

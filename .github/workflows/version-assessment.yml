@@ -1,9 +1,9 @@
 name: Automatic version assessment
 
+# Trusted post-merge mainline version metadata is independent of platform CI.
+# GitHub's GITHUB_TOKEN main updates cannot recursively trigger push workflows.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -17,10 +17,8 @@ concurrency:
 jobs:
   assess:
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -37,7 +35,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Assess merged PRs and maintain a draft version PR
+      - name: Assess merged PRs and synchronize qualified version metadata
         uses: actions/github-script@v7
         with:
           script: |
@@ -47,3 +45,5 @@ jobs:
             const { runVersionAutomation } = await import(moduleUrl);
             const result = await runVersionAutomation({ github, context, core });
             core.info(`Version assessment: ${result.status}`);
+      - name: Verify generated version sources
+        run: node scripts/version.mjs check
