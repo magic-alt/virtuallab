@@ -150,10 +150,11 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     if (!prompt.trim() || turn) return;
     const current = await ensureAttached();
     const input = buildAgentPrompt(prompt, role, skills);
+    const sessionRevision = useAgentTimeline.getState().sessionStates[key]?.revision ?? 0;
     const result = await adapter.startTurn({
       workspaceRoot, threadId: current.threadId, text: input,
     });
-    setActiveTurn(workspaceRoot, result.turnId);
+    setActiveTurn(workspaceRoot, result.turnId, result.threadId, sessionRevision);
     setPrompt("");
   });
   const chooseCodexPath = () => run(async () => {

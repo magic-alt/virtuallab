@@ -7,13 +7,13 @@ interface TaskFilters {query:string;repositoryRoot:string;attention:boolean}
 interface TaskState {
   activeTaskTab:TaskDetailTab; activeTaskRepositoryRoot:string|null; filters:TaskFilters;
   tasks: TaskRecord[]; readiness: Record<string, TaskReadiness>; readinessErrors: Record<string, string>;
-  events: TaskEvent[]; error: string | null; observerError: string | null;
+  events: TaskEvent[]; error: string | null; repositoryErrors: Record<string, string>; observerError: string | null;
   actionErrors: Record<string, string>; pending: Record<string, boolean>; cancelling: Record<string, boolean>;
   roots: string[]; loading: boolean; activeTaskId: string | null;
 }
 export const useTaskStore = create<TaskState>(() => ({
   activeTaskTab:'概览', activeTaskRepositoryRoot:null, filters:{query:'',repositoryRoot:'',attention:false},
-  tasks: [], readiness: {}, readinessErrors: {}, events: [], error: null, observerError: null,
+  tasks: [], readiness: {}, readinessErrors: {}, events: [], error: null, repositoryErrors: {}, observerError: null,
   actionErrors: {}, pending: {}, cancelling: {}, roots: [], loading: false, activeTaskId: null,
 }));
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -33,12 +33,28 @@ export async function refreshTasks(): Promise<void> {
   const roots = [...useTaskStore.getState().roots];
   const current = () => observed && generation === epoch && refreshSequence === sequence;
   useTaskStore.setState({loading: true, readiness: {}, readinessErrors: {}, error: null});
-  const [records, events] = await Promise.allSettled([listTasks(roots), getTaskEvents(afterSeq)]);
+  const [records, [events]] = await Promise.all([
+    Promise.allSettled(roots.map(root => listTasks([root]))),
+    Promise.allSettled([getTaskEvents(afterSeq)]),
+  ]);
   if (!current()) return;
-  if (records.status === 'rejected') {
-    useTaskStore.setState({loading: false, tasks: [], readiness: {}, events: [], activeTaskId:null, activeTaskTab:'概览', error: errorText(records.reason)}); return;
+  const repositoryErrors: Record<string, string> = {};
+  const scopedTasks: TaskRecord[] = [];
+  records.forEach((result, index) => {
+    const root = roots[index];
+    if (result.status === 'rejected') repositoryErrors[root] = errorText(result.reason);
+    else scopedTasks.push(...result.value.filter(task => workspaceKey(root) === workspaceKey(task.repositoryRoot)));
+  });
+  // Failed repository histories must be queried again when they become available.
+  // Advancing the global event cursor here would permanently hide those events.
+  if (Object.keys(repositoryErrors).length) afterSeq = 0;
+  if (records.length && records.every(result => result.status === 'rejected')) {
+    useTaskStore.setState({loading: false, tasks: [], readiness: {}, events: [], repositoryErrors,
+      activeTaskId:null, activeTaskRepositoryRoot:null, activeTaskTab:'概览',
+      error: Object.entries(repositoryErrors).map(([root, reason]) => `${root}: ${reason}`).join('\n')});
+    return;
   }
-  const tasks = records.value.filter(task => roots.some(root => workspaceKey(root) === workspaceKey(task.repositoryRoot)));
+  const tasks = [...new Map(scopedTasks.map(task => [task.id, task])).values()];
   const results = await Promise.allSettled(tasks.map(task => getTaskReadiness(task.id)));
   if (!current()) return;
   const readiness: Record<string, TaskReadiness> = {}; const readinessErrors: Record<string, string> = {};
@@ -46,9 +62,9 @@ export async function refreshTasks(): Promise<void> {
     if (result.status === 'fulfilled') readiness[tasks[index].id] = result.value;
     else readinessErrors[tasks[index].id] = errorText(result.reason);
   });
-  if (events.status === 'fulfilled') afterSeq = Math.max(afterSeq, ...events.value.map(event => event.seq));
+  if (events.status === 'fulfilled' && !Object.keys(repositoryErrors).length) afterSeq = Math.max(afterSeq, ...events.value.map(event => event.seq));
   useTaskStore.setState(state => ({
-    tasks, readiness, readinessErrors, loading: false,
+    tasks, readiness, readinessErrors, repositoryErrors, loading: false,
     events: mergeEvents(state.events, events.status === 'fulfilled' ? events.value : [], tasks),
     observerError: events.status === 'rejected' ? `事件来源不可用: ${errorText(events.reason)}` : state.observerError,
     activeTaskId: state.activeTaskId && tasks.some(task => task.id === state.activeTaskId) ? state.activeTaskId : null,
@@ -64,7 +80,7 @@ export function observeTasks(roots: string[]): () => void {
     const selected=state.tasks.find(task=>task.id===state.activeTaskId);
     const selectedRoot=selected?.repositoryRoot??(state.activeTaskId?state.activeTaskRepositoryRoot:null);
     const retained=!!selectedRoot&&contains(selectedRoot);
-    return {roots:[...new Set(roots)].sort(),tasks:[],readiness:{},readinessErrors:{},events:[],error:null,observerError:null,
+    return {roots:[...new Set(roots)].sort(),tasks:[],readiness:{},readinessErrors:{},events:[],error:null,repositoryErrors:{},observerError:null,
       activeTaskId:retained?state.activeTaskId:null,activeTaskTab:retained?state.activeTaskTab:'概览',activeTaskRepositoryRoot:retained?selectedRoot:null,
       filters:{...state.filters,repositoryRoot:contains(state.filters.repositoryRoot)?state.filters.repositoryRoot:''}};
   });
@@ -103,7 +119,7 @@ export function observeTasks(roots: string[]): () => void {
     document.removeEventListener('visibilitychange', visible);
     if (generation === epoch) {
       ++generation; ++refreshSequence; observed = false;
-      useTaskStore.setState({roots: [], tasks: [], readiness: {}, readinessErrors: {}, events: [], loading: false});
+      useTaskStore.setState({roots: [], tasks: [], readiness: {}, readinessErrors: {}, repositoryErrors: {}, events: [], loading: false});
     }
   };
 }

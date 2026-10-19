@@ -36,6 +36,29 @@ beforeEach(()=>{
 afterEach(()=>{Reflect.deleteProperty(window,'__TAURI_INTERNALS__');});
 async function openTask(){await userEvent.click(await screen.findByRole('button',{name:'修复解析器'}));}
 describe('task control center user flows',()=>{
+  it('shows a recoverable repository warning while healthy repository tasks remain usable',async()=>{
+    const offline:RepositoryRecord={id:'offline',name:'离线仓库',path:'/offline',lastOpenedAt:1};
+    let unavailable=true;
+    const fallback=native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command,args)=>{
+      if(command==='task_list' && args.repositoryRoots.includes('/offline')) {
+        return unavailable?Promise.reject(new Error('Repository path is unavailable.')):Promise.resolve([taskFixture({id:'restored',title:'恢复的任务',repositoryRoot:'/offline'})]);
+      }
+      return fallback(command,args);
+    });
+    render(<Harness repositories={[repo,offline]}/>);
+    await openTask();
+    const warning=screen.getByRole('status');
+    expect(warning).toHaveTextContent('/offline');
+    expect(warning).toHaveTextContent('Repository path is unavailable.');
+    await userEvent.click(screen.getByRole('tab',{name:'执行'}));
+    expect(screen.getByRole('button',{name:'开始执行'})).toBeEnabled();
+    unavailable=false;
+    await userEvent.click(screen.getByRole('button',{name:'刷新任务'}));
+    expect(await screen.findByRole('button',{name:'恢复的任务'})).toBeVisible();
+    expect(screen.queryByText(/Repository path is unavailable/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'开始执行'})).toBeEnabled();
+  });
   it('keeps selection across app views and routes all five detail tabs to workspace-owned tools',async()=>{
     const onOpen=vi.fn(); const page=render(<Harness onOpenWorkspace={onOpen}/>);await openTask();
     expect(within(screen.getByRole('article',{name:'任务详情'})).getByText('未运行')).toBeInTheDocument();

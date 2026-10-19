@@ -87,8 +87,8 @@ export function WorkbenchShell() {
   const appendAgentEvent = useAgentTimeline((s) => s.append);
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
   const [tab, setTab] = useState<WorkspaceTab>("overview");
-  const viewed = useRef({ path: snapshot.root, tab });
-  viewed.current = { path: snapshot.root, tab };
+  const viewed = useRef({ path: snapshot.root, tab, visible: appView === "repositories" });
+  viewed.current = { path: snapshot.root, tab, visible: appView === "repositories" };
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     let cancelled = false;
@@ -97,7 +97,7 @@ export function WorkbenchShell() {
       appendAgentEvent(payload);
       const notice = noticeForAgentEvent(payload);
       if (notice) publishTaskNotice(notice,
-        document.hasFocus() && viewed.current.tab === "agents" &&
+        document.hasFocus() && viewed.current.visible && viewed.current.tab === "agents" &&
         workspaceKey(viewed.current.path) === workspaceKey(notice.workspaceRoot));
     }).then((stop) => { if (cancelled) stop(); else unlisten = stop; })
       .catch(() => undefined);
@@ -948,6 +948,7 @@ export function WorkbenchShell() {
 
           <WorkspaceContent
             snapshot={visibleSnapshot}
+            visible={appView === "repositories"}
             profileRepositoryRoot={activeRepository?.path ?? visibleSnapshot.root}
             terminalRepositoryId={workspaceReady ? activeRepository?.id ?? null : null}
             registeredRepositoryIds={repositories.map((item) => item.id)}

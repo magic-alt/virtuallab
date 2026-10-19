@@ -62,6 +62,7 @@ export function GithubPanel({
 
   const drafts = reviewState?.drafts ?? [];
   const liveContext = useRef("");
+  const requestRevisionRef = useRef(0);
   const actionPending = useRef(false);
   useEffect(() => () => { liveContext.current = "disposed"; }, []);
 
@@ -70,8 +71,10 @@ export function GithubPanel({
   }, [reviewState?.githubReference, workspaceRoot]);
 
   useEffect(() => {
-    if (!enabled) return;
-    let disposed = false;
+    const requestRevision = ++requestRevisionRef.current;
+    const ownsRequest = () => requestRevisionRef.current === requestRevision;
+    const dispose = () => { requestRevisionRef.current += 1; };
+    if (!enabled) return dispose;
     const savedReference = useWorkbenchStore.getState()
       .reviewStates[reviewWorkspaceKey(workspaceRoot)]?.githubReference;
     setContext(null);
@@ -80,36 +83,43 @@ export function GithubPanel({
     setError(null);
     setMergeResult(null);
     setLoading(true);
+    setListLoading(false);
     void githubAdapter.listPullRequests(workspaceRoot)
       .then(async (list) => {
-        if (disposed) return;
+        if (!ownsRequest()) return;
         setCapabilities(list.capabilities);
         setPullRequests(list.pullRequests);
         if (list.capabilities.mode === "connected" && savedReference) {
           const restored = await githubAdapter.loadContext(workspaceRoot, savedReference);
-          if (!disposed) {
+          if (ownsRequest()) {
             setCapabilities(restored.capabilities);
             setContext(restored);
           }
         }
       })
       .catch((err) => {
-        if (!disposed) setError(err instanceof Error ? err.message : String(err));
+        if (ownsRequest()) setError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
-        if (!disposed) setLoading(false);
+        if (ownsRequest()) setLoading(false);
       });
-    return () => { disposed = true; };
+    return dispose;
   }, [enabled, workspaceRoot]);
 
   const loadContext = async (selectedReference = reference) => {
     if (!enabled || readying || merging) return;
+    // A root string alone cannot distinguish two visits to the same workspace.
+    // Invalidate every older read before it can update UI or persisted references.
+    const requestRevision = ++requestRevisionRef.current;
+    const ownsRequest = () => requestRevisionRef.current === requestRevision;
     setLoading(true);
+    setListLoading(false);
     setError(null);
     setContext(null); // Never enable actions against a stale selection.
     setMergeResult(null);
     try {
       const next = await githubAdapter.loadContext(workspaceRoot, selectedReference);
+      if (!ownsRequest()) return;
       setCapabilities(next.capabilities);
       setContext(next);
       const resolved =
@@ -119,32 +129,37 @@ export function GithubPanel({
       setGithubReference(workspaceRoot, resolved);
       setReference(resolved ?? "");
     } catch (err) {
+      if (!ownsRequest()) return;
       const detail = err instanceof Error ? err.message : String(err);
       setError(!selectedReference.trim() && /no pull requests|no pull request|argument required|not found/i.test(detail)
         ? "No PR is associated with this branch. Select an open PR from the list below."
         : detail);
     } finally {
-      setLoading(false);
+      if (ownsRequest()) setLoading(false);
     }
   };
 
   const refreshPrList = async () => {
     if (!enabled || listLoading || readying || merging) return;
+    const requestRevision = ++requestRevisionRef.current;
+    const ownsRequest = () => requestRevisionRef.current === requestRevision;
     setListLoading(true);
+    setLoading(false);
     setError(null);
     try {
       const list = await githubAdapter.listPullRequests(workspaceRoot);
+      if (!ownsRequest()) return;
       setCapabilities(list.capabilities);
       setPullRequests(list.pullRequests);
       if (list.capabilities.mode !== "connected") setContext(null);
       else if (context?.pullRequest) {
         const latest = await githubAdapter.loadContext(workspaceRoot, `pr:${context.pullRequest.number}`);
-        setContext(latest);
+        if (ownsRequest()) setContext(latest);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (ownsRequest()) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setListLoading(false);
+      if (ownsRequest()) setListLoading(false);
     }
   };
 

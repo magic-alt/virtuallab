@@ -16,4 +16,13 @@ describe("cross-platform workspace identity", () => {
   it("preserves Unicode spelling", () => {
     expect(workspaceKey("/tmp/软件/工作区")).toBe("/tmp/软件/工作区");
   });
+
+  it.each([
+    "/tmp/literal\\child",
+    "/tmp/trailing\\",
+    "/\\literal",
+  ])("preserves every literal backslash in POSIX identity %s", (path) => {
+    expect(workspaceKey(path)).toBe(path);
+    expect(workspaceKey(`${path}/`)).toBe(path);
+  });
 });

@@ -139,6 +139,18 @@ describe("workbench persisted store", () => {
     expect(useWorkbenchStore.getState().reviewStates[key]?.drafts[0].status).toBe("stale");
   });
 
+  it("leaves review state unchanged when a post result arrives after its draft was removed", () => {
+    const root = "D:/Work/sample-alpha";
+    useWorkbenchStore.getState().addReviewDraft({
+      id: "removed-draft", workspaceRoot: root, headSha: "abc123", path: "src/a.ts",
+      line: 1, side: "RIGHT", body: "Review this guard.", status: "active", createdAt: 1, updatedAt: 1,
+    });
+    useWorkbenchStore.getState().removeReviewDraft(root, "removed-draft");
+    const reviews = useWorkbenchStore.getState().reviewStates;
+    useWorkbenchStore.getState().markReviewDraftPosted(root, "removed-draft", "https://github.com/example-org/sample-repo/pull/7#discussion_r99");
+    expect(useWorkbenchStore.getState().reviewStates).toBe(reviews);
+  });
+
   it("persists the GitHub reference with the workspace review state", () => {
     const workspaceRoot = "D:/Work/sample-alpha";
     useWorkbenchStore

@@ -290,27 +290,33 @@ export const useWorkbenchStore = create<WorkbenchState>()(
         })),
 
       markReviewDraftPosted: (workspaceRoot, draftId, postedUrl) =>
-        set((state) => ({
-          reviewStates: updateReviewState(
-            state.reviewStates,
-            workspaceRoot,
-            (current) => ({
-              ...current,
-              drafts: current.drafts.map((draft) =>
-                draft.id === draftId
-                  ? {
-                      ...draft,
-                      status: "posted" as const,
-                      postedAt: Date.now(),
-                      postedUrl,
-                      updatedAt: Date.now(),
-                    }
-                  : draft,
-              ),
-              updatedAt: Date.now(),
-            }),
-          ),
-        })),
+        set((state) => {
+          // Posting can finish after navigation or repository detach. Record
+          // real success only while the original draft still has an owner.
+          const current = state.reviewStates[reviewWorkspaceKey(workspaceRoot)];
+          if (!current?.drafts.some((draft) => draft.id === draftId)) return state;
+          return {
+            reviewStates: updateReviewState(
+              state.reviewStates,
+              workspaceRoot,
+              (current) => ({
+                ...current,
+                drafts: current.drafts.map((draft) =>
+                  draft.id === draftId
+                    ? {
+                        ...draft,
+                        status: "posted" as const,
+                        postedAt: Date.now(),
+                        postedUrl,
+                        updatedAt: Date.now(),
+                      }
+                    : draft,
+                ),
+                updatedAt: Date.now(),
+              }),
+            ),
+          };
+        }),
 
       setReviewPhase: (workspaceRoot, phase, headSha) =>
         set((state) => ({

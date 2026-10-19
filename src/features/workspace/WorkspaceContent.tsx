@@ -36,6 +36,7 @@ interface Props {
   registeredRepositoryIds?: string[];
   retiredTerminal?: { path: string; sequence: number } | null;
   tab: WorkspaceTab;
+  visible?: boolean;
   isPreview: boolean;
   snapshotRevision?: number;
   onRefreshForRereview?: (workspaceRoot: string) => Promise<void>;
@@ -71,6 +72,7 @@ export function WorkspaceContent({
   registeredRepositoryIds = [],
   retiredTerminal = null,
   tab,
+  visible = true,
   isPreview,
   snapshotRevision = 0,
   onRefreshForRereview,
@@ -163,7 +165,7 @@ export function WorkspaceContent({
         <WorkspaceTerminals
           cwd={snapshot.root}
           enabled={!isPreview && isDesktopRuntime()}
-          visible={tab === "terminal"}
+          visible={visible && tab === "terminal"}
           repositoryId={terminalRepositoryId}
           registeredRepositoryIds={registeredRepositoryIds}
           retiredWorkspace={retiredTerminal}

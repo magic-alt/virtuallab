@@ -11,13 +11,44 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 5. **Hardware-changing actions require explicit human approval.** Flashing, drive enable, power-stage enable, destructive Git operations and merge actions will be gated.
 6. **Local-first and offline-capable.** Git inspection and workspace inventory must work without cloud services.
 
-## Application-level documentation
+## Workspace directory and Git identity
+
+Native workspace identity canonicalizes existing filesystem paths and applies
+separator/case normalization according to the host platform. POSIX literal
+backslashes, including one at the end of a directory name, remain part of the
+identity. Frontend workspace keys identify Windows drive/UNC syntax before
+normalizing separators and preserve POSIX spelling. They remain UI/persistence
+keys rather than filesystem authority or a security boundary.
+
+Workspace creation resolves custom relative paths against the selected repository,
+then freezes the lifecycle reservation's absolute physical target separately from
+its comparison key. Windows case-folded ownership keys are never filesystem or
+Git arguments. The Windows Git boundary converts recognized canonical drive/UNC
+paths to an equivalent ordinary path, preserving component spelling; an ambiguous
+conversion is rejected. Directory creation, Git arguments and the returned
+workspace path use that same target. Application cwd and Git cwd must never
+identify different creation targets, and POSIX literal backslashes stay intact.
+
+Retirement reservations protect overlapping directory trees: an active writer,
+terminal, task activity or pending creation in a nested workspace blocks parent
+removal, and retirement already in progress blocks overlapping startups. Separate
+siblings and repositories keep independent ownership. Creation and removal retain
+different semantics so an existing parent terminal can coexist with creation of a
+nested worktree. External Git/process activity remains outside this process-local
+coordination boundary.
+
+Linked-workspace inventory watchers recursively observe the shared `worktrees`
+administration directory as well as refs. Switching an existing sibling between
+existing branches can change only its private HEAD, so a nonrecursive watch is
+insufficient. The shared Git objects directory is not added as a recursive watch.
 
 Repository snapshots and lightweight worktree status return the full lowercase HEAD object ID (40 or 64 hex characters). Task plan baselines and local-change preconditions use this same ID; only display labels abbreviate it. Detached branch labels remain compact. Task creation must never expand a short SHA by padding or relax its full-ID validation.
 
 Git ownership recovery is opt-in. Adding a repository may offer a native trust confirmation after a dubious-ownership error; an existing repository exposes an explicit **Trust repository** retry action. Background inspection and watcher refreshes never prompt or change Git configuration. The typed `trust_repository_directory` command canonicalizes an exact absolute repository/worktree root, rejects wildcard paths, verifies Git reports the same root with a process-scoped exception, and adds only that directory to global `safe.directory` when the ownership error persists. No blanket exception or OS ownership change is made.
 
 The Git branches list routes a registered linked worktree's remove action through the same native confirmation, lifecycle checks and dirty-state preflight as Workspace lanes. Removing the directory retains its local branch; a later branch deletion requires its own confirmation. Primary worktrees remain protected, and unregistered/occupied branches remain ineligible for direct deletion.
+
+## Application-level documentation
 
 Bundled Help/Guide content is an application service, not a workspace tab or
 execution context. The GUI menu bar offers **Help → 使用文档** even without an
@@ -49,6 +80,13 @@ plugin. Toasts are suppressed when the source task is already visible and focuse
 they neither steal focus nor block work. Native notification errors fall back
 to the in-app inbox. Routing to an inbox item only navigates to a registered
 repository/worktree and never creates or starts work.
+
+The repository host stays mounted while the operator visits Tasks, Evidence,
+Settings or Home. Its application visibility is passed to retained terminal
+panes so hidden panes stop visible-only resize/focus behavior without losing
+their sessions. Agent notification suppression also requires the repository
+view itself to be visible, in addition to the matching workspace, Agents tab
+and focused document.
 
 ## External workspace editor boundary
 
@@ -176,9 +214,28 @@ The workspace survives even when there is no agent attached.
 
 Implemented delivery assessment is shared by readiness, acceptance and passport export. Exact fixed dependency lineage and atomic dependency-revision guards prevent newer/rejected sources from qualifying an older integration. Candidate adoption checks the full accepted base-to-HEAD scope, including manual first-conflict recovery. Source qualification compares actual byte-preserving files with committed/indexed objects, while `task_git_watch` observes linked-worktree HEAD/index/relevant refs outside the workspace. Tool/selection changes remain sticky within a session; restart requires new verification. Formal CMake verification requires preconfigured observable compiler selection; exploratory configuration grants no qualification.
 
-**Prompt-first Task creation (2026-10-19).** The React quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through the existing typed `inspectRepository` boundary and re-inspects before submitting `task_accept_plan`; any changed HEAD must be acknowledged on screen first. No frontend model inference, shell execution, implicit worktree creation or provider launch is introduced. The existing multi-node manual planner remains available as an advanced mode. A single scope entry `.` denotes the operator-approved repository-wide task scope, accepted only in task draft and persisted task validation; narrower Profile paths still require safe literal relative names, and native candidate/source checks reject Git metadata and environment-secret paths. Whole-repository scope does not grant OS isolation or override native verification/human review requirements.\n\n### Current Task boundary
+**Prompt-first Task creation (2026-10-19).** The React quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through the existing typed `inspectRepository` boundary and re-inspects before submitting `task_accept_plan`; any changed HEAD must be acknowledged on screen first. No frontend model inference, shell execution, implicit worktree creation or provider launch is introduced. The existing multi-node manual planner remains available as an advanced mode. A single scope entry `.` denotes the operator-approved repository-wide task scope, accepted only in task draft and persisted task validation; narrower Profile paths still require safe literal relative names, and native candidate/source checks reject Git metadata and environment-secret paths. Whole-repository scope does not grant OS isolation or override native verification/human review requirements.
+
+### Current Task boundary
 
 Task metadata, immutable Attempts, structural event sequence and superseded human decisions are persisted in a bounded, atomically replaced application-data JSON generation. Failed writes do not change in-memory state. Startup marks unfinished Attempts interrupted and never replays Git/process side effects. Store corruption is exposed as unavailable while direct workspace tools remain usable. App-level React observation reads native snapshots through typed wrappers and rejects delayed results after repository/action changes.
+
+Task list observation queries each registered repository independently through
+the existing strict native command. A failed root has a scoped error and loses
+its current task/evidence view while healthy roots retain fresh readiness and
+selection. Only an all-root failure makes the overall source unavailable. A
+partial failure resets the structural-event cursor so a recovered root can
+restore its history; refresh and observer generations still reject detached or
+otherwise obsolete responses. TaskManager clones share one serialized writer;
+independently opened application processes do not have a shared transaction or
+store-generation compare-and-swap and are not qualified concurrent writers.
+
+Implementation dependencies are fixed read-only context for work starting from
+the accepted base; candidate adoption does not require importing those commits.
+The accepted-base, committed source and full-scope checks remain mandatory.
+Integration candidates additionally require every fixed prerequisite commit to
+be an ancestor of the combined candidate. No implicit merge is introduced for
+ordinary dependent implementation Tasks.
 
 One shared `WorkspaceLifecycle` reservation spans startup through observed writer shutdown across harnesses, Run, Verification and Git mutations; subdirectory writers normalize to their owning worktree. Interactive PTYs use separate, counted terminal leases: terminals coexist with branch switches, Run, other workspace operations and each other, while protecting their worktree against removal and repository detach. Navigation and branch switches preserve terminal sessions without stopping or recreating their shells. Terminal commands are outside the scheduled-writer exclusion; verification must still detect source changes made through a terminal, as it does for external tools. Missing worktree creation targets have explicit reservations before directory creation/registration. Cancelling is not completion. Task scheduling is bounded to two active slots and 32 queued tasks; application shutdown revokes new dispatch and cancels pending controlled work before process managers shut down.
 
@@ -325,6 +382,13 @@ The workflow UI output ring and process lifetime are ephemeral; worktree/profile
 
 The local Zustand store persists one workspace context per repository: active worktree path, active tab and update timestamp. Repository switching restores that context. If a remembered worktree no longer exists, VirtualLab falls back to the primary repository and Overview. Runtime PTY/process objects are deliberately not persisted.
 
+Agent bindings and review states retain their original workspace root and
+rebuild keys from it on hydration. This recovers stored POSIX roots after the
+separator correction without exposing their thread under a different nested
+path. Older role/skill selections stored only under a lossy key, and journals
+hashed from that key, do not retain enough owner information for reliable
+reassignment; no fallback that borrows another workspace's state is used.
+
 ## Normalized process results
 
 Run outcomes use the typed `CheckResult` contract with stable ID, source, status, detail, observation time and optional exit code. Repository readiness normalization was removed with the standalone Checks page; repository state remains visible in Overview. V0.4 persists verification manifests, hashes and logs; searchable evidence history and enforceable release gates are future work.
@@ -349,6 +413,15 @@ The local change count includes tracked and untracked status entries. Changes/Wo
 ## GitHub PR discovery and merge boundary
 
 The GitHub workspace tab can enumerate open PRs from the current origin without checking out any branch. Native `github_list_pull_requests` loads a bounded list through `gh pr list --repo`; `github_context` uses a resolved PR number or local branch selector instead of an ambiguous bare `gh pr view`. The UI displays the full `statusCheckRollup` (success/pending/failure/neutral) and the GitHub mergeability and review decision fields.
+
+Initial discovery, manual context loading and list refresh share a monotonic
+request revision. A workspace change, disabled/unmounted panel or newer read
+invalidates older responses before either component state or the persisted PR
+reference changes. Revisiting the same workspace path does not restore an old
+request's authority. The winning request also owns loading-state completion.
+Comment-post completion updates only an existing owner and draft. A successful
+request may still be recorded after ordinary navigation, but cannot recreate
+review state removed by repository detach.
 
 `github_merge_pull_request` is an explicit, typed, human-confirmed network mutation. It re-derives the repository from the selected local workspace origin; validates repository identity, merge method, and a full expected HEAD SHA; reloads current PR metadata and CI checks; and rejects drafts, missing/failed/pending checks, unknown mergeability, non-CLEAN GitHub merge state or blocked reviews. The merge uses GitHub's PR merge REST endpoint with a SHA precondition. GitHub remains authoritative for branch protection and merge permission. No local pull, checkout, force-push, auto-merge or branch deletion follows a merge.
 
@@ -403,6 +476,25 @@ The native boundary continues to reject nonmatching GitHub repository URLs; no a
 - Software-side permissions and process interruption are NOT interlocks, emergency stops or security boundaries. Any future hardware integration must independently enforce revocation, watchdog, safe state and transport isolation.
 
 See [V0.5 agent harnesses](./V0.5_AGENT_HARNESSES.md).
+
+Live Agent turn state is keyed by workspace and exact thread/turn identity.
+Bounded terminal-turn and stopped-thread records are independent of transcript
+clearing, so a delayed start notification or invoke acknowledgement cannot
+revive a completed/stopped turn. Session revisions revoke pending start replies
+across stop/resume transitions. The CLI's explicit `agent.session_binding`
+event can promote the first turn's provisional thread to its provider session
+identity; this transition must retire the provisional identity while retaining
+the same turn. It requires a matching existing attachment and cannot recreate a
+forgotten binding. Promotion first clears the provisional active identity and
+checks both session identities and the destination turn for stop/completion.
+Replacing a turn also retires its identity before installing the next one, so a
+duplicate old start cannot replace the current turn. Completion for an older
+thread cannot clear another active turn.
+The native Codex exit monitor emits the observed current runtime's thread only
+when its process pointer still matches that runtime under the lifecycle lock.
+An unregistered/replaced process exit stays diagnostic with unknown identity;
+the UI does not attribute it to a newer known session. These in-memory records
+describe live activity and never establish Task verification or acceptance.
 
 
 ## Release gate lifecycle hardening (v0.5.0 candidate)

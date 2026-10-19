@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { useWorkbenchStore } from "@/stores/workbench";
+import { useTaskNotifications } from "@/stores/taskNotifications";
+import type { AgentEvent } from "@/types/agent";
 import type { RepositorySnapshot, WorktreeStatus } from "@/types/workbench";
 
 const harness = vi.hoisted(() => ({
@@ -10,6 +12,7 @@ const harness = vi.hoisted(() => ({
   inspectStatus: vi.fn(),
   watchStart: vi.fn(),
   watchStop: vi.fn(),
+  desktopNotify: vi.fn().mockResolvedValue(undefined),
   listeners: new Map<string, (event: { payload: { id: string; eventType: string } }) => void>(),
 }));
 
@@ -30,6 +33,7 @@ vi.mock("@/lib/backend", () => ({
   inspectWorktreeStatus: harness.inspectStatus,
   watchStart: harness.watchStart,
   watchStop: harness.watchStop,
+  desktopNotify: harness.desktopNotify,
   chooseRepositoryDirectory: vi.fn(),
   openWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
   openWorkspaceInEditor: vi.fn().mockResolvedValue(undefined),
@@ -124,6 +128,33 @@ describe("workbench quiet filesystem refresh", () => {
       activeRepositoryId: "repo-1",
       workspaceStates: {},
     });
+  });
+
+  it("notifies for Agent completion when its retained workspace is hidden by the task view", async () => {
+    useWorkbenchStore.setState({ workspaceStates: {
+      "repo-1": { repositoryId: "repo-1", activeWorktreePath: primary, activeTab: "agents", updatedAt: 1 },
+    } });
+    useTaskNotifications.setState({ notices: [], desktopEnabled: true, desktopError: null });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(harness.listeners.has("agent://event")).toBe(true));
+    await screen.findByRole("button", { name: "Switch to main" });
+    const complete = (turnId: string) => {
+      const payload: AgentEvent = { eventType: "agent.turn_completed", workspaceRoot: primary,
+        threadId: "thread-visibility", turnId, payload: { status: "completed" }, timestampMs: 1 };
+      const callback = harness.listeners.get("agent://event") as unknown as (event: { payload: AgentEvent }) => void;
+      act(() => callback({ payload }));
+    };
+
+    complete("visible-turn");
+    expect(harness.desktopNotify).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "任务" }));
+    complete("hidden-turn");
+    await waitFor(() => expect(harness.desktopNotify).toHaveBeenCalledWith(
+      "Agent task completed", "Agent turn completed. Open Agents to review.",
+    ));
+    expect(useTaskNotifications.getState().notices).toHaveLength(2);
   });
 
   it("coalesces Agent write bursts and never disables or remounts Git branch buttons", async () => {

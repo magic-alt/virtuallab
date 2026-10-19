@@ -20,6 +20,7 @@ struct LifecycleState {
 struct WriterClaim {
     owner: String,
     blocks_terminals: bool,
+    removal: bool,
 }
 
 /// Nonexclusive task lifetime; nested native writers retain their own exclusive
@@ -46,6 +47,26 @@ impl LifecycleState {
         }
         Ok(())
     }
+
+    fn require_directory_available(&self, key: &Path, root: &str) -> Result<(), String> {
+        // Before a new worktree has its .git marker, its workspace identity
+        // may still be the parent. Check the actual startup directory too.
+        let directory = std::fs::canonicalize(root)
+            .map_err(|error| format!("Cannot resolve workspace directory: {error}"))?;
+        #[cfg(windows)]
+        let directory = PathBuf::from(directory.to_string_lossy().to_lowercase());
+        if let Some((_, claim)) = self.claims.iter().find(|(claimed, claim)| {
+            (claim.removal && overlaps(claimed, key)) ||
+                (claim.blocks_terminals && directory.starts_with(claimed))
+        }) {
+            return Err(format!("Workspace is reserved by {}; wait for observed completion.", claim.owner));
+        }
+        Ok(())
+    }
+}
+
+fn overlaps(first: &Path, second: &Path) -> bool {
+    first.starts_with(second) || second.starts_with(first)
 }
 
 /// A non-cloneable writer reservation or nonexclusive terminal lease. Keep it until process-tree
@@ -110,16 +131,22 @@ impl WorkspaceLifecycle {
         // second identity for a dangling alias.
         let key = identity(root)?;
         claims.require_attached(&key)?;
-        if blocks_terminals && claims.terminals.contains_key(&key) {
+        claims.require_directory_available(&key, root)?;
+        if blocks_terminals && claims.terminals.keys().any(|active| overlaps(active, &key)) {
             return Err("Workspace is reserved by terminal; wait for observed completion.".into());
         }
-        if let Some(current) = claims.claims.get(&key) {
+        if blocks_terminals && claims.activities.keys().any(|active| overlaps(active, &key)) {
+            return Err("Workspace has an active task operation; cancel or wait for completion before removing it.".into());
+        }
+        if let Some((_, current)) = claims.claims.iter().find(|(claimed, _)| {
+            *claimed == &key || (blocks_terminals && overlaps(claimed, &key))
+        }) {
             let current = &current.owner;
             return Err(format!(
                 "Workspace is reserved by {current}; wait for observed completion."
             ));
         }
-        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals });
+        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals, removal: blocks_terminals });
         Ok(WorkspaceReservation {
             lifecycle: self.clone(),
             key,
@@ -134,14 +161,7 @@ impl WorkspaceLifecycle {
         let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
         let key = identity(root)?;
         state.require_attached(&key)?;
-        // Before a new worktree has its .git marker, identity() may resolve its
-        // cwd to the parent worktree. Check the actual directory as well.
-        let directory = std::fs::canonicalize(root).map_err(|error| format!("Cannot resolve terminal directory: {error}"))?;
-        #[cfg(windows)]
-        let directory = PathBuf::from(directory.to_string_lossy().to_lowercase());
-        if let Some((_, claim)) = state.claims.iter().find(|(claimed, claim)| claim.blocks_terminals && directory.starts_with(claimed)) {
-            return Err(format!("Workspace is reserved by {}; wait for observed completion.", claim.owner));
-        }
+        state.require_directory_available(&key, root)?;
         *state.terminals.entry(key.clone()).or_default() += 1;
         Ok(WorkspaceReservation { lifecycle: self.clone(), key, terminal: true, released: Arc::default() })
     }
@@ -152,6 +172,16 @@ impl WorkspaceLifecycle {
         root: &str,
         owner: &str,
     ) -> Result<WorkspaceReservation, String> {
+        self.reserve_creation_target(root, owner).map(|(reservation, _)| reservation)
+    }
+
+    /// Freeze the filesystem target before Windows ownership case-folding.
+    /// Creation callers must use this path, not the reservation's comparison key.
+    pub(crate) fn reserve_creation_target(
+        &self,
+        root: &str,
+        owner: &str,
+    ) -> Result<(WorkspaceReservation, PathBuf), String> {
         if root.is_empty() || owner.trim().is_empty() {
             return Err("Creation path and owner must not be empty".into());
         }
@@ -187,35 +217,40 @@ impl WorkspaceLifecycle {
             );
             ancestor = ancestor.parent().ok_or("Cannot resolve creation parent")?;
         }
-        let mut key = std::fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
-        if !key.is_dir() {
+        let mut target = std::fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+        if !target.is_dir() {
             return Err("Worktree creation parent must be a directory".into());
         }
         for part in missing.into_iter().rev() {
-            key.push(part);
+            target.push(part);
         }
         #[cfg(windows)]
-        let key = PathBuf::from(key.to_string_lossy().to_lowercase());
+        let key = PathBuf::from(target.to_string_lossy().to_lowercase());
+        #[cfg(not(windows))]
+        let key = target.clone();
         claims.require_attached(&key)?;
-        if let Some(current) = claims.claims.get(&key) {
+        if let Some((_, current)) = claims.claims.iter().find(|(claimed, claim)| {
+            *claimed == &key || (claim.blocks_terminals && overlaps(claimed, &key))
+        }) {
             return Err(format!("Workspace is reserved by {}", current.owner));
         }
         if claims.terminals.contains_key(&key) {
             return Err("Workspace is reserved by terminal; wait for observed completion.".into());
         }
-        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true });
-        Ok(WorkspaceReservation {
+        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true, removal: false });
+        Ok((WorkspaceReservation {
             lifecycle: self.clone(),
             key,
             terminal: false,
             released: Arc::default(),
-        })
+        }, target))
     }
 
     pub(crate) fn begin_repository_activity(&self, root: &str) -> Result<Arc<RepositoryActivity>, String> {
         let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
         let key = identity(root)?;
         state.require_attached(&key)?;
+        state.require_directory_available(&key, root)?;
         *state.activities.entry(key.clone()).or_default() += 1;
         Ok(Arc::new(RepositoryActivity { lifecycle: self.clone(), key }))
     }
@@ -343,6 +378,161 @@ mod tests {
         fs::create_dir(target.join(".git")).unwrap();
         drop(creation);
         assert!(service.reserve_terminal(target.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn nested_creation_blocks_writer_start_before_git_marker_exists() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        fs::create_dir(root.join(".git")).unwrap();
+        let target = root.join("future");
+        let creation = service.reserve_creation(target.to_str().unwrap(), "creation").unwrap();
+        fs::create_dir(&target).unwrap();
+        let started = service.reserve(target.to_str().unwrap(), "process");
+        let blocked = started.is_err();
+        drop(started);
+        drop(creation);
+        assert!(service.reserve(target.to_str().unwrap(), "process").is_ok());
+        fs::remove_dir_all(root).unwrap();
+        assert!(blocked, "a process must not start inside an unfinished creation target");
+    }
+
+    #[test]
+    fn overlapping_creation_targets_cannot_reserve_the_same_directory_tree() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let parent = root.join("future");
+        let nested = parent.join("nested");
+        for (first, second) in [(&parent, &nested), (&nested, &parent)] {
+            let creation = service.reserve_creation(first.to_str().unwrap(), "creation").unwrap();
+            let competing = service.reserve_creation(second.to_str().unwrap(), "other creation");
+            let blocked = competing.is_err();
+            drop(competing);
+            drop(creation);
+            assert!(blocked, "overlapping creation targets must not be acquired independently");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn nested_workspace_fixture() -> (PathBuf, Vec<(PathBuf, PathBuf, PathBuf, PathBuf)>) {
+        let root = fixture();
+        let repositories = ["repository-a", "repository-b"].into_iter().map(|name| {
+            let repository = root.join(name);
+            let parent = repository.join("parent 工作区");
+            let nested = parent.join("nested");
+            let sibling = repository.join("sibling");
+            for workspace in [&repository, &parent, &nested, &sibling] {
+                fs::create_dir_all(workspace.join(".git")).unwrap();
+            }
+            (repository, parent, nested, sibling)
+        }).collect();
+        (root, repositories)
+    }
+
+    #[test]
+    fn nested_owners_block_parent_removal_and_preserve_sibling_repositories() {
+        let service = WorkspaceLifecycle::default();
+        let (root, repositories) = nested_workspace_fixture();
+        for (index, (_, parent, nested, sibling)) in repositories.iter().enumerate() {
+            let other = &repositories[1 - index].2;
+            let sibling_writer = service.reserve(sibling.to_str().unwrap(), "sibling process").unwrap();
+            let other_writer = service.reserve(other.to_str().unwrap(), "other repository agent").unwrap();
+            let writer = service.reserve(nested.to_str().unwrap(), "nested agent").unwrap();
+            assert!(service.begin_removal(parent.to_str().unwrap()).is_err(), "nested writer must protect its parent");
+            drop(writer);
+            let terminal = service.reserve_terminal(nested.to_str().unwrap()).unwrap();
+            assert!(service.begin_removal(parent.to_str().unwrap()).is_err(), "nested terminal must protect its parent");
+            drop(terminal);
+            let activity = service.begin_repository_activity(nested.to_str().unwrap()).unwrap();
+            assert!(service.begin_removal(parent.to_str().unwrap()).is_err(), "nested task lifetime must protect its parent");
+            drop(activity);
+            let creation = service.reserve_creation(nested.join("future").to_str().unwrap(), "nested creation").unwrap();
+            assert!(service.begin_removal(parent.to_str().unwrap()).is_err(), "nested creation must protect its parent");
+            drop(creation);
+            let removal = service.begin_removal(parent.to_str().unwrap()).unwrap();
+            assert!(service.is_reserved(sibling.to_str().unwrap()).unwrap());
+            assert!(service.is_reserved(other.to_str().unwrap()).unwrap());
+            drop(removal);
+            drop(other_writer);
+            drop(sibling_writer);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removal_blocks_overlapping_starts_and_preserves_two_repository_independence() {
+        let service = WorkspaceLifecycle::default();
+        let (root, repositories) = nested_workspace_fixture();
+        for (index, (repository, parent, nested, sibling)) in repositories.iter().enumerate() {
+            let removal = service.begin_removal(parent.to_str().unwrap()).unwrap();
+            for workspace in [repository, nested] {
+                assert!(service.reserve(workspace.to_str().unwrap(), "process").is_err(), "overlapping writer must wait for removal");
+                assert!(service.reserve_terminal(workspace.to_str().unwrap()).is_err(), "overlapping terminal must wait for removal");
+                assert!(service.begin_repository_activity(workspace.to_str().unwrap()).is_err(), "overlapping task must wait for removal");
+            }
+            assert!(service.reserve_creation(nested.join("future").to_str().unwrap(), "creation").is_err());
+            assert!(service.reserve(sibling.to_str().unwrap(), "sibling process").is_ok());
+            assert!(service.reserve_terminal(sibling.to_str().unwrap()).is_ok());
+            assert!(service.reserve_creation(sibling.join("future").to_str().unwrap(), "sibling creation").is_ok());
+            let (other_repository, other_parent, other_nested, _) = &repositories[1 - index];
+            let other_writer = service.reserve(other_parent.to_str().unwrap(), "other repository process").unwrap();
+            let other_terminal = service.reserve_terminal(other_nested.to_str().unwrap()).unwrap();
+            let other_activity = service.begin_repository_activity(other_repository.to_str().unwrap()).unwrap();
+            drop(other_activity);
+            drop(other_terminal);
+            drop(other_writer);
+            drop(removal);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ancestor_owners_block_nested_removal_until_observed_release() {
+        let service = WorkspaceLifecycle::default();
+        let (root, repositories) = nested_workspace_fixture();
+        let (_, parent, nested, _) = &repositories[0];
+        let writer = service.reserve(parent.to_str().unwrap(), "parent process").unwrap();
+        assert!(service.begin_removal(nested.to_str().unwrap()).is_err());
+        drop(writer);
+        let terminal = service.reserve_terminal(parent.to_str().unwrap()).unwrap();
+        assert!(service.begin_removal(nested.to_str().unwrap()).is_err());
+        drop(terminal);
+        assert!(service.begin_removal(nested.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn simultaneous_nested_start_and_parent_removal_have_exactly_one_winner() {
+        let (root, repositories) = nested_workspace_fixture();
+        let (_, parent, nested, _) = &repositories[0];
+        for terminal in [false, true] {
+            for _ in 0..16 {
+                let service = WorkspaceLifecycle::default();
+                let start = Arc::new(Barrier::new(3));
+                let finish = Arc::new(Barrier::new(3));
+                let jobs: Vec<_> = [false, true].into_iter().map(|remove| {
+                    let (service, parent, nested, start, finish) =
+                        (service.clone(), parent.clone(), nested.clone(), start.clone(), finish.clone());
+                    thread::spawn(move || {
+                        start.wait();
+                        let claim = if remove {
+                            service.begin_removal(parent.to_str().unwrap())
+                        } else if terminal {
+                            service.reserve_terminal(nested.to_str().unwrap())
+                        } else {
+                            service.reserve(nested.to_str().unwrap(), "nested process")
+                        };
+                        finish.wait();
+                        claim
+                    })
+                }).collect();
+                start.wait();
+                finish.wait();
+                let claims: Vec<_> = jobs.into_iter().map(|job| job.join().unwrap()).collect();
+                assert_eq!(claims.iter().filter(|claim| claim.is_ok()).count(), 1);
+            }
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -648,6 +838,33 @@ mod tests {
         assert!(service.reserve_terminal(path).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn creation_returns_the_canonical_target_without_case_folding() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let parent = root.join("other");
+        let expected = fs::canonicalize(&parent).unwrap().join("Future Parent/Workspace 工程");
+        #[cfg(unix)]
+        let parent = {
+            let alias = root.join("Parent Alias");
+            std::os::unix::fs::symlink(&parent, &alias).unwrap();
+            alias
+        };
+        let requested = parent.join("Future Parent/Workspace 工程");
+        let (claim, target) = service.reserve_creation_target(requested.to_str().unwrap(), "creation").unwrap();
+        assert!(target.is_absolute());
+        assert_eq!(target.to_str(), expected.to_str(), "filesystem spelling must retain the chosen target case");
+        assert!(service.reserve_creation(expected.to_str().unwrap(), "competing creation").is_err());
+        #[cfg(windows)]
+        assert!(service.reserve_creation(&expected.to_string_lossy().to_lowercase(), "case alias").is_err());
+        fs::create_dir_all(&target).unwrap();
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_err());
+        drop(claim);
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn creation_dot_alias_keeps_the_same_identity_when_target_appears() {
         let service = WorkspaceLifecycle::default();

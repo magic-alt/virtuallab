@@ -290,6 +290,17 @@ impl AgentManager {
         Ok(existing)
     }
 
+    fn process_exit_event(&self, root: &str, process: &Arc<CodexProcess>) -> AgentEvent {
+        let thread_id = self.runtimes.lock().ok().and_then(|runtimes| {
+            runtimes.get(&workspace_key(root))
+                .filter(|runtime| Arc::ptr_eq(&runtime.process, process))
+                .map(|runtime| runtime.binding.thread_id.clone())
+        });
+        // Failed initialization or an old monitor may have no current binding.
+        // Preserve that unknown identity instead of borrowing a replacement's.
+        AgentEvent::lifecycle("agent.process_exited", root, thread_id)
+    }
+
     fn stop_runtime(&self, root: &str, expected_thread_id: Option<&str>) -> Result<Option<AgentSessionBinding>, String> {
         let runtime = self.runtimes.lock().map_err(lock_error)?.get(&workspace_key(root)).cloned();
         if let Some(runtime) = runtime {
@@ -818,7 +829,7 @@ fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str
         let manager = monitor_app.state::<AgentManager>();
         let _lifecycle = manager.lifecycle.lock().unwrap_or_else(|error| error.into_inner());
         if observed._reservation.lock().map(|claim| claim.is_some()).unwrap_or(false) {
-            emit(&monitor_app, AgentEvent::lifecycle("agent.process_exited", &monitor_root, None));
+            emit(&monitor_app, manager.process_exit_event(&monitor_root, &observed));
         }
     });
     Ok(process)
@@ -1538,6 +1549,38 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
     }
 
     #[test]
+    fn process_exit_reports_the_observed_current_thread() {
+        let (root, _, manager, runtime) = runtime_fixture("exit-current");
+        let _serialized = manager.lifecycle.lock().unwrap();
+        let event = manager.process_exit_event(root.to_str().unwrap(), &runtime.process);
+        runtime.process.stop().unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(event.event_type, "agent.process_exited");
+        assert_eq!(event.workspace_root, root.to_string_lossy());
+        assert_eq!(event.thread_id.as_deref(), Some("current-thread"));
+    }
+
+    #[test]
+    fn process_exit_never_attributes_an_old_process_to_a_replacement_binding() {
+        let (root, _, manager, runtime) = runtime_fixture("exit-old");
+        let (replacement_root, _, _, replacement) = runtime_fixture("exit-replacement");
+        let _serialized = manager.lifecycle.lock().unwrap();
+        let path = root.to_str().unwrap();
+        manager.runtimes.lock().unwrap().insert(workspace_key(path), replacement.clone());
+        let replaced = manager.process_exit_event(path, &runtime.process);
+        manager.runtimes.lock().unwrap().remove(&workspace_key(path));
+        let unregistered = manager.process_exit_event(path, &runtime.process);
+        runtime.process.stop().unwrap();
+        replacement.process.stop().unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(replacement_root).unwrap();
+        assert_eq!(replaced.event_type, "agent.process_exited");
+        assert_eq!(replaced.workspace_root, root.to_string_lossy());
+        assert!(replaced.thread_id.is_none());
+        assert!(unregistered.thread_id.is_none());
+    }
+
+    #[test]
     fn confirmed_agent_stop_releases_reservation_before_return() {
         let root = std::env::temp_dir().join(format!("virtuallab-agent-stop-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&root).unwrap();
@@ -1626,6 +1669,6 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         #[cfg(windows)]
         assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "d:/project/virtuallab");
         #[cfg(unix)]
-        assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "D:/Project/VirtualLab");
+        assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "D:\\Project\\VirtualLab\\");
     }
 }
