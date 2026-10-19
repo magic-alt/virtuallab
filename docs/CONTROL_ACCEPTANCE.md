@@ -9,7 +9,7 @@ See [capability boundaries](TASK_FIRST_CONTROL_CENTER.md). These automated regre
 | Surface | Automated evidence | Desktop acceptance still required |
 | --- | --- | --- |
 | App navigation and terminal retention | `WorkbenchShell.tasks.test.tsx`, existing workspace/terminal tests | Switch Task/repository pages with live PTYs in multiple worktrees |
-| Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Manual plan through native folder/worktree provisioning; interrupted preparation reconciliation |
+| Natural-language quick create | `TaskQuickCreate.test.tsx`, `tasks.test.ts`, native task-scope tests | Enter Unicode goal in new task composer, inspect auto HEAD; change/switch repository; use advanced node wizard; confirm task accepted without implicit worktree/Agent start and with protected paths refused |\n| Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Manual plan through native folder/worktree provisioning; interrupted preparation reconciliation |
 | Execute, Cancel and Retry | Task cancellation tests; exact-run/thread and bounded-slot native fixtures | Authenticated concurrent Codex instances; cancellation during startup, verification and integration |
 | Task review context | `ChangesReview.taskBase.test.tsx`, `TaskWorkspaceTools.test.tsx` | Clean committed changes against accepted base; responsive diff and independent scroll |
 | Evidence, review, acceptance and passport | Native source/toolchain/runtime/atomic-store tests | Source change-and-restore, tool replacement, restart, stale dependency and superseded human decision |
