@@ -20,13 +20,15 @@ import {
   buildWorkflowDiscover,
   buildWorkflowSelfUpdateAvailable,
   buildWorkflowStart,
+  importBuildScript,
+  chooseBuildProgram,
   confirmDeploymentWorkflow,
   confirmSelfBuildRestart,
   listRuns,
   processSpawn,
   processStop,
 } from "@/lib/backend";
-import { formatStep, isTauriDesktopBuild, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
+import { formatStep, isTauriDesktopBuild, needsBuildWorkflow, profileFromSuggestion, stepsForProfile, suggestionActionLabel } from "@/lib/buildProfiles";
 import { BuildLogSanitizer } from "@/lib/buildLogSanitizer";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { processCheckResult } from "@/lib/checks";
@@ -93,6 +95,10 @@ export function ProcessRunner({
     [profiles, repositoryRoot],
   );
   const [suggestions, setSuggestions] = useState<BuildSuggestion[]>([]);
+  const [selectedSuggestionId, setSelectedSuggestionId] = useState("");
+  const selectedSuggestion = suggestions.find(item => item.id === selectedSuggestionId) ?? suggestions[0];
+  const workspaceRef = useRef(cwd);
+  workspaceRef.current = cwd;
   const [discoveryPending, setDiscoveryPending] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [scanRevision, setScanRevision] = useState(0);
@@ -118,6 +124,8 @@ export function ProcessRunner({
       return;
     }
     setSuggestions([]);
+    setSelectedSuggestionId("");
+    setEditorProfile(undefined);
     setDiscoveryPending(true);
     setDiscoveryError(null);
     void buildWorkflowDiscover(cwd)
@@ -347,7 +355,7 @@ export function ProcessRunner({
         && await buildWorkflowSelfUpdateAvailable(cwd);
       if (restartAfterBuild && !(await confirmSelfBuildRestart())) return;
       const id = nextId("run");
-      const isWorkflow = steps.length > 1 || restartAfterBuild;
+      const isWorkflow = needsBuildWorkflow(steps) || restartAfterBuild;
       setRuns((items) => [
         ...items.slice(-19),
         {
@@ -426,6 +434,15 @@ export function ProcessRunner({
             </Button>
           </div>
           <div className="space-y-2 p-3">
+            {suggestions.length > 1 && (
+              <label className="block text-xs text-slate-400">
+                Build configuration
+                <select aria-label="Build configuration" className="field mt-2 w-full"
+                  value={selectedSuggestion?.id ?? ""} onChange={event => setSelectedSuggestionId(event.target.value)}>
+                  {suggestions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+            )}
             {discoveryPending && <div className="p-3 text-xs text-slate-500">Inspecting project files...</div>}
             {discoveryError && <div role="alert" className="p-3 text-xs text-rose-300">{discoveryError}</div>}
             {!discoveryPending && !discoveryError && suggestions.length === 0 && (
@@ -433,7 +450,7 @@ export function ProcessRunner({
                 No preset detected. Add a custom workflow below for this project.
               </div>
             )}
-            {suggestions.map((suggestion) => (
+            {(selectedSuggestion ? [selectedSuggestion] : []).map((suggestion) => (
               <div key={suggestion.id} className="rounded-xl border border-white/[0.06] bg-white/[0.025] p-3">
                 <div className="flex items-center gap-2">
                   <span className="text-orange-300"><KindIcon kind={suggestion.kind} /></span>
@@ -452,7 +469,7 @@ export function ProcessRunner({
                   {suggestion.steps.map(formatStep).join(" → ")}
                 </div>
                 {!suggestion.supported && (
-                  <div className="mt-2 text-[11px] text-amber-300">This preset requires a Windows host.</div>
+                  <div className="mt-2 text-[11px] text-amber-300">This configuration is unavailable on this host.</div>
                 )}
                 <div className="mt-3 flex gap-2">
                   <Button
@@ -486,9 +503,22 @@ export function ProcessRunner({
                 Repository-scoped Build, Test, Package and Deploy profiles.
               </div>
             </div>
+            <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={!enabled || anyRunning}
+              onClick={async () => {
+                const selectedWorkspace = cwd;
+                try {
+                  const recipe = await importBuildScript(selectedWorkspace);
+                  if (recipe && !recipe.supported) throw new Error("This script type is unavailable on this host. Select a native build script.");
+                  if (workspaceRef.current === selectedWorkspace && recipe) setEditorProfile(profileFromSuggestion(recipe, repositoryRoot));
+                } catch (error) {
+                  if (workspaceRef.current === selectedWorkspace) setActionError(readableError(error));
+                }
+              }}>Import build script</Button>
             <Button onClick={() => setEditorProfile(null)} size="sm" variant="outline">
               <Plus size={13} /> Profile
             </Button>
+            </div>
           </div>
           <div className="space-y-2 p-3">
             {scopedProfiles.length === 0 && (
@@ -676,7 +706,7 @@ function ProfileEditor({
     const compiled: BuildStep[] = steps.map((entry) => ({
       name: entry.name.trim(),
       program: entry.program.trim(),
-      args: entry.argsText.split("\n").map((arg) => arg.trim()).filter(Boolean),
+      args: entry.argsText.split("\n").filter(arg => arg.length > 0),
     }));
     onSave({
       id: initial?.id ?? nextId("profile"),
@@ -751,6 +781,10 @@ function ProfileEditor({
                   <input className="field" value={entry.program}
                     onChange={(event) => updateStep(index, { program: event.target.value })}
                     placeholder="cmake / npm / UV4.exe" />
+                  <Button size="sm" variant="ghost" onClick={async () => {
+                    const program = await chooseBuildProgram();
+                    if (program) updateStep(index, { program });
+                  }}>Browse program</Button>
                 </Field>
               </div>
               <div className="mt-3">

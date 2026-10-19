@@ -1,5 +1,10 @@
 import type { BuildStep, BuildSuggestion, ProcessProfile } from "@/types/workbench";
 
+/** Keil needs its native batch log and warning-exit-code adapter, even for one step. */
+export function needsBuildWorkflow(steps: BuildStep[]): boolean {
+  return steps.length > 1 || steps.some(step => /(^|[\\/])uv4(?:\.exe)?$/i.test(step.program.trim()));
+}
+
 /** Legacy V0.2 profiles are a single executable/argv tuple. */
 export function stepsForProfile(profile: ProcessProfile): BuildStep[] {
   return profile.steps?.length

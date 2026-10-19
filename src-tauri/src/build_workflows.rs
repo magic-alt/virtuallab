@@ -1,7 +1,7 @@
 //! Opt-in, repository-neutral build workflow discovery and sequential execution.
 //! Only explicitly requested user actions start processes. Presets never flash,
 //! publish, or deploy, and the executor never interprets a shell command string.
-use crate::execution::process_command;
+use crate::execution::workspace_process_command;
 use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
 use crate::self_restart::{self, SelfBuildPlan};
 use crate::output_decode::Utf8StreamDecoder;
@@ -20,6 +20,14 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::run_registry::RunRegistry;
+
+#[path = "build_recipe_inputs.rs"]
+mod inputs;
+pub use inputs::build_workflow_import_script;
+
+#[cfg(test)]
+#[path = "build_recipe_probe.rs"]
+mod probe;
 
 const MAX_STEPS: usize = 12;
 const MAX_ARGS: usize = 64;
@@ -386,6 +394,25 @@ fn discover(root: &Path) -> Vec<BuildSuggestion> {
         }
     }
 
+    let keil_projects = find_keil_projects(root);
+    let has_keil = !keil_projects.is_empty();
+    let keil_program = if has_keil { inputs::keil_program() } else { String::new() };
+    for relative in keil_projects {
+        let targets = inputs::keil_targets(&root.join(&relative));
+        let targets: Vec<Option<String>> = if targets.is_empty() { vec![None] } else { targets.into_iter().map(Some).collect() };
+        for target in targets {
+            let mut args = vec!["-b".into(), relative.clone()];
+            if let Some(target) = &target { args.extend(["-t".into(), target.clone()]); }
+            found.push(BuildSuggestion {
+                id: format!("keil-{relative}-{}", target.as_deref().unwrap_or("default")),
+                name: format!("Keil · {relative}{}", target.as_ref().map(|t| format!(" · {t}")).unwrap_or_default()),
+                kind: "build".into(), tool: "Keil MDK / µVision".into(),
+                description: "Firmware build using the project's Keil toolchain (Windows). Customize to select UV4.exe if it is not on PATH. Keil batch logs and warning-only results are supported; no flash.".into(),
+                supported: cfg!(windows),
+                steps: vec![BuildStep { name: "Compile firmware".into(), program: keil_program.clone(), args }],
+            });
+        }
+    }
     let has_cmake = root.join("CMakeLists.txt").is_file();
     let is_qt = has_cmake && is_qt_cmake_project(root);
     if has_cmake {
@@ -393,23 +420,13 @@ fn discover(root: &Path) -> Vec<BuildSuggestion> {
         found.extend(discover_cmake_presets(root, is_qt));
     }
 
-    for relative in find_keil_projects(root) {
-        found.push(BuildSuggestion {
-            id: format!("keil-{relative}"),
-            name: format!("Keil · {relative}"),
-            kind: "build".into(),
-            tool: "Keil MDK / µVision".into(),
-            description: "Keil UV4 batch build (Windows only). Set the UV4.exe path in an editable profile if not on PATH. No flash.".into(),
-            supported: cfg!(windows),
-            steps: vec![BuildStep {
-                name: "Compile firmware".into(),
-                program: "UV4.exe".into(),
-                args: vec!["-b".into(), relative],
-            }],
-        });
+    if has_keil {
+        for recipe in found.iter_mut().filter(|item| item.tool.contains("CMake")) {
+            recipe.name.push_str(" (host / simulation)");
+            recipe.description.push_str(" This is a separate host/simulation build; it does not compile the Keil firmware.");
+        }
     }
-
-    if has_cmake {
+    if has_cmake && !has_keil && !found.iter().any(|item| item.id.starts_with("cmake-preset-")) {
         found.push(BuildSuggestion {
             id: "cmake-configure-build".into(),
             name: if is_qt { "Qt / CMake · Generic build" } else { "CMake · Generic build" }.into(),
@@ -590,10 +607,25 @@ fn execute_workflow(
         event.step_name = Some(step.name.clone());
         emit(&app, event);
 
-        let mut command = process_command(step.program.trim());
+        let keil_log = match inputs::KeilLog::prepare(step) {
+            Ok(log) => log,
+            Err(error) => {
+                let mut event = BuildEvent::new("build.output", &spec.id);
+                event.stream = Some("system"); event.data = Some(error);
+                emit(&app, event);
+                result = "failed"; exit_code = Some(-1); break;
+            }
+        };
+        let mut command = workspace_process_command(step.program.trim(), &root);
         command.args(workflow_step_args(step, restart_plan.is_some()))
             .current_dir(&root)
             .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if let Some(log) = &keil_log {
+            let path = log.path().to_string_lossy();
+            #[cfg(windows)]
+            let path = crate::process::windows_desktop_path(&path);
+            command.arg("-o").arg(path.as_ref() as &str);
+        }
         if let Some(plan) = &restart_plan {
             command.env("CARGO_TARGET_DIR", crate::cargo_path::cargo_target_dir(&plan.target_dir));
         }
@@ -683,7 +715,7 @@ fn execute_workflow(
             exit_code = None;
             break;
         }
-        let code = match status {
+        let mut code = match status {
             Ok(status) => status.code().unwrap_or(-1),
             Err(error) => {
                 let mut event = BuildEvent::new("build.output", &spec.id);
@@ -693,14 +725,28 @@ fn execute_workflow(
                 -1
             }
         };
+        if let Some(log) = &keil_log {
+            let output = match log.read() {
+                Ok(output) => output,
+                Err(error) => { code = -1; error }
+            };
+            let mut event = BuildEvent::new("build.output", &spec.id);
+            event.step_index = Some(index); event.stream = Some("system"); event.data = Some(output);
+            emit(&app, event);
+        }
         let mut event = BuildEvent::new("build.step_exited", &spec.id);
         event.step_index = Some(index);
         event.exit_code = Some(code);
         emit(&app, event);
-        if code != 0 {
+        if !inputs::step_succeeded(step, code) {
             result = "failed";
             exit_code = Some(code);
             break;
+        }
+        if code == 1 {
+            let mut event = BuildEvent::new("build.output", &spec.id);
+            event.stream = Some("system"); event.data = Some("\n[VirtualLab] Keil build succeeded with warnings (UV4 exit code 1).\n".into());
+            emit(&app, event);
         }
     }
 
@@ -793,7 +839,7 @@ mod tests {
 
     static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
-    fn fixture() -> PathBuf {
+    pub(super) fn fixture() -> PathBuf {
         let id = NEXT_FIXTURE.fetch_add(1, Ordering::SeqCst);
         let root = std::env::temp_dir().join(format!("virtuallab-build-{}-{}-{id}", std::process::id(), now_ms()));
         fs::create_dir_all(&root).unwrap();
@@ -870,14 +916,13 @@ mod tests {
         fs::write(root.join("CMakeUserPresets.json"), user_presets.to_string()).unwrap();
 
         let suggestions = discover(&root);
-        assert_eq!(suggestions.len(), 3);
+        assert_eq!(suggestions.len(), 2);
         assert_eq!(suggestions[0].id, "cmake-preset-native-release");
         assert_eq!(suggestions[0].steps[0].args, vec!["--preset", "native-release"]);
         assert_eq!(suggestions[0].steps[1].args, vec!["--build", "--preset", "native-release"]);
         assert_eq!(suggestions[1].id, "cmake-preset-child-user");
         assert_eq!(suggestions[1].steps[0].args, vec!["--preset", "user-release"]);
         assert_eq!(suggestions[1].steps[1].args, vec!["--build", "--preset", "child-user"]);
-        assert_eq!(suggestions[2].id, "cmake-configure-build");
         assert!(!root.join("build").exists());
         fs::remove_dir_all(root).unwrap();
     }
@@ -900,7 +945,22 @@ mod tests {
         fs::write(root.join("Firmware.uvprojx"), "<Project/>").unwrap();
         let suggestions = discover(&root);
         assert_eq!(suggestions[0].name, "Keil · Firmware.uvprojx");
-        assert_eq!(suggestions[1].id, "cmake-configure-build");
+        assert_eq!(suggestions.len(), 1, "Keil firmware must not get a guessed host compiler");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keil_targets_precede_explicit_host_simulation_presets() {
+        let root = fixture();
+        fs::write(root.join("CMakeLists.txt"), "project(Simulation C)").unwrap();
+        fs::write(root.join("CMakePresets.json"), r#"{"configurePresets":[{"name":"host"}],"buildPresets":[{"name":"simulation","configurePreset":"host"}]}"#).unwrap();
+        fs::write(root.join("Board.uvprojx"), "<Project><Targets><Target><TargetName>boot</TargetName></Target><Target><TargetName>app &amp; debug</TargetName></Target></Targets></Project>").unwrap();
+        let recipes = discover(&root);
+        assert_eq!(recipes.len(), 3);
+        assert!(recipes[0].steps[0].program.ends_with("UV4.exe"));
+        assert_eq!(recipes[0].steps[0].args, ["-b", "Board.uvprojx", "-t", "boot"]);
+        assert_eq!(recipes[1].steps[0].args, ["-b", "Board.uvprojx", "-t", "app & debug"]);
+        assert_eq!(recipes[2].id, "cmake-preset-simulation");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -950,5 +1010,14 @@ mod tests {
         spec.steps.push(step("Compile", "cmake\nrm -rf /", &["--build", "build"]));
         assert!(validate_spec(&spec).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keil_warning_exit_is_success_but_other_compiler_failures_are_not() {
+        let firmware = step("Firmware", "C:/Keil/UV4/UV4.exe", &["-b", "Board.uvprojx", "-t", "app"]);
+        assert!(inputs::step_succeeded(&firmware, 1));
+        assert!(!inputs::step_succeeded(&firmware, 2));
+        assert!(!inputs::step_succeeded(&step("Build", "cmake", &["--build", "build"]), 1));
+        assert!(!inputs::step_succeeded(&step("Flash", "UV4.exe", &["-f", "Board.uvprojx"]), 1));
     }
 }

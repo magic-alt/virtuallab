@@ -406,6 +406,23 @@ export async function buildWorkflowDiscover(workspaceRoot: string): Promise<Buil
   return invoke<BuildSuggestion[]>("build_workflow_discover", { workspaceRoot });
 }
 
+/** Select a repository script without reading its contents or starting a process. */
+export async function importBuildScript(workspaceRoot: string): Promise<BuildSuggestion | null> {
+  requireDesktop();
+  const scriptPath = await open({
+    title: "Import build script", directory: false, multiple: false, defaultPath: workspaceRoot,
+    filters: [{ name: "Build scripts", extensions: ["ps1", "cmd", "bat", "sh", "py", "js", "mjs", "cjs"] }],
+  });
+  if (typeof scriptPath !== "string") return null;
+  return invoke<BuildSuggestion>("build_workflow_import_script", { workspaceRoot, scriptPath });
+}
+
+export async function chooseBuildProgram(): Promise<string | null> {
+  requireDesktop();
+  const selected = await open({ title: "Select build executable or interpreter", directory: false, multiple: false });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function buildWorkflowSelfUpdateAvailable(workspaceRoot: string): Promise<boolean> {
   requireDesktop();
   return invoke<boolean>("build_workflow_self_update_available", { workspaceRoot });
