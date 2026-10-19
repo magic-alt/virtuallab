@@ -85,6 +85,8 @@ describe('task control center user flows',()=>{
   it('four steps allow manual implementation/integration nodes and preserve Profile paths',async()=>{
     render(<Harness/>);await screen.findByRole('button',{name:'修复解析器'});
     await userEvent.click(screen.getByRole('button',{name:'新建任务'}));
+    expect(screen.getByRole('dialog',{name:'自然语言创建任务'})).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'高级任务图 / JSON'}));
     const wizard=screen.getByRole('dialog',{name:'创建任务计划'});
     expect(within(wizard).getByRole('button',{name:'AI 生成计划'})).toBeDisabled();
     await userEvent.type(within(wizard).getByLabelText('计划标题'),'支持新功能');
@@ -92,7 +94,7 @@ describe('task control center user flows',()=>{
     await userEvent.click(within(wizard).getByRole('button',{name:'读取当前 HEAD'}));
     await waitFor(()=>expect(within(wizard).getByLabelText('基线 HEAD')).toHaveValue('b'.repeat(40)));
     await userEvent.click(within(wizard).getByRole('button',{name:'下一步'}));
-    await userEvent.type(within(wizard).getByLabelText('允许修改的范围（每行一个）'),'src/');
+    await userEvent.clear(within(wizard).getByLabelText('允许修改的范围（每行一个）'));await userEvent.type(within(wizard).getByLabelText('允许修改的范围（每行一个）'),'src/');
     const profile={schemaVersion:1,id:'p',name:'测试',gates:[{id:'unit',label:'Unit',kind:'unit',required:true,approval:'none',executor:{type:'process',program:'npm',args:['test'],cwd:'workspace'}}],outputPaths:['dist'],sourcePaths:['ignored/source']};
     await userEvent.clear(within(wizard).getByLabelText('Profile JSON'));
     // paste avoids interpreting braces as user-event keyboard descriptors
