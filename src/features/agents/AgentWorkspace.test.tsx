@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentWorkspace } from "./AgentWorkspace";
 import { useAgentConfiguration } from "@/stores/agentConfiguration";
@@ -11,7 +11,7 @@ describe("AgentWorkspace desktop control surface", () => {
     window.localStorage.clear();
     useAgentConfiguration.setState({ roles: [], skills: [], selections: {} });
     useAgentSessionStore.setState({ bindings: {} });
-    useAgentTimeline.setState({ entries: {}, activeTurns: {} });
+    useAgentTimeline.setState(useAgentTimeline.getInitialState(), true);
   });
   afterEach(() => vi.unstubAllGlobals());
   it("offers four harnesses and does not launch native commands in preview", () => {
@@ -94,6 +94,50 @@ describe("AgentWorkspace desktop control surface", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith(
       "agent_session_stop", { workspaceRoot: root }, undefined,
     ));
+  });
+
+  it.each(["completed", "stopped and resumed"])("does not revive a turn %s before its start acknowledgement arrives", async (outcome) => {
+    const root = "C:/work/demo";
+    let acknowledge!: (value: { threadId: string; turnId: string }) => void;
+    const started = new Promise<{ threadId: string; turnId: string }>((resolve) => { acknowledge = resolve; });
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "agent_journal_recover") return {
+        workspaceId: "test", nativeSessionRegistered: false, retainedEvents: 0, turns: [],
+      };
+      if (command === "agent_journal_recent") return [];
+      if (command === "agent_harness_capabilities") return {
+        harness: "codex", available: true, executablePath: "codex", detail: "Available",
+        features: { persistentThreads: true, turns: true, steering: true, interrupt: true, structuredEvents: true },
+      };
+      if (command === "agent_session_start") return {
+        workspaceRoot: root, harness: "codex", threadId: "thread-a", createdAtMs: 1, updatedAtMs: 1,
+      };
+      if (command === "agent_turn_start") return started;
+      throw new Error("Unexpected native command: " + command);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    const user = userEvent.setup();
+    render(<AgentWorkspace workspaceRoot={root} enabled />);
+    await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review this worktree");
+    await user.click(screen.getByRole("button", { name: /Connect & run task/i }));
+    await waitFor(() => expect(invoke.mock.calls.some((call) => call[0] === "agent_turn_start")).toBe(true));
+    act(() => {
+      if (outcome === "completed") {
+        useAgentTimeline.getState().append({
+          workspaceRoot: root, threadId: "thread-a", turnId: "finished-turn",
+          eventType: "agent.notification", method: "turn/completed", timestampMs: 2,
+          payload: { turn: { id: "finished-turn", status: "completed" } },
+        });
+      } else {
+        useAgentTimeline.getState().append({ workspaceRoot: root, threadId: "thread-a", eventType: "agent.session_stopped", timestampMs: 2 });
+        useAgentTimeline.getState().append({ workspaceRoot: root, threadId: "thread-a", eventType: "agent.session_started", timestampMs: 3 });
+      }
+    });
+    await act(async () => acknowledge({ threadId: "thread-a", turnId: "finished-turn" }));
+
+    expect(useAgentTimeline.getState().activeTurns["c:/work/demo"]).toBeUndefined();
+    await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review another change");
+    expect(screen.getByRole("button", { name: "Send next task" })).toBeEnabled();
   });
 
 

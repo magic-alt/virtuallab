@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkbenchStore } from '@/stores/workbench';
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => vi.fn()) }));
-vi.mock('@/features/terminal/TerminalWorkspace', () => ({ TerminalWorkspace: () => <div>Terminal rendering boundary</div> }));
+vi.mock('@/features/terminal/TerminalWorkspace', () => ({
+  TerminalWorkspace: () => <div>Terminal rendering boundary</div>,
+}));
 vi.mock('@/lib/backend', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/backend')>(), isDesktopRuntime: () => false,
 }));
@@ -36,5 +38,24 @@ describe('Task-first application navigation', () => {
       expect(workspace.isConnected).toBe(true);
     }
 
+  });
+
+  it('hides retained terminal panes when the operator visits another application view', async () => {
+    const user = userEvent.setup();
+    render(<WorkbenchShell />);
+    await user.click(screen.getByRole('button', { name: '工程仓库' }));
+    await user.click(screen.getByRole('button', { name: /^Terminal$/ }));
+    const pane = screen.getByTestId('terminal-pane');
+    expect(pane).toHaveAttribute('aria-hidden', 'false');
+
+    for (const name of ['任务', '证据', '设置', '控制中心']) {
+      await user.click(screen.getByRole('button', { name }));
+      // Keeping the pane mounted must not leave its PTY resize/focus observer active.
+      expect(pane.isConnected).toBe(true);
+      expect(pane).toHaveAttribute('aria-hidden', 'true');
+      await user.click(screen.getByRole('button', { name: '工程仓库' }));
+      expect(screen.getByTestId('terminal-pane')).toBe(pane);
+      expect(pane).toHaveAttribute('aria-hidden', 'false');
+    }
   });
 });

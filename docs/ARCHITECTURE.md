@@ -11,7 +11,7 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 5. **Hardware-changing actions require explicit human approval.** Flashing, drive enable, power-stage enable, destructive Git operations and merge actions will be gated.
 6. **Local-first and offline-capable.** Git inspection and workspace inventory must work without cloud services.
 
-## Application-level documentation
+## Workspace directory and Git identity
 
 Workspace creation resolves custom relative paths against the selected repository,
 then freezes the lifecycle reservation's absolute canonical target for directory
@@ -36,6 +36,8 @@ Repository snapshots and lightweight worktree status return the full lowercase H
 Git ownership recovery is opt-in. Adding a repository may offer a native trust confirmation after a dubious-ownership error; an existing repository exposes an explicit **Trust repository** retry action. Background inspection and watcher refreshes never prompt or change Git configuration. The typed `trust_repository_directory` command canonicalizes an exact absolute repository/worktree root, rejects wildcard paths, verifies Git reports the same root with a process-scoped exception, and adds only that directory to global `safe.directory` when the ownership error persists. No blanket exception or OS ownership change is made.
 
 The Git branches list routes a registered linked worktree's remove action through the same native confirmation, lifecycle checks and dirty-state preflight as Workspace lanes. Removing the directory retains its local branch; a later branch deletion requires its own confirmation. Primary worktrees remain protected, and unregistered/occupied branches remain ineligible for direct deletion.
+
+## Application-level documentation
 
 Bundled Help/Guide content is an application service, not a workspace tab or
 execution context. The GUI menu bar offers **Help → 使用文档** even without an
@@ -67,6 +69,13 @@ plugin. Toasts are suppressed when the source task is already visible and focuse
 they neither steal focus nor block work. Native notification errors fall back
 to the in-app inbox. Routing to an inbox item only navigates to a registered
 repository/worktree and never creates or starts work.
+
+The repository host stays mounted while the operator visits Tasks, Evidence,
+Settings or Home. Its application visibility is passed to retained terminal
+panes so hidden panes stop visible-only resize/focus behavior without losing
+their sessions. Agent notification suppression also requires the repository
+view itself to be visible, in addition to the matching workspace, Agents tab
+and focused document.
 
 ## External workspace editor boundary
 
@@ -368,6 +377,15 @@ The local change count includes tracked and untracked status entries. Changes/Wo
 
 The GitHub workspace tab can enumerate open PRs from the current origin without checking out any branch. Native `github_list_pull_requests` loads a bounded list through `gh pr list --repo`; `github_context` uses a resolved PR number or local branch selector instead of an ambiguous bare `gh pr view`. The UI displays the full `statusCheckRollup` (success/pending/failure/neutral) and the GitHub mergeability and review decision fields.
 
+Initial discovery, manual context loading and list refresh share a monotonic
+request revision. A workspace change, disabled/unmounted panel or newer read
+invalidates older responses before either component state or the persisted PR
+reference changes. Revisiting the same workspace path does not restore an old
+request's authority. The winning request also owns loading-state completion.
+Comment-post completion updates only an existing owner and draft. A successful
+request may still be recorded after ordinary navigation, but cannot recreate
+review state removed by repository detach.
+
 `github_merge_pull_request` is an explicit, typed, human-confirmed network mutation. It re-derives the repository from the selected local workspace origin; validates repository identity, merge method, and a full expected HEAD SHA; reloads current PR metadata and CI checks; and rejects drafts, missing/failed/pending checks, unknown mergeability, non-CLEAN GitHub merge state or blocked reviews. The merge uses GitHub's PR merge REST endpoint with a SHA precondition. GitHub remains authoritative for branch protection and merge permission. No local pull, checkout, force-push, auto-merge or branch deletion follows a merge.
 
 The frontend mirror in `src/lib/github.ts` only controls presentation: native checks must never be omitted because a button is disabled. Github CLI authentication stays outside VirtualLab; secrets are neither read into UI state nor persisted.
@@ -421,6 +439,25 @@ The native boundary continues to reject nonmatching GitHub repository URLs; no a
 - Software-side permissions and process interruption are NOT interlocks, emergency stops or security boundaries. Any future hardware integration must independently enforce revocation, watchdog, safe state and transport isolation.
 
 See [V0.5 agent harnesses](./V0.5_AGENT_HARNESSES.md).
+
+Live Agent turn state is keyed by workspace and exact thread/turn identity.
+Bounded terminal-turn and stopped-thread records are independent of transcript
+clearing, so a delayed start notification or invoke acknowledgement cannot
+revive a completed/stopped turn. Session revisions revoke pending start replies
+across stop/resume transitions. The CLI's explicit `agent.session_binding`
+event can promote the first turn's provisional thread to its provider session
+identity; this transition must retire the provisional identity while retaining
+the same turn. It requires a matching existing attachment and cannot recreate a
+forgotten binding. Promotion first clears the provisional active identity and
+checks both session identities and the destination turn for stop/completion.
+Replacing a turn also retires its identity before installing the next one, so a
+duplicate old start cannot replace the current turn. Completion for an older
+thread cannot clear another active turn.
+The native Codex exit monitor emits the observed current runtime's thread only
+when its process pointer still matches that runtime under the lifecycle lock.
+An unregistered/replaced process exit stays diagnostic with unknown identity;
+the UI does not attribute it to a newer known session. These in-memory records
+describe live activity and never establish Task verification or acceptance.
 
 
 ## Release gate lifecycle hardening (v0.5.0 candidate)

@@ -5,7 +5,7 @@ import * as backend from "@/lib/backend";
 import { githubAdapter } from "@/lib/github";
 import { reviewWorkspaceKey, useWorkbenchStore } from "@/stores/workbench";
 import { GithubPanel } from "./GithubPanel";
-import type { GithubPullRequest, RepositorySnapshot } from "@/types/workbench";
+import type { GithubContext, GithubPullRequest, RepositorySnapshot } from "@/types/workbench";
 
 vi.mock("@/lib/github", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/github")>()),
@@ -390,6 +390,151 @@ describe("GithubPanel", () => {
     act(() => useWorkbenchStore.getState().markReviewDraftsStale("D:/repo", "different-head"));
     await act(async () => decide(true));
     expect(adapter.postReviewComment).not.toHaveBeenCalled();
+  });
+
+  it.each(["detached", "navigated"])("records a late post result only while its draft owner exists after the panel is %s", async (outcome) => {
+    useWorkbenchStore.setState({ repositories: [{ id: "posting-owner", name: snapshot.name, path: snapshot.root, lastOpenedAt: 1 }] });
+    useWorkbenchStore.getState().addReviewDraft({
+      id: "pending-post", workspaceRoot: snapshot.root, headSha: snapshot.headSha,
+      path: "src/feature.ts", line: 1, side: "RIGHT", body: "Review this guard.",
+      status: "active", createdAt: 1, updatedAt: 1,
+    });
+    adapter.loadContext.mockResolvedValue({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr });
+    let completePost!: (result: { id: number; url: string }) => void;
+    adapter.postReviewComment.mockReturnValueOnce(new Promise((resolve) => { completePost = resolve; }));
+    const confirmSpy = vi.spyOn(backend, "confirmNativeAction").mockResolvedValue(true);
+    const user = userEvent.setup();
+    const view = render(<GithubPanel key="posting" snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    await user.click(await screen.findByRole("button", { name: "Post" }));
+    await waitFor(() => expect(adapter.postReviewComment).toHaveBeenCalledTimes(1));
+    if (outcome === "detached") {
+      view.unmount();
+      act(() => useWorkbenchStore.getState().removeRepository("posting-owner"));
+    } else {
+      view.rerender(<GithubPanel key="other" snapshot={{ ...snapshot, root: "D:/other" }} workspaceRoot="D:/other" enabled />);
+    }
+
+    const url = `${readyPr.url}#discussion_r99`;
+    await act(async () => completePost({ id: 99, url }));
+    const review = useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(snapshot.root)];
+    if (outcome === "detached") {
+      expect(review).toBeUndefined();
+      const persisted = JSON.parse(window.localStorage.getItem("virtuallab-workbench-v2")!);
+      expect(persisted.state.reviewStates[reviewWorkspaceKey(snapshot.root)]).toBeUndefined();
+    } else {
+      expect(review?.drafts[0]).toMatchObject({ id: "pending-post", status: "posted", postedUrl: url });
+    }
+    confirmSpy.mockRestore();
+  });
+
+  it("ignores an earlier workspace visit's response after an A/B/A round trip", async () => {
+    let completeEarlierVisit!: (context: GithubContext) => void;
+    adapter.loadContext.mockReturnValueOnce(new Promise((resolve) => { completeEarlierVisit = resolve; }));
+    const latestPr = { ...readyPr, number: 78, title: "Latest selection", url: readyPr.url.replace("/77", "/78") };
+    adapter.loadContext.mockResolvedValue({ capabilities: connected, reference: "pr:78", issue: null, pullRequest: latestPr });
+    const user = userEvent.setup();
+    const view = render(<GithubPanel key="first-a" snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+
+    view.rerender(<GithubPanel key="b" snapshot={{ ...snapshot, root: "D:/other" }} workspaceRoot="D:/other" enabled />);
+    await screen.findByText("connected");
+    view.rerender(<GithubPanel key="second-a" snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:78");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    await screen.findByText(/#78 Latest selection/);
+
+    await act(async () => completeEarlierVisit({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr }));
+    expect(useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(snapshot.root)]?.githubReference).toBe(latestPr.url);
+    expect(screen.getByRole("textbox", { name: "GitHub reference" })).toHaveValue(latestPr.url);
+  });
+
+  it("does not recreate detached repository review state from a pending manual load", async () => {
+    let completeLoad!: (context: GithubContext) => void;
+    adapter.loadContext.mockReturnValueOnce(new Promise((resolve) => { completeLoad = resolve; }));
+    useWorkbenchStore.setState({ repositories: [{ id: "detaching", name: snapshot.name, path: snapshot.root, lastOpenedAt: 1 }] });
+    const user = userEvent.setup();
+    const view = render(<GithubPanel snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    view.unmount();
+    act(() => useWorkbenchStore.getState().removeRepository("detaching"));
+
+    await act(async () => completeLoad({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr }));
+    expect(useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(snapshot.root)]).toBeUndefined();
+  });
+
+  it("ignores a response when the same panel changes workspaces without remounting", async () => {
+    let completeLoad!: (context: GithubContext) => void;
+    adapter.loadContext.mockReturnValueOnce(new Promise((resolve) => { completeLoad = resolve; }));
+    const user = userEvent.setup();
+    const view = render(<GithubPanel snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    await user.click(screen.getByRole("button", { name: "Load" }));
+    view.rerender(<GithubPanel snapshot={{ ...snapshot, root: "D:/other" }} workspaceRoot="D:/other" enabled />);
+    await screen.findByText("connected");
+
+    await act(async () => completeLoad({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr }));
+    expect(screen.queryByText(/#77 Make PR dashboard/)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "GitHub reference" })).toHaveValue("");
+    expect(useWorkbenchStore.getState().reviewStates[reviewWorkspaceKey(snapshot.root)]).toBeUndefined();
+  });
+
+  it("releases an old workspace's pending list refresh without accepting its late error", async () => {
+    const user = userEvent.setup();
+    const view = render(<GithubPanel snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    let rejectRefresh!: (cause: Error) => void;
+    adapter.listPullRequests.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectRefresh = reject; }));
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    view.rerender(<GithubPanel snapshot={{ ...snapshot, root: "D:/other" }} workspaceRoot="D:/other" enabled />);
+    await screen.findByText("connected");
+    expect(screen.getByRole("button", { name: "Load" })).toBeEnabled();
+
+    await act(async () => rejectRefresh(new Error("Old workspace disconnected")));
+    expect(screen.queryByText("Old workspace disconnected")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load" })).toBeEnabled();
+  });
+
+  it("releases a superseded list refresh when a context load starts in the same render", async () => {
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    let finishList!: (value: { capabilities: typeof connected; pullRequests: GithubPullRequest[] }) => void;
+    adapter.listPullRequests.mockReturnValueOnce(new Promise((resolve) => { finishList = resolve; }));
+    adapter.loadContext.mockResolvedValue({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr });
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    const load = screen.getByRole("button", { name: "Load" });
+    act(() => { refresh.click(); load.click(); });
+    await screen.findByText(/#77 Make PR dashboard/);
+    expect(load).toBeEnabled();
+    await act(async () => finishList({ capabilities: connected, pullRequests: [] }));
+    expect(screen.getByText(/#77 Make PR dashboard/)).toBeInTheDocument();
+  });
+
+  it("releases a superseded context load when a list refresh starts in the same render", async () => {
+    const user = userEvent.setup();
+    render(<GithubPanel snapshot={snapshot} workspaceRoot={snapshot.root} enabled />);
+    await screen.findByText("connected");
+    await user.type(screen.getByRole("textbox", { name: "GitHub reference" }), "pr:77");
+    let finishContext!: (value: GithubContext) => void;
+    adapter.loadContext.mockReturnValueOnce(new Promise((resolve) => { finishContext = resolve; }));
+    adapter.listPullRequests.mockResolvedValue({ capabilities: connected, pullRequests: [readyPr] });
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    const load = screen.getByRole("button", { name: "Load" });
+    act(() => { load.click(); refresh.click(); });
+    await screen.findByRole("button", { name: "Open PR #77" });
+    expect(load).toBeEnabled();
+    await act(async () => finishContext({ capabilities: connected, reference: "pr:77", issue: null, pullRequest: readyPr }));
+    expect(screen.queryByText(/#77 Make PR dashboard/)).not.toBeInTheDocument();
   });
 
 });
