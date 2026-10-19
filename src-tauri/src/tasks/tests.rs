@@ -903,7 +903,7 @@ fn scopes_reject_traversal_secrets_and_oversize() {
         vec![".env"],
         vec!["src/.env.local"],
         vec!["src//x"],
-        vec!["."],
+        vec!["./src"],
         vec!["src\nsecret"],
         vec!["src/*"],
         vec!["src"; 129],
