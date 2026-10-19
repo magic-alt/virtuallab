@@ -37,6 +37,8 @@ export interface WorktreeSummary {
   head: string;
   branch?: string | null;
   detached: boolean;
+  missing?: boolean;
+  locked?: boolean;
 }
 
 export interface BranchSummary {

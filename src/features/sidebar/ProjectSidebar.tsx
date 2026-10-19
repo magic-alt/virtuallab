@@ -35,6 +35,8 @@ interface Props {
   onSwitchBranch: (branch: string) => void;
   onDeleteBranch: (branch: string) => void;
   onDeleteOriginBranch: (branch: string) => void;
+  onCleanupMerged: () => void;
+  cleanupProgress?: string;
   branchActionsEnabled: boolean;
   workspaceActionsEnabled: boolean;
   repositoryActionsEnabled: boolean;
@@ -60,6 +62,8 @@ export function ProjectSidebar({
   onSwitchBranch,
   onDeleteBranch,
   onDeleteOriginBranch,
+  onCleanupMerged,
+  cleanupProgress,
   branchActionsEnabled,
   workspaceActionsEnabled,
   repositoryActionsEnabled,
@@ -193,11 +197,12 @@ export function ProjectSidebar({
                 key={workspaceKey(worktree.path)}
                 className="group flex items-center gap-1 rounded-lg border border-white/[0.05] bg-white/[0.02] px-2.5 py-2"
               >
-                <button className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={!workspaceActionsEnabled} onClick={() => onSelectWorkspace(worktree.path)} type="button">
+                <button className="min-w-0 flex-1 text-left disabled:cursor-not-allowed disabled:opacity-50" disabled={!workspaceActionsEnabled || worktree.missing} onClick={() => onSelectWorkspace(worktree.path)} type="button">
                   <div className="flex items-center gap-2 text-xs text-slate-300">
                     <GitBranch size={12} className="text-slate-600" />
                     <span className="truncate">
                       {worktree.branch ?? (worktree.detached ? "detached" : "workspace")}
+                      {worktree.missing ? " · missing" : worktree.locked ? " · locked" : ""}
                     </span>
                   </div>
                   <div className="mt-1 truncate pl-5 text-[10px] text-slate-600">
@@ -207,7 +212,7 @@ export function ProjectSidebar({
                 <button
                   aria-label={`Open workspace folder ${worktree.branch ?? worktree.path}`}
                   title="Open worktree in the system file manager"
-                  disabled={!workspaceActionsEnabled}
+                  disabled={!workspaceActionsEnabled || worktree.missing}
                   className="rounded-md p-1 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
                   onClick={() => onOpenWorkspaceFolder(worktree.path)}
                   type="button"
@@ -217,7 +222,7 @@ export function ProjectSidebar({
                 <button
                   aria-label={`Open worktree in ${editorLabel(editor)} ${worktree.branch ?? worktree.path}`}
                   title={`Open this exact worktree as a project in ${editorLabel(editor)}`}
-                  disabled={!workspaceActionsEnabled}
+                  disabled={!workspaceActionsEnabled || worktree.missing}
                   className="rounded-md p-1 text-slate-600 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
                   onClick={() => onOpenWorkspaceEditor(worktree.path)}
                   type="button"
@@ -242,13 +247,18 @@ export function ProjectSidebar({
 
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
+          <Button className="mt-2 w-full text-xs" disabled={!branchActionsEnabled || !workspaceActionsEnabled} onClick={onCleanupMerged} title="Switch to main, then preview and confirm cleanup of branches and worktrees merged into main">
+            <Trash2 size={12} /> Clean merged…
+          </Button>
+          {cleanupProgress && <p role="status" className="mt-1 break-all px-1 text-[10px] text-orange-300">{cleanupProgress}</p>}
           <p className="mt-1 px-1 text-[10px] leading-4 text-slate-600">
             Current branch and main are pinned first. Delete local and origin branches separately; Fetch removes stale origin refs.
           </p>
           <div className="mt-2 space-y-1">
             {visibleBranches.map((branch) => {
               const active = branch.name === snapshot.currentBranch;
-              const inOtherWorktree = Boolean(
+              const missingWorktree = snapshot.worktrees.some(tree => tree.path === branch.worktreePath && tree.missing);
+              const inOtherWorktree = !missingWorktree && Boolean(
                 branch.worktreePath &&
                 workspaceKey(branch.worktreePath) !== workspaceKey(snapshot.root),
               );
@@ -273,13 +283,14 @@ export function ProjectSidebar({
                     type="button"
                     aria-label={inOtherWorktree ? `Open worktree for ${branch.name}` : `Switch to ${branch.name}`}
                     onClick={() => onSwitchBranch(branch.name)}
-                    disabled={!branchActionsEnabled}
+                    disabled={!branchActionsEnabled || missingWorktree}
+                    title={missingWorktree ? "Worktree directory is missing; remove its stale registration first" : undefined}
                     className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-xs disabled:opacity-40"
                   >
                     <GitBranch size={12} className="shrink-0 text-slate-600" />
                     <span className="min-w-0 flex-1 truncate" title={branch.name}>{branch.name}</span>
                     <span className="shrink-0 text-[10px] text-slate-600">
-                      {active ? "active" : inOtherWorktree ? "worktree" : branch.local && branch.remote ? "local+origin" : branch.local ? "local" : "origin"}
+                      {missingWorktree ? "missing" : active ? "active" : inOtherWorktree ? "worktree" : branch.local && branch.remote ? "local+origin" : branch.local ? "local" : "origin"}
                     </span>
                   </button>
                   {branch.worktreePath && (
@@ -287,7 +298,7 @@ export function ProjectSidebar({
                       type="button"
                       aria-label={`Open branch ${branch.name} in ${editorLabel(editor)}`}
                       title={`Open the checked-out directory for ${branch.name} in ${editorLabel(editor)}`}
-                      disabled={!branchActionsEnabled}
+                      disabled={!branchActionsEnabled || missingWorktree}
                       onClick={() => onOpenWorkspaceEditor(branch.worktreePath!)}
                       className="shrink-0 rounded-md p-1.5 text-slate-500 transition hover:bg-orange-400/10 hover:text-orange-300 disabled:opacity-25"
                     >

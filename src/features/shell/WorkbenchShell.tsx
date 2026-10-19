@@ -1,3 +1,4 @@
+import { cleanupMergedAfterConfirmation, type CleanupOutcome } from "@/lib/gitCleanup";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BuildIdentity } from "./BuildIdentity";
 import { TaskControlCenter, useTaskObserver } from "@/features/tasks/TaskControlCenter";
@@ -106,6 +107,8 @@ export function WorkbenchShell() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
+  const [cleanupReport, setCleanupReport] = useState<(CleanupOutcome & { repositoryId: string }) | null>(null);
+  const [cleanupProgress, setCleanupProgress] = useState("");
   // A synchronous guard prevents rapid double-clicks before React re-renders.
   const gitMutationInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +213,7 @@ export function WorkbenchShell() {
         try { primary = await inspectRepository(repository.path); }
         catch { throw cause; }
         if (!ownsSelection() ||
-            primary.worktrees.some((tree) => normalizePath(tree.path) === key) ||
+            primary.worktrees.some((tree) => normalizePath(tree.path) === key && !tree.missing) ||
             !primary.worktrees.some((tree) => normalizePath(tree.path) === normalizePath(primary.root))) throw cause;
         recovered = true;
         return primary;
@@ -637,12 +640,37 @@ export function WorkbenchShell() {
     }));
   };
 
+  const cleanMerged = async () => {
+    if (!activeRepository || gitBusy || loading || gitMutationInFlightRef.current) return;
+    const repositoryId = activeRepository.id;
+    setCleanupReport(null);
+    // Use the normal branch switch/navigation flow, including its native
+    // Stash & Switch confirmation. Cancellation/failure stops cleanup.
+    if (snapshot.currentBranch !== "main") await selectBranch("main");
+    if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId) return;
+    const selectedPath = activePathRef.current;
+    const selected = selectedPath && snapshotCacheRef.current.get(normalizePath(selectedPath));
+    if (!selected || selected.currentBranch !== "main") return;
+    await runGitMutation(async () => {
+      try {
+        const result = await cleanupMergedAfterConfirmation(activeRepository.path, selected.root, setCleanupProgress);
+        if (!result) return false;
+        snapshotCacheRef.current.clear();
+        setCleanupReport({ ...result, repositoryId });
+      } finally { setCleanupProgress(""); }
+    });
+  };
+
   const selectBranch = async (name: string) => {
     if (!activeRepository || gitBusy || loading || gitMutationInFlightRef.current) return;
     const repositoryId = activeRepository.id;
     const selected = snapshot;
     if (name === selected.currentBranch) return;
     const occupied = selected.branches.find((branch) => branch.name === name)?.worktreePath;
+    if (occupied && selected.worktrees.some(tree => normalizePath(tree.path) === normalizePath(occupied) && tree.missing)) {
+      setError("This worktree directory is missing. Remove its stale worktree registration, then switch branches again.");
+      return;
+    }
     if (occupied && normalizePath(occupied) !== normalizePath(selected.root)) {
       // Navigation to an existing worktree never stashes or transfers edits.
       try {
@@ -919,12 +947,26 @@ export function WorkbenchShell() {
           onSwitchBranch={(branch) => { void selectBranch(branch); }}
           onDeleteBranch={(branch) => { void deleteLocalBranch(branch); }}
           onDeleteOriginBranch={(branch) => { void deleteOriginBranch(branch); }}
+          onCleanupMerged={() => { void cleanMerged(); }}
+          cleanupProgress={cleanupProgress}
         />
           </div>
         </aside>
 
         <section className="vl-stage flex min-h-0 min-w-0 flex-1 flex-col">
           <div hidden={appView !== "repositories"} className="vl-workspace-host min-h-0 min-w-0 flex-1 flex-col">
+          {cleanupReport?.repositoryId === activeRepository?.id && cleanupReport && (
+            <div role="status" className="shrink-0 border-b border-white/10 bg-slate-900 px-4 py-3 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span>Cleanup: {cleanupReport.removed.length} removed; {cleanupReport.failed.length} failed or skipped.</span>
+                <button type="button" onClick={() => setCleanupReport(null)} aria-label="Dismiss cleanup result">Close</button>
+              </div>
+              <ul className="mt-2 max-h-36 overflow-y-auto break-all text-slate-400">
+                {cleanupReport.removed.map(item => <li key={`ok:${item}`}>Removed: {item}</li>)}
+                {cleanupReport.failed.map(item => <li key={`failed:${item}`} className="text-amber-300">Kept/failed: {item}</li>)}
+              </ul>
+            </div>
+          )}
           <WorkspaceHeader
             snapshot={visibleSnapshot}
             isPreview={isPreview}

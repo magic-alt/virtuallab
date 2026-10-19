@@ -8,6 +8,7 @@ import type { RepositorySnapshot } from "@/types/workbench";
 
 const harness = vi.hoisted(() => ({
   currentBranch: "codex/pr-15",
+  cleanup: vi.fn(),
   detach: vi.fn(),
   restore: vi.fn(),
   choose: vi.fn(),
@@ -24,6 +25,8 @@ const harness = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => vi.fn()),
 }));
+
+vi.mock("@/lib/gitCleanup", () => ({ cleanupMergedAfterConfirmation: harness.cleanup }));
 
 vi.mock("@/lib/backend", () => ({
   confirmNativeAction: vi.fn().mockResolvedValue(true),
@@ -124,6 +127,7 @@ describe("workbench branch switching with untracked artifacts", () => {
       id: "notice-1", workspaceRoot: "/external/linked", repositoryId: "repo-1",
       source: "terminal", title: "Finished", detail: "done", severity: "complete", createdAt: 1, read: false,
     }] });
+    harness.cleanup.mockReset().mockResolvedValue({ removed: ["local feat/done"], failed: [] });
     harness.inspect.mockReset();
     harness.switchBranch.mockReset();
     harness.openEditor.mockReset().mockResolvedValue(undefined);
@@ -587,6 +591,48 @@ describe("workbench branch switching with untracked artifacts", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Switch to feat/joint17-brake" })).toHaveTextContent("active"));
     expect(screen.queryByText(/Workspace is reserved by terminal/)).not.toBeInTheDocument();
     expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(linkedPath);
+  });
+
+  it("recovers a selected missing worktree even while its Git registration remains", async () => {
+    harness.inspect.mockImplementation(async (path: string) => {
+      if (path === linkedPath) throw new Error("No such file or directory");
+      const next = linkedSnapshot(repoRoot);
+      next.worktrees = next.worktrees.map(tree => ({ ...tree, missing: tree.path === linkedPath }));
+      return next;
+    });
+    useWorkbenchStore.setState({ workspaceStates: {
+      "repo-1": { repositoryId: "repo-1", activeWorktreePath: linkedPath, activeTab: "changes", updatedAt: 1 },
+    } });
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(useWorkbenchStore.getState().workspaceStates["repo-1"]?.activeWorktreePath).toBe(repoRoot));
+    expect(screen.getByRole("button", { name: "Switch to feat/joint17-brake" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled();
+  });
+
+  it("switches to main before previewing merged cleanup", async () => {
+    const user = userEvent.setup();
+    harness.cleanup.mockImplementation(async (_repository: string, selected: string) => {
+      expect(harness.currentBranch).toBe("main");
+      expect(selected).toBe(repoRoot);
+      return { removed: ["local feat/done"], failed: [] };
+    });
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Clean merged…" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Clean merged…" }));
+    await screen.findByText("Cleanup: 1 removed; 0 failed or skipped.");
+    expect(harness.switchBranch).toHaveBeenCalledWith(repoRoot, repoRoot, "main");
+    expect(harness.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it("does not start cleanup if switching to main fails", async () => {
+    const user = userEvent.setup();
+    harness.switchBranch.mockRejectedValueOnce(new Error("main switch blocked"));
+    render(<WorkbenchShell />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Clean merged…" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Clean merged…" }));
+    await screen.findByText("main switch blocked");
+    expect(harness.cleanup).not.toHaveBeenCalled();
+    expect(harness.currentBranch).toBe("codex/pr-15");
   });
 
 });
