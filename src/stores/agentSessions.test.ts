@@ -44,6 +44,47 @@ describe("agent workspace bindings", () => {
     expect(bindings["/users/dev/project"]).toBeUndefined();
   });
 
+  it.each([1, 2])("rehydrates version %s bindings from their actual POSIX owner paths", async (version) => {
+    window.localStorage.setItem("virtuallab-agent-sessions-v1", JSON.stringify({
+      version,
+      state: {
+        bindings: {
+          "/workspaces/literal/child": {
+            workspaceRoot: "/workspaces/literal\\child", harness: "codex", threadId: "literal-owner",
+            createdAtMs: 1, updatedAtMs: 2,
+          },
+          "/workspaces/trailing": {
+            workspaceRoot: "/workspaces/trailing\\", harness: "claude", threadId: "trailing-owner",
+            createdAtMs: 1, updatedAtMs: 2,
+          },
+        },
+      },
+    }));
+    await useAgentSessionStore.persist.rehydrate();
+    const bindings = useAgentSessionStore.getState().bindings;
+    expect(bindings["/workspaces/literal\\child"]?.threadId).toBe("literal-owner");
+    expect(bindings["/workspaces/trailing\\"]?.threadId).toBe("trailing-owner");
+    expect(bindings["/workspaces/literal/child"]).toBeUndefined();
+    expect(bindings["/workspaces/trailing"]).toBeUndefined();
+  });
+
+  it("clearing a literal-backslash owner preserves the distinct nested workspace binding", () => {
+    const store = useAgentSessionStore.getState();
+    store.setBinding({
+      workspaceRoot: "/workspaces/literal\\child", harness: "codex", threadId: "literal-owner",
+      createdAtMs: 1, updatedAtMs: 1,
+    });
+    store.setBinding({
+      workspaceRoot: "/workspaces/literal/child", harness: "claude", threadId: "nested-owner",
+      createdAtMs: 1, updatedAtMs: 1,
+    });
+    expect(Object.keys(useAgentSessionStore.getState().bindings)).toHaveLength(2);
+    store.clearBinding("/workspaces/literal\\child");
+    const bindings = useAgentSessionStore.getState().bindings;
+    expect(bindings["/workspaces/literal\\child"]).toBeUndefined();
+    expect(bindings["/workspaces/literal/child"]?.threadId).toBe("nested-owner");
+  });
+
   it("persists exactly one Codex thread binding per workspace", () => {
     const workspaceRoot = "D:/Project/VirtualLab/worktree";
     useAgentSessionStore.getState().setBinding({

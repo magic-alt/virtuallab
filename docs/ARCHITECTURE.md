@@ -13,6 +13,13 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 
 ## Workspace directory and Git identity
 
+Native workspace identity canonicalizes existing filesystem paths and applies
+separator/case normalization according to the host platform. POSIX literal
+backslashes, including one at the end of a directory name, remain part of the
+identity. Frontend workspace keys identify Windows drive/UNC syntax before
+normalizing separators and preserve POSIX spelling. They remain UI/persistence
+keys rather than filesystem authority or a security boundary.
+
 Workspace creation resolves custom relative paths against the selected repository,
 then freezes the lifecycle reservation's absolute canonical target for directory
 creation, Git arguments and the returned workspace path. Application cwd and Git
@@ -370,6 +377,13 @@ The workflow UI output ring and process lifetime are ephemeral; worktree/profile
 ## V0.2 persisted workspace context
 
 The local Zustand store persists one workspace context per repository: active worktree path, active tab and update timestamp. Repository switching restores that context. If a remembered worktree no longer exists, VirtualLab falls back to the primary repository and Overview. Runtime PTY/process objects are deliberately not persisted.
+
+Agent bindings and review states retain their original workspace root and
+rebuild keys from it on hydration. This recovers stored POSIX roots after the
+separator correction without exposing their thread under a different nested
+path. Older role/skill selections stored only under a lossy key, and journals
+hashed from that key, do not retain enough owner information for reliable
+reassignment; no fallback that borrows another workspace's state is used.
 
 ## Normalized process results
 

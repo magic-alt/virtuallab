@@ -1669,6 +1669,6 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         #[cfg(windows)]
         assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "d:/project/virtuallab");
         #[cfg(unix)]
-        assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "D:/Project/VirtualLab");
+        assert_eq!(workspace_key("D:\\Project\\VirtualLab\\"), "D:\\Project\\VirtualLab\\");
     }
 }
