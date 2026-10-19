@@ -154,6 +154,51 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
     })
 }
 
+// Trust is a user-requested configuration change, never part of inspection or
+// a watcher refresh. Validate the filesystem root independently of stderr so
+// Git diagnostics can never supply an arbitrary configuration value.
+fn repository_trust_path(path: &str) -> Result<String, String> {
+    if !Path::new(path).is_absolute() || path.contains('*') {
+        return Err("Select an exact absolute repository directory; wildcards are not allowed".into());
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("Cannot resolve repository directory: {error}"))?;
+    if !canonical.is_dir() || !canonical.join(".git").exists() {
+        return Err("Select the repository/worktree root containing .git".into());
+    }
+    let raw = canonical.to_str().ok_or("Repository path must be valid Unicode")?;
+    if raw.contains('*') {
+        return Err("Wildcard repository paths cannot be trusted".into());
+    }
+    // Git expects normal Windows paths, including forward-slash UNC paths.
+    let root = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+        format!("//{}", unc.replace('\\', "/"))
+    } else if let Some(drive) = raw.strip_prefix(r"\\?\") {
+        drive.replace('\\', "/")
+    } else {
+        raw.to_string()
+    };
+    let reported = git_read(&root, &["-c", &format!("safe.directory={root}"), "rev-parse", "--show-toplevel"])?;
+    if std::fs::canonicalize(reported.trim()).map_err(|error| error.to_string())? != canonical {
+        return Err("Trust target must be the exact repository root".into());
+    }
+    Ok(root)
+}
+
+#[tauri::command]
+pub async fn trust_repository_directory(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = repository_trust_path(&path)?;
+        match git_read(&root, &["rev-parse", "--show-toplevel"]) {
+            Ok(_) => return Ok(()), // Already trusted; do not add duplicates.
+            Err(error) if error.contains("detected dubious ownership") => {}
+            Err(error) => return Err(error),
+        }
+        git(&root, &["config", "--global", "--add", "safe.directory", &root])?;
+        Ok(())
+    }).await.map_err(|error| format!("Repository trust task failed: {error}"))?
+}
+
 
 /// Shared status parser: a file edit must not re-enumerate all branches,
 /// worktrees or recent commits.
@@ -161,12 +206,12 @@ fn read_worktree_status(root: &str) -> Result<WorktreeStatus, String> {
     let branch = git_read(root, &["branch", "--show-current"])?
         .trim()
         .to_string();
-    let head_sha = git_read(root, &["rev-parse", "--short=10", "HEAD"])?
+    let head_sha = git_read(root, &["rev-parse", "HEAD"])?
         .trim()
         .to_string();
 
     let current_branch = if branch.is_empty() {
-        format!("detached@{head_sha}")
+        format!("detached@{}", &head_sha[..10.min(head_sha.len())])
     } else {
         branch
     };
@@ -1188,9 +1233,9 @@ enum LocalChangesAction {
 /// The workspace must also be an actual Git worktree registered to the repo.
 fn verify_local_changes_request(request: &LocalChangesRequest) -> Result<String, String> {
     let (_, workspace) = resolve_git_workspace(&request.repository_root, &request.workspace_root)?;
-    let head = git_read(&workspace, &["rev-parse", "--short=10", "HEAD"])?;
+    let head = git_read(&workspace, &["rev-parse", "HEAD"])?;
     let branch = git_read(&workspace, &["branch", "--show-current"])?;
-    let current_branch = if branch.trim().is_empty() { format!("detached@{}", head.trim()) }
+    let current_branch = if branch.trim().is_empty() { format!("detached@{}", &head.trim()[..10.min(head.trim().len())]) }
         else { branch.trim().to_string() };
     if head.trim() != request.expected_head_sha || current_branch != request.expected_branch {
         return Err("Branch/HEAD changed while confirming. Refresh Changes and retry; nothing was discarded.".into());
@@ -2039,6 +2084,20 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn trust_path_is_an_exact_repository_root_not_a_subdirectory_or_pattern() {
+        let (sandbox, repo) = init_fixture_repo("trust exact 工程 repo");
+        let root = repo.to_string_lossy().to_string();
+        let trusted = repository_trust_path(&root).unwrap();
+        assert_eq!(fs::canonicalize(&trusted).unwrap(), fs::canonicalize(&repo).unwrap());
+        fs::create_dir(repo.join("child")).unwrap();
+        assert!(repository_trust_path(&repo.join("child").to_string_lossy()).is_err());
+        assert!(repository_trust_path("*").is_err());
+        assert!(repository_trust_path("relative/repo").is_err());
+        assert!(repository_trust_path(&sandbox.to_string_lossy()).is_err());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
     fn unique_root(name: &str) -> std::path::PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2070,6 +2129,9 @@ mod tests {
         let root = repo.to_string_lossy().to_string();
         let status = inspect_worktree_status_blocking(root.clone()).unwrap();
         let full = inspect_repository_blocking(root.clone()).unwrap();
+        let expected_head = git_read(&root, &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(status.head_sha, expected_head.trim());
+        assert_eq!(full.head_sha, expected_head.trim());
         assert_eq!(status.root, full.root);
         assert_eq!(status.current_branch, full.current_branch);
         assert_eq!(status.head_sha, full.head_sha);
@@ -2081,6 +2143,23 @@ mod tests {
         fs::remove_dir_all(sandbox).unwrap();
     }
 
+    #[test]
+    fn sha256_repository_snapshots_preserve_full_task_baseline() {
+        let sandbox = unique_root("sha256-task-baseline");
+        let repo = sandbox.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        git_ok(&repo, &["init", "--object-format=sha256"]);
+        git_ok(&repo, &["config", "user.email", "virtuallab@example.invalid"]);
+        git_ok(&repo, &["config", "user.name", "VirtualLab Tests"]);
+        git_ok(&repo, &["commit", "--allow-empty", "-m", "baseline"]);
+        let root = repo.to_string_lossy().to_string();
+        let snapshot = inspect_repository_blocking(root.clone()).unwrap();
+        assert_eq!(snapshot.head_sha.len(), 64);
+        assert_eq!(snapshot.head_sha, git_read(&root, &["rev-parse", "HEAD"]).unwrap().trim());
+        assert_eq!(inspect_worktree_status_blocking(root).unwrap().head_sha, snapshot.head_sha);
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
     fn recovery_request(root: &str, action: LocalChangesAction, path: Option<&str>) -> LocalChangesRequest {
         let snapshot = inspect_repository_blocking(root.to_string()).unwrap();
         LocalChangesRequest {
@@ -2089,6 +2168,17 @@ mod tests {
             expected_changes: snapshot.changes,
             action, path: path.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn detached_local_changes_precondition_matches_full_snapshot() {
+        let (sandbox, repo) = init_fixture_repo("detached-precondition");
+        git_ok(&repo, &["checkout", "--detach"]);
+        fs::write(repo.join("README.md"), "detached local edit\n").unwrap();
+        let root = repo.to_string_lossy().to_string();
+        let request = recovery_request(&root, LocalChangesAction::StashAll, None);
+        verify_local_changes_request(&request).unwrap();
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     #[test]

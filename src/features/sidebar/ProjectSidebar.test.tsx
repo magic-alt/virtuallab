@@ -99,7 +99,9 @@ describe("ProjectSidebar controls", () => {
     expect(screen.queryByRole("button", { name: "Delete local branch main" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete local branch feat/remote-only" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete local branch feat/occupied" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Delete local branch feat/sample-workspace" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Remove worktree for feat/sample-workspace" }));
+    expect(p.onRemoveWorkspace).toHaveBeenCalledWith("/workspace/sample-repo-feature");
+    expect(p.onDeleteBranch).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: "Delete origin branch origin/main" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete origin branch origin/feat/unused" })).not.toBeInTheDocument();
 
@@ -127,6 +129,18 @@ describe("ProjectSidebar controls", () => {
     );
     expect(screen.queryByRole("button", { name: "Delete origin branch origin/release/stable" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete local branch release/stable" })).not.toBeInTheDocument();
+  });
+
+  it("protects the primary worktree and disables linked removal during mutations", () => {
+    const p = props();
+    const snapshot = { ...p.snapshot, branches: [
+      { name: "feat/primary", local: true, remote: false, worktreePath: p.snapshot.worktrees[0].path },
+      p.snapshot.branches.find(branch => branch.name === "feat/sample-workspace")!,
+    ] };
+    render(<ProjectSidebar {...p} snapshot={snapshot} workspaceActionsEnabled={false} />);
+    expect(screen.queryByRole("button", { name: "Remove worktree for feat/primary" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete local branch feat/primary" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove worktree for feat/sample-workspace" })).toBeDisabled();
   });
 
   it("distinguishes case-sensitive POSIX worktrees but folds Windows path spellings", () => {

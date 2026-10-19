@@ -48,9 +48,26 @@ export async function chooseRepositoryDirectory(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
-export async function inspectRepository(path: string): Promise<RepositorySnapshot> {
+export async function inspectRepository(
+  path: string,
+  options: { confirmOwnership?: boolean } = {},
+): Promise<RepositorySnapshot> {
   requireDesktop();
-  return invoke<RepositorySnapshot>("inspect_repository", { path });
+  try {
+    return await invoke<RepositorySnapshot>("inspect_repository", { path });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!options.confirmOwnership || !message.includes("detected dubious ownership")) throw error;
+    const approved = await confirm(
+      `Trust Git repository "${path}"?\n\n` +
+        "This directory belongs to another OS user. Only continue if you trust its files and Git configuration. " +
+        "This adds this exact directory to your global Git safe.directory exceptions, including for Git outside VirtualLab.",
+      { title: "Trust Git repository", kind: "warning", okLabel: "Trust directory", cancelLabel: "Cancel" },
+    );
+    if (!approved) throw error;
+    await invoke<void>("trust_repository_directory", { path });
+    return invoke<RepositorySnapshot>("inspect_repository", { path });
+  }
 }
 
 /** Remove only workbench registration after native ownership checks. */

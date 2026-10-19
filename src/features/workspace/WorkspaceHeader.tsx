@@ -72,7 +72,7 @@ export function WorkspaceHeader({
               </span>
             </span>
 
-            <span className="mono text-[11px] text-slate-600">{snapshot.headSha}</span>
+            <span className="mono text-[11px] text-slate-600" title={snapshot.headSha}>{snapshot.headSha.slice(0, 10)}</span>
           </div>
         </div>
 

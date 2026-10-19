@@ -56,6 +56,7 @@ export interface RepositorySnapshot {
   root: string;
   name: string;
   currentBranch: string;
+  /** Full lowercase Git object ID (40 or 64 hex characters) for live data. */
   headSha: string;
   remoteUrl?: string | null;
   originDefaultBranch?: string | null;

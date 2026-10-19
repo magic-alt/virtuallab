@@ -256,6 +256,9 @@ export function ProjectSidebar({
                 branch.name === "main" ||
                 branch.name === "master" ||
                 branch.name === snapshot.originDefaultBranch;
+              const removableWorktree = branch.worktreePath && snapshot.worktrees.some(tree =>
+                workspaceKey(tree.path) === workspaceKey(branch.worktreePath!) &&
+                workspaceKey(tree.path) !== workspaceKey(snapshot.worktrees[0]?.path ?? ""));
               return (
                 <div
                   key={branch.name}
@@ -291,7 +294,18 @@ export function ProjectSidebar({
                       <Code2 size={12} />
                     </button>
                   )}
-                  {branch.local && !protectedBranch && (
+                  {removableWorktree ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove worktree for ${branch.name}`}
+                      title="Remove this linked worktree after confirmation (keeps the local branch)"
+                      disabled={!workspaceActionsEnabled || !branchActionsEnabled}
+                      onClick={() => onRemoveWorkspace(branch.worktreePath!)}
+                      className="shrink-0 rounded-md p-1.5 text-slate-500 transition hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-25"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  ) : branch.local && !protectedBranch && (
                     <button
                       type="button"
                       aria-label={`Delete local branch ${branch.name}`}

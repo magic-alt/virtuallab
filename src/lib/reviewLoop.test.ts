@@ -14,6 +14,12 @@ describe("review loop identity", () => {
     expect(selectedReviewBase("abcdef1234")).toBe("abcdef1234");
     expect(()=>selectedReviewBase("preview")).toThrow();
   });
+  it("accepts a full SHA-256 review-workspace base without accepting malformed lengths", () => {
+    expect(selectedReviewBase("a".repeat(64))).toBe("a".repeat(64));
+    expect(() => selectedReviewBase("a".repeat(41))).toThrow();
+    expect(() => selectedReviewBase("a".repeat(63))).toThrow();
+    expect(() => selectedReviewBase("a".repeat(65))).toThrow();
+  });
   it("suggests a repository-neutral worktree branch",()=>{
     expect(suggestedReviewBranch({kind:"issue",number:42,reference:"https://github.com/example/repo/issues/42"})).toBe("review/issue-42");
     expect(suggestedReviewBranch({kind:"pr",number:7,reference:"pr:7"})).toBe("review/pr-7");

@@ -109,6 +109,7 @@ export function WorkbenchShell() {
   // A synchronous guard prevents rapid double-clicks before React re-renders.
   const gitMutationInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [ownershipErrorPath, setOwnershipErrorPath] = useState<string | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
@@ -243,6 +244,7 @@ export function WorkbenchShell() {
           const message =
             err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
           setError(message);
+          setOwnershipErrorPath(message.includes("detected dubious ownership") ? path : null);
         }
         throw err;
       })
@@ -428,7 +430,7 @@ export function WorkbenchShell() {
 
       // Inspect before registering a new repository: a failed dialog or an
       // invalid folder must not modify the current repository's selection.
-      const next = await inspectRepository(path);
+      const next = await inspectRepository(path, { confirmOwnership: true });
       await restoreRepositoryRegistration(next.root);
       snapshotCacheRef.current.set(normalizePath(next.root), next);
       const existing = useWorkbenchStore.getState().repositories.find(
@@ -457,6 +459,29 @@ export function WorkbenchShell() {
       setTab("overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      gitMutationInFlightRef.current = false;
+      setGitBusy(false);
+    }
+  };
+
+  const retryRepositoryOwnership = async () => {
+    if (!ownershipErrorPath || gitMutationInFlightRef.current || loading) return;
+    const path = ownershipErrorPath;
+    const ownerId = useWorkbenchStore.getState().activeRepositoryId;
+    gitMutationInFlightRef.current = true;
+    setGitBusy(true);
+    try {
+      await inspectRepository(path, { confirmOwnership: true });
+      if (useWorkbenchStore.getState().activeRepositoryId !== ownerId ||
+          latestSnapshotRequestRef.current !== normalizePath(path)) return;
+      await loadSnapshot(path, true, ownerId);
+      setError(null);
+      setOwnershipErrorPath(null);
+    } catch (reason) {
+      if (useWorkbenchStore.getState().activeRepositoryId === ownerId) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
     } finally {
       gitMutationInFlightRef.current = false;
       setGitBusy(false);
@@ -832,6 +857,10 @@ export function WorkbenchShell() {
         <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-rose-400/15 bg-rose-400/[0.06] px-4 py-2 text-xs text-rose-200">
           <TriangleAlert size={14} />
           <span className="truncate" title={error}>{error}</span>
+          {ownershipErrorPath && error.includes("detected dubious ownership") && (
+            <button type="button" className="shrink-0 underline" disabled={loading || gitBusy}
+              onClick={() => void retryRepositoryOwnership()}>Trust repository…</button>
+          )}
           <button className="ml-auto text-[10px] text-rose-300/60 hover:text-rose-200" onClick={() => setError(null)} type="button">
             dismiss
           </button>
