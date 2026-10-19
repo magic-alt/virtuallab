@@ -102,8 +102,46 @@ fn identity(root: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// Only native Git inventory callers may use this for missing registered roots.
+// Ordinary startup identity remains strict and cannot attach to absent paths.
+fn registered_identity(root: &str) -> Result<PathBuf, String> {
+    let path = Path::new(root);
+    if !path.is_absolute() || path.components().any(|part| part == std::path::Component::ParentDir) {
+        return Err("Registered worktree path must be absolute without parent traversal".into());
+    }
+    match std::fs::symlink_metadata(root) {
+        Ok(_) => identity(root),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let path = Path::new(root);
+            if !path.is_absolute() || path.components().any(|part| part == std::path::Component::ParentDir) {
+                return Err("Registered worktree path must be absolute without parent traversal".into());
+            }
+            let mut ancestor = path;
+            let mut suffix = Vec::new();
+            loop {
+                match std::fs::symlink_metadata(ancestor) {
+                    Ok(_) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        suffix.push(ancestor.file_name().ok_or("Cannot resolve registered workspace")?);
+                        ancestor = ancestor.parent().ok_or("Cannot resolve registered workspace")?;
+                    }
+                    Err(error) => return Err(error.to_string()),
+                }
+            }
+            let mut resolved = std::fs::canonicalize(ancestor).map_err(|e| e.to_string())?;
+            for part in suffix.into_iter().rev() { resolved.push(part); }
+            #[cfg(windows)]
+            let resolved = PathBuf::from(resolved.to_string_lossy().to_lowercase());
+            Ok(resolved)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 impl WorkspaceLifecycle {
     pub(crate) fn resolve_identity(root: &str) -> Result<PathBuf, String> { identity(root) }
+
+    pub(crate) fn resolve_registered_identity(root: &str) -> Result<PathBuf, String> { registered_identity(root) }
 
     /// Query terminal removal protection without following a replacement path.
     pub(crate) fn try_has_terminals_identity(&self, root: &Path) -> Result<Option<bool>, String> {
@@ -182,6 +220,16 @@ impl WorkspaceLifecycle {
         root: &str,
         owner: &str,
     ) -> Result<(WorkspaceReservation, PathBuf), String> {
+        self.reserve_absent_target(root, owner, false)
+    }
+
+    /// Missing registered worktrees still need lifecycle exclusion while their
+    /// Git metadata is removed. This does not permit starting work in them.
+    pub(crate) fn begin_missing_removal(&self, root: &str) -> Result<WorkspaceReservation, String> {
+        self.reserve_absent_target(root, "missing worktree removal", true).map(|(lease, _)| lease)
+    }
+
+    fn reserve_absent_target(&self, root: &str, owner: &str, removal: bool) -> Result<(WorkspaceReservation, PathBuf), String> {
         if root.is_empty() || owner.trim().is_empty() {
             return Err("Creation path and owner must not be empty".into());
         }
@@ -230,14 +278,17 @@ impl WorkspaceLifecycle {
         let key = target.clone();
         claims.require_attached(&key)?;
         if let Some((_, current)) = claims.claims.iter().find(|(claimed, claim)| {
-            *claimed == &key || (claim.blocks_terminals && overlaps(claimed, &key))
+            *claimed == &key || ((removal || claim.blocks_terminals) && overlaps(claimed, &key))
         }) {
             return Err(format!("Workspace is reserved by {}", current.owner));
         }
-        if claims.terminals.contains_key(&key) {
+        if claims.terminals.keys().any(|active| *active == key || (removal && overlaps(active, &key))) {
             return Err("Workspace is reserved by terminal; wait for observed completion.".into());
         }
-        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true, removal: false });
+        if removal && claims.activities.keys().any(|active| overlaps(active, &key)) {
+            return Err("Workspace has an active task operation; wait for completion.".into());
+        }
+        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true, removal });
         Ok((WorkspaceReservation {
             lifecycle: self.clone(),
             key,
@@ -258,7 +309,7 @@ impl WorkspaceLifecycle {
     /// All-or-nothing detach under the existing writer/startup mutex. The
     /// second Git inventory read runs while new native starts/creation are
     /// excluded; failure must leave every workspace attached and runnable.
-    pub fn detach_repository(
+    pub(crate) fn detach_repository(
         &self,
         roots: &[String],
         validate_inventory: impl FnOnce() -> Result<(), String>,
@@ -267,7 +318,7 @@ impl WorkspaceLifecycle {
             return Err("Cannot remove a repository with no registered worktrees".into());
         }
         let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
-        let keys = roots.iter().map(|root| identity(root)).collect::<Result<Vec<_>, _>>()?;
+        let keys = roots.iter().map(|root| registered_identity(root)).collect::<Result<Vec<_>, _>>()?;
         for key in &keys {
             if state.terminals.keys().any(|active| active.starts_with(key) || key.starts_with(active)) {
                 return Err("Workspace is reserved by terminal; stop native work and wait for observed completion before removing the repository.".into());
@@ -287,12 +338,12 @@ impl WorkspaceLifecycle {
     }
 
     /// Only an explicit validated re-import restores native startup rights.
-    pub fn restore_repository(&self, roots: &[String]) -> Result<(), String> {
+    pub(crate) fn restore_repository(&self, roots: &[String]) -> Result<(), String> {
         if roots.is_empty() {
             return Err("Cannot restore an empty repository worktree inventory".into());
         }
         let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
-        let keys = roots.iter().map(|root| identity(root)).collect::<Result<Vec<_>, _>>()?;
+        let keys = roots.iter().map(|root| registered_identity(root)).collect::<Result<Vec<_>, _>>()?;
         for key in keys { state.detached.remove(&key); }
         Ok(())
     }
@@ -651,7 +702,7 @@ mod tests {
         service.detach_repository(&[actual.to_string_lossy().into_owned()], || Ok(())).unwrap();
         assert!(service.reserve(&alias.join(".").to_string_lossy(), "agent").is_err());
         // Failed restoration cannot partially lift an existing detached mark.
-        assert!(service.restore_repository(&[alias.to_string_lossy().into_owned(), root.join("missing").to_string_lossy().into_owned()]).is_err());
+        assert!(service.restore_repository(&[alias.to_string_lossy().into_owned(), root.join("../missing").to_string_lossy().into_owned()]).is_err());
         assert!(service.reserve(&alias.to_string_lossy(), "agent").is_err());
         service.restore_repository(&[alias.to_string_lossy().into_owned()]).unwrap();
         assert!(service.reserve(&actual.to_string_lossy(), "agent").is_ok());

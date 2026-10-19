@@ -34,6 +34,7 @@ function props() {
     onSwitchBranch: vi.fn(),
     onDeleteBranch: vi.fn(),
     onDeleteOriginBranch: vi.fn(),
+    onCleanupMerged: vi.fn(),
     branchActionsEnabled: true,
     workspaceActionsEnabled: true,
     repositoryActionsEnabled: true,
@@ -42,6 +43,16 @@ function props() {
 }
 
 describe("ProjectSidebar controls", () => {
+  it("starts merged cleanup explicitly and disables it while Git is busy", async () => {
+    const user = userEvent.setup();
+    const p = props();
+    const { rerender } = render(<ProjectSidebar {...p} />);
+    await user.click(screen.getByRole("button", { name: "Clean merged…" }));
+    expect(p.onCleanupMerged).toHaveBeenCalledOnce();
+    rerender(<ProjectSidebar {...p} branchActionsEnabled={false} />);
+    expect(screen.getByRole("button", { name: "Clean merged…" })).toBeDisabled();
+  });
+
   it("wires repository controls", async () => {
     const user = userEvent.setup();
     const p = props();
