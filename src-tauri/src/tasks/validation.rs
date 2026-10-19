@@ -118,9 +118,13 @@ fn relative(value: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn paths(values: &[String], required: bool, root: Option<&str>) -> Result<(), String> {
+fn paths(values: &[String], required: bool, root: Option<&str>, allow_root: bool) -> Result<(), String> {
     if values.len() > 128 || (required && values.is_empty()) {
         return Err("Scope/path list must contain at most 128 paths.".into());
+    }
+    // Only an explicit single task scope may cover the repository root. Profile paths stay narrow.
+    if allow_root && values.iter().any(|path| path == ".") && values.len() != 1 {
+        return Err("Repository-wide scope must be the sole task path.".into());
     }
     // Durable identity keys normalize Windows case and verbatim prefixes.
     // Filesystem containment must compare native canonical paths on both sides.
@@ -130,7 +134,9 @@ fn paths(values: &[String], required: bool, root: Option<&str>) -> Result<(), St
         .map_err(|_| "Repository path is unavailable.")?;
     let mut seen = HashSet::new();
     for path in values {
-        relative(path)?;
+        if path != "." || !allow_root {
+            relative(path)?;
+        }
         if !seen.insert(path) {
             return Err("Duplicate scope/profile path.".into());
         }
@@ -268,7 +274,7 @@ pub(crate) fn profile(value: &Value, root: Option<&str>) -> Result<(), String> {
     }
     for field in ["outputPaths", "sourcePaths"] {
         if let Some(list) = value.get(field) {
-            paths(&string_list(list)?, false, root)?;
+            paths(&string_list(list)?, false, root, false)?;
         }
     }
     if let Some(list) = value.get("toolchainPrograms") {
@@ -435,7 +441,7 @@ pub(super) fn draft(task: &TaskDraft, root: &str) -> Result<(), String> {
     id(&task.key)?;
     text(&task.title, 256, true)?;
     text(&task.goal, 8192, true)?;
-    paths(&task.scope, true, Some(root))?;
+    paths(&task.scope, true, Some(root), true)?;
     if !matches!(task.kind.as_str(), "implementation" | "integration") {
         return Err("Unknown task kind.".into());
     }
@@ -617,7 +623,7 @@ pub(super) fn generation(g: &Generation) -> Result<(), String> {
         sha(&task.base_sha)?;
         text(&task.title, 256, true)?;
         text(&task.goal, 8192, true)?;
-        paths(&task.scope, true, None)?;
+        paths(&task.scope, true, None, true)?;
         if !matches!(task.kind.as_str(), "implementation" | "integration")
             || task.revision == 0
             || task.updated_at_ms < task.created_at_ms
