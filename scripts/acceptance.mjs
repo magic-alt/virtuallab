@@ -88,6 +88,7 @@ console.log("[ ] Build identity freshness: rebuild after a branch-only switch, a
 console.log("[ ] Terminal: Start/New tab, tab switch, typing, Ctrl+C, resize and Stop all work.");
 console.log("[ ] macOS terminal from Finder/Dock: Backspace visibly erases characters, left/right arrows edit the line, and Enter executes the edited command.");
 console.log("[ ] Terminal retention: start shells in two worktrees and a second repository; switch Terminal/Run and workspace/repository pages while output continues. Returning restores each original shell, selected terminal and scrollback; typing/resize still work. Close stops only that session; application exit cleans all retained sessions.");
+console.log("[ ] Terminal independence: keep a shell open, switch its workspace branch, execute Run/build, and open a second terminal. The original shell, PID and scrollback remain; no terminal-stop confirmation appears. Stop waits for cleanup before reporting completion; active terminals still protect worktree removal and repository detach.");
 console.log("[ ] Run: repository-scoped Build/Test profile Run streams output; Stop terminates; add/remove profile works.");
 console.log("[ ] Run layout: stream 2000+ short/very long compiler lines at desktop >=1280px; only the log scrollbar moves, output panel and outer workbench stay fixed.");
 console.log("[ ] Run layout: scroll the left workflow column separately; resizing the window below 1280px stacks cards and keeps the log height bounded with its own scrollbar.");
