@@ -13,6 +13,9 @@ function stableVersion(value) {
 
 function validatePolicy(policy) {
   if (policy?.schemaVersion !== 1 || !Array.isArray(policy.milestones)) throw new Error("Unsupported version policy.");
+  if (policy.automaticPatchOnMain !== undefined && typeof policy.automaticPatchOnMain !== "boolean") {
+    throw new Error("automaticPatchOnMain policy must be boolean.");
+  }
   let previousMinor = -1;
   const usedSections = new Set();
   for (const milestone of policy.milestones) {
@@ -159,7 +162,7 @@ function plain(value) {
 export function renderAssessment(report) {
   const lines = ["# Application version assessment", "", `Version: ${report.currentVersion} → ${report.nextVersion} (${report.bump}).`, "",
     `Baseline commit: ${report.baselineSha}`, `Assessed main commit: ${report.headSha}`, "",
-    "This is a version proposal. It does not authorize a tag, Release, deployment or hardware operation.", "", "## Merged PRs", ""];
+    "A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.", "", "## Merged PRs", ""];
   if (report.provisional || report.inputSource === "provided-json") {
     lines.splice(8, 0, "Provisional local preview: working-tree changes or supplied JSON have not been validated as a committed GitHub snapshot.", "");
   }

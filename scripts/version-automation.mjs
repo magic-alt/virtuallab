@@ -37,6 +37,11 @@ export async function collectMergedPullRequests({ github, repo, history, baseBra
 
 function eligibleRun(context, baseBranch) {
   if (context.eventName === "workflow_dispatch") return context.ref === `refs/heads/${baseBranch}`;
+  if (context.eventName === "push") {
+    // Only a trusted non-deletion push to the selected default branch.
+    return context.ref === `refs/heads/${baseBranch}` && context.payload.deleted !== true
+      && context.payload.repository?.full_name?.toLowerCase() === `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+  }
   if (context.eventName !== "workflow_run") return false;
   const run = context.payload.workflow_run;
   return run?.conclusion === "success" && run.event === "push" && run.head_branch === baseBranch
@@ -66,15 +71,19 @@ export async function runVersionAutomation({ github, context, core, root = proce
   if (gitRead(root, ["status", "--porcelain"])) throw new Error("Version automation requires a clean checkout of the default branch.");
   const history = findVersionBaseline(root);
   const fresh = async () => (await maybeRef(github, repo, baseBranch)) === history.headSha;
-  if ((context.eventName === "workflow_run" && context.payload.workflow_run.head_sha !== history.headSha) || !await fresh()) {
-    core.info("A newer default-branch revision exists; its successful CI will assess the complete pending range.");
+  const triggeringSha = context.eventName === "push" ? context.payload.after
+    : context.eventName === "workflow_run" ? context.payload.workflow_run.head_sha : null;
+  if ((context.eventName === "push" && (!triggeringSha || triggeringSha !== history.headSha))
+      || (triggeringSha && triggeringSha !== history.headSha) || !await fresh()) {
+    core.info("Main has advanced: a later push or manual dispatch will assess the complete pending range.");
     return { status: "superseded" };
   }
   const versions = inspectVersions(root);
   if (versions.problems.length || versions.version !== history.currentVersion) throw new Error("Application version sources are inconsistent.");
   const read = name => readFileSync(path.join(root, name), "utf8");
   const collected = await collectMergedPullRequests({ github, repo, history, baseBranch });
-  const report = { ...assessVersion({ ...history, ...collected, roadmap: read("docs/ROADMAP.md"), policy: JSON.parse(read(".github/version-policy.json")) }),
+  const policy = JSON.parse(read(".github/version-policy.json"));
+  const report = { ...assessVersion({ ...history, ...collected, roadmap: read("docs/ROADMAP.md"), policy }),
     baselineSha: history.baselineSha, headSha: history.headSha, unassociatedCommits: collected.unassociatedCommits };
   const markdown = renderAssessment(report);
   await core.summary.addRaw(markdown).write();
@@ -83,6 +92,39 @@ export async function runVersionAutomation({ github, context, core, root = proce
   if (open.length > 1 || open.some(pr => !pr.body?.includes(PR_MARKER))) throw new Error("Cannot verify version PR ownership; manual intervention required.");
   const pr = open[0];
   if (!await fresh()) return { status: "superseded", report };
+
+  // 0.x patch synchronization updates build metadata, not release qualification.
+  // Never direct-write an unqualified minor/major version. Use the existing
+  // human-reviewed Draft PR workflow for qualified milestones.
+  if (policy.automaticPatchOnMain === true && report.bump === "patch"
+      && (context.eventName === "push" || context.eventName === "workflow_dispatch")) {
+    if (pr) throw new Error("A legacy automatic version PR is still open; resolve it before direct patch synchronization.");
+    setVersion(report.nextVersion, root);
+    const checked = inspectVersions(root);
+    if (checked.problems.length || checked.version !== report.nextVersion) {
+      throw new Error("Generated version sources disagree; refusing to update main.");
+    }
+    const assessmentPath = "docs/VERSION_ASSESSMENT.md";
+    writeFileSync(path.join(root, assessmentPath), markdown);
+    const tree = [...VERSION_FILES, assessmentPath].map(file => ({
+      path: file, mode: "100644", type: "blob", content: read(file),
+    }));
+    if (!await fresh()) return { status: "superseded", report };
+    const { data: createdTree } = await github.rest.git.createTree({
+      ...repo, base_tree: gitRead(root, ["rev-parse", "HEAD^{tree}"]), tree,
+    });
+    const { data: commit } = await github.rest.git.createCommit({
+      ...repo, tree: createdTree.sha, parents: [history.headSha],
+      message: `chore(version): automatically sync ${report.nextVersion}\n\nVirtualLab-Assessed-Main: ${history.headSha}\n${COMMIT_MARKER}`,
+    });
+    // Ref creation and commit creation do not move main. Re-read main and
+    // update fast-forward only; racing human merges are never overwritten.
+    if (!await fresh()) return { status: "superseded", report };
+    await github.rest.git.updateRef({ ...repo, ref: `heads/${baseBranch}`, sha: commit.sha, force: false });
+    core.info(`Applied ${report.nextVersion} on ${baseBranch}: ${commit.sha}. Version metadata does not certify tests or publish a release.`);
+    return { status: "applied", report, commitSha: commit.sha };
+  }
+
   const instructions = `${PR_MARKER}\n\n${markdown}\n## Human review required\n\n`
     + "This PR is kept in draft. Review the assessed commit range, PR classifications and roadmap evidence. "
     + "Mark it **Ready for review** to trigger the full PR CI, and approve any GitHub workflow-run approval prompt. "

@@ -10,7 +10,7 @@ const roots = [];
 afterEach(() => roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })));
 const marker = "VirtualLab-Version-Automation: 1";
 
-function fixture() {
+function fixture({ automaticPatchOnMain, milestoneReady = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "version automation "));
   roots.push(root);
   for (const file of ["package.json", "package-lock.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/tauri.conf.json"]) {
@@ -20,8 +20,12 @@ function fixture() {
   setVersion("0.5.0", root);
   mkdirSync(path.join(root, ".github"));
   mkdirSync(path.join(root, "docs"));
-  writeFileSync(path.join(root, ".github/version-policy.json"), JSON.stringify({ schemaVersion: 1, milestones: [{ version: "0.6.0", sections: ["V0.6"] }] }));
-  writeFileSync(path.join(root, "docs/ROADMAP.md"), "### V0.6 — Reliability\n- [ ] Acceptance\n- [ ] Release qualification for V0.6: accepted\n");
+  writeFileSync(path.join(root, ".github/version-policy.json"), JSON.stringify({ schemaVersion: 1,
+    ...(automaticPatchOnMain === undefined ? {} : { automaticPatchOnMain }),
+    milestones: [{ version: "0.6.0", sections: ["V0.6"] }] }));
+  writeFileSync(path.join(root, "docs/ROADMAP.md"), milestoneReady
+    ? "### V0.6 — Reliability\n- [x] Acceptance\n- [x] Release qualification for V0.6: accepted\n"
+    : "### V0.6 — Reliability\n- [ ] Acceptance\n- [ ] Release qualification for V0.6: accepted\n");
   const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   git("init", "--initial-branch=main");
   git("config", "user.name", "Test");
@@ -62,7 +66,11 @@ function fixture() {
       createTree: async args => { state.writes.push(["tree", args]); return data({ sha: "proposal-tree" }); },
       createCommit: async args => { state.writes.push(["commit", args]); return data({ sha: "proposal-commit" }); },
       createRef: async args => { state.writes.push(["createRef", args]); state.branch = args.sha; return data({ ref: args.ref }); },
-      updateRef: async args => { state.writes.push(["updateRef", args]); state.branch = args.sha; return data({ ref: args.ref }); },
+      updateRef: async args => {
+        state.writes.push(["updateRef", args]);
+        if (args.ref === "heads/main") state.main = args.sha; else state.branch = args.sha;
+        return data({ ref: args.ref });
+      },
     },
   };
   const github = { rest, paginate: async (method, args) => (await method(args)).data,
@@ -127,7 +135,7 @@ describe("post-CI version PR automation", () => {
       expect((await runVersionAutomation(f)).status).toBe("skipped");
       expect(f.state.writes).toEqual([]);
     }
-  });
+  }, 30000);
 
   it("rejects nondefault manual dispatch and stale CI snapshots", async () => {
     const f = fixture();
@@ -148,7 +156,7 @@ describe("post-CI version PR automation", () => {
     f.state.failFiles = true;
     await expect(runVersionAutomation(f)).rejects.toThrow(/unavailable/i);
     expect(f.state.writes).toEqual([]);
-  });
+  }, 30000);
 
   it("counts both sides of a rename to avoid misclassifying moved product code as docs", async () => {
     const f = fixture();
@@ -230,6 +238,68 @@ describe("post-CI version PR automation", () => {
     expect(result.status).toBe("unchanged");
     expect(result.report.changes).toEqual([]);
     expect(result.report.unassociatedCommits).toEqual([f.state.main]);
+    expect(f.state.writes).toEqual([]);
+  });
+});
+
+describe("trusted mainline automatic version synchronization", () => {
+  function enabledPush(options = {}) {
+    const f = fixture({ automaticPatchOnMain: true, ...options });
+    f.context.eventName = "push";
+    f.context.payload.after = f.state.main;
+    return f;
+  }
+
+  it("directly applies one patch to main, updates only version/report paths, never forces and creates no PR", async () => {
+    const f = enabledPush();
+    const result = await runVersionAutomation(f);
+    expect(result).toMatchObject({ status: "applied", commitSha: "proposal-commit",
+      report: { currentVersion: "0.5.0", nextVersion: "0.5.1", bump: "patch" } });
+    expect(f.state.writes.map(([kind]) => kind)).toEqual(["tree", "commit", "updateRef"]);
+    const entries = f.state.writes[0][1].tree;
+    const allowed = ["docs/VERSION_ASSESSMENT.md", "package.json", "package-lock.json",
+      "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"];
+    expect(entries.map(item => item.path).sort()).toEqual(allowed.sort());
+    expect(JSON.parse(entries.find(item => item.path === "package.json").content).version).toBe("0.5.1");
+    expect(f.state.writes[1][1].parents).toEqual([f.context.payload.after]);
+    expect(f.state.writes[2][1]).toMatchObject({ ref: "heads/main", force: false, sha: "proposal-commit" });
+    expect(f.state.main).toBe("proposal-commit");
+    expect(f.state.summary).toContain("0.5.0 → 0.5.1");
+  });
+
+  it("skips non-default, deleted and foreign pushes; supersedes stale push SHA without a write", async () => {
+    const f = enabledPush();
+    for (const patch of [{ ref: "refs/heads/feature" }, { deleted: true },
+      { after: "stale" }, { repository: { full_name: "another/repository", default_branch: "main" } }]) {
+      const originalPayload = f.context.payload;
+      const originalRef = f.context.ref;
+      f.context.payload = { ...originalPayload, ...(patch.ref ? {} : patch) };
+      if (patch.ref) f.context.ref = patch.ref;
+      expect(["skipped", "superseded"]).toContain((await runVersionAutomation(f)).status);
+      expect(f.state.writes).toEqual([]);
+      f.context.payload = originalPayload;
+      f.context.ref = originalRef;
+    }
+  }, 30000);
+
+  it("leaves a qualified next minor version behind the original draft PR and human review gate", async () => {
+    const f = enabledPush({ milestoneReady: true });
+    const result = await runVersionAutomation(f);
+    expect(result).toMatchObject({ status: "proposed", report: { nextVersion: "0.6.0", bump: "minor" } });
+    expect(f.state.writes.some(([kind, args]) => kind === "createPR" && args.draft === true)).toBe(true);
+    expect(f.state.writes.some(([kind, args]) => kind === "updateRef" && args.ref === "heads/main")).toBe(false);
+  });
+
+  it("rejects malformed patch policy before any writes", async () => {
+    const f = enabledPush({ automaticPatchOnMain: "yes" });
+    await expect(runVersionAutomation(f)).rejects.toThrow(/boolean/);
+    expect(f.state.writes).toEqual([]);
+  });
+
+  it("rejects applying a patch while a legacy version PR remains open", async () => {
+    const f = enabledPush();
+    f.state.open = [{ number: 90, body: "<!-- virtuallab-version-automation:v1 -->", draft: true }];
+    await expect(runVersionAutomation(f)).rejects.toThrow(/legacy automatic version PR/i);
     expect(f.state.writes).toEqual([]);
   });
 });

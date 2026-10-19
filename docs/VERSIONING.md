@@ -30,42 +30,34 @@ Bump to a new version in one operation:
     cargo check --locked --manifest-path src-tauri/Cargo.toml
     npm run acceptance:local
 
-Commit all five changed files together in a PR. Do not update only one language's metadata. CI checks version consistency and packaging refuses inconsistent sources; version unit tests cover mismatch detection, bumps, and tag matching. macOS CI checks the actual app bundle CFBundleShortVersionString against package.json.
+For a manual version change, commit all five files together in a reviewed PR. Automatic patch synchronization uses the guarded mainline workflow below. Never update only one language's metadata. CI checks version consistency and packaging refuses inconsistent sources; version unit tests cover mismatch detection, bumps, and tag matching. macOS CI checks the actual app bundle CFBundleShortVersionString against package.json.
 
-## Automatic version assessment
+## Automatic version synchronization
 
-After a successful **CI** push run on `main`, `.github/workflows/version-assessment.yml` inspects the latest default-branch revision. It executes only default-branch source, without installing dependencies or consuming PR artifacts. A stale CI revision is skipped; a later successful run assesses the full pending range. Maintainers can rerun **Automatic version assessment** through workflow dispatch on the default branch, including for initial backlog assessment. Dispatch creates only a draft proposal; the version PR still requires full CI and human review.
+A trusted `main` push (including a merged PR) now triggers `.github/workflows/version-assessment.yml` directly, regardless of the outcome of unrelated cross-platform CI. The version policy `.github/version-policy.json` enables `automaticPatchOnMain`. Ordinary feature/fix PRs cause one aggregated **patch** synchronization for all eligible changes since the committed version baseline, for example `0.5.0 → 0.5.1`. It is not one increment per historical PR. Subsequent merges produce the next patch.
 
-The baseline is the first-parent mainline commit that introduced the current `package.json` version, rather than the last dependency/script edit or the most recent release tag. All eligible merged PRs after that commit are aggregated and deduplicated. Merge, squash and rebase merges are identified through GitHub's commit-to-PR API, with merged state, repository, target branch and an in-range merge commit required. Direct commits without an eligible PR are listed separately for review. File lists must be complete; API errors, GitHub's file-list cap or shallow Git history stop assessment rather than guessing.
+The workflow uses only default-branch code with a write token, reads complete GitHub merged-PR metadata, and validates the patch using `setVersion` and `inspectVersions`. It creates a fast-forward-only metadata commit directly on `main` affecting only the five version files and `docs/VERSION_ASSESSMENT.md`. It checks that the inspected branch head has not changed before updating the ref. A concurrent merge cannot be overwritten. `GITHUB_TOKEN`-authored pushes do not recursively trigger this workflow.
 
-### Upgrade rules
+**This updates source/build version metadata, not release readiness.** It does not create a version tag, GitHub Release, binary publication or deployment. Full CI, manual provider/desktop acceptance and release gates remain separate; a failed build remains failed even when the version metadata is up to date. A protected branch or missing `contents:write` permission makes the automation fail visibly rather than force-pushing or bypassing protections. The source version is not proof of the version installed on a user's machine.
 
-| Changes / qualification | Proposal |
+### Classification and milestone gates
+
+| Changes | Version handling |
 | --- | --- |
-| Fixes, ordinary features, refactors or other product changes | One patch increment from the committed version, e.g. `0.5.0 → 0.5.1` |
-| Only documentation, tests or `.github/` configuration | No bump by default; file paths determine this, so a misleading title cannot hide code edits |
-| `release:skip` label | Explicitly skip a nonbreaking PR |
-| `release:patch` label | Explicitly include a PR in the patch proposal |
-| Next configured roadmap milestone, all mapped tasks and explicit release qualification accepted | Next minor version, e.g. `0.6.0`; earlier configured milestone gates must also remain accepted |
-| Conventional `feat!:` / `fix(scope)!:` title or `BREAKING CHANGE:` body | Hold the update until a qualified 0.x minor is available or a human manages the version manually |
-| `release:major` label | Hold automatic version changes for separate human stability review |
-| Prerelease application versions | Manual version management; automatic assessment rejects them |
+| Ordinary feature/fix/refactor with product files | Automatic one-patch synchronization on `main` |
+| Docs, tests and CI changes only | Skip by default |
+| `release:skip`, `release:patch` | Explicit nonbreaking classification overrides |
+| Next milestone fully qualified in the roadmap | Draft version PR for `0.x → 0.(x+1).0`; **human review still required** |
+| Breaking title/body or `release:major` | No automatic patch; qualified milestone or manual stability review |
+| Prerelease version | Manual version management |
 
-Conflicting override labels are rejected. Breaking and major declarations cannot be bypassed using `release:skip` or `release:patch`. Test files/directories and documentation extensions are skipped, but mixed changes and both sides of renames are checked. Titles, PR bodies and paths are data; none become shell commands.
+`0.6.0` is not yet qualified until all mapped V0.6 tasks and its explicit release-qualification checkbox are accepted. As such, merged PRs #79 and #80 can trigger `0.5.1` but not `0.6.0`.
 
-`.github/version-policy.json` maps `0.6.0` through `0.9.0` to roadmap headings. V0.7-A/B/C map together to `0.7.0`, never to three version increments. Each mapped section must exist exactly once and contain a fully checked acceptance list. Each milestone additionally requires exactly one checked entry beginning `Release qualification for V0.N:` in its mapped sections. Code-fenced examples are ignored. Maintainers check these entries only after reviewing the exit-gate evidence, through the normal roadmap PR review. Source implementation or a merged PR alone cannot close qualification. Automation never changes roadmap checkboxes and never automatically promotes to `1.0.0`.
+### Recovery and release proposals
 
-### Draft version PR and repository setup
+When a patch sync fails, inspect the **Automatic version assessment** Actions run. Missing pushes, a stale snapshot, incomplete GitHub PR metadata, an existing legacy bot proposal PR or missing repository permissions are visible errors/holds rather than silent non-updates. Use `workflow_dispatch` on `main` to perform one explicit catch-up assessment. If main advanced during assessment, the job skips the stale snapshot and the next push/dispatch reassesses.
 
-Enable **Allow GitHub Actions to create and approve pull requests** in repository **Settings → Actions → General → Workflow permissions**, if repository/organization policy permits it. The workflow uses the built-in token with only contents/pull-request write permissions; it never approves a PR. If policy forbids PR creation, assessment fails visibly and maintainers can still use the local preview and existing manual version command. No PAT or new secret is required.
-
-The workflow maintains one draft PR from the reserved `automation/version-update` branch. It synchronizes the five version files using `setVersion` and includes `docs/VERSION_ASSESSMENT.md` with the baseline, assessed SHA, included/skipped PRs and roadmap blockers. The same report appears in the Actions job summary. Pending PRs continue to propose the same increment until the version update actually lands. After the update merges, its committed version becomes the new baseline, preventing a self-bump loop.
-
-Updates preserve the previous bot tip as a commit parent and fast-forward the branch; no force-push, branch deletion or automatic merge occurs. A manually edited branch tip or unrecognized PR body stops automation rather than overwriting user edits. The bot records its proposed tree SHA in the commit message, so an amendment that retains the message but changes the tree is also rejected. This is an accidental-edit guard, not an authentication mechanism against repository maintainers. Identical repeated assessments preserve the PR revision and ready state. The branch is reserved for generated changes. If a proposal becomes ineligible, its PR returns to draft with a **HOLD** title and an updated explanation. A later eligible assessment can reuse it. Closed proposals can be proposed again by a later assessment; remove eligibility labels/change policy if the proposal should stay suppressed.
-
-Review the proposal and mark it **Ready for review** to run full PR CI. The CI workflow explicitly includes `ready_for_review`, so this human action can start checks even when automation-triggered checks need approval or are suppressed by the built-in token. Approve any workflow-run approval prompt shown by GitHub. Every automated update returns a ready PR to draft; review and validate the new revision again. Merge only after required checks pass. GitHub's [token event restrictions](https://docs.github.com/en/actions/concepts/security/github_token) and [PR event types](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows) explain the trigger behavior.
-
-Merging a version PR changes source/build metadata. It does not create a tag or GitHub Release, publish a package, deploy, update an installed application or certify roadmap evidence. Those actions retain their separate human gates.
+Qualified milestone versions retain the reserved `automation/version-update` branch and a Draft PR. It is kept in draft until reviewed and explicitly marked Ready for review, with full PR CI and human merge required. The automation never auto-merges minor/major versions, never auto-approves a release and never modifies roadmap acceptance. Existing legacy automatic version PRs must be resolved before direct patch synchronization to avoid conflicting proposals.
 
 ### Read-only local preview
 
@@ -80,13 +72,13 @@ For offline inspection, supply a JSON array of PR records containing `number`, `
 
     npm run version:assess -- --input merged-prs.json --json
 
-Example input: `[{"number":78,"title":"fix: correction","labels":[],"files":["src/app.tsx"]}]`. Supplied JSON is marked provisional; it is not independently verified merged-PR evidence. Automatic PR creation always uses live GitHub metadata instead.
+Example input: `[{"number":78,"title":"fix: correction","labels":[],"files":["src/app.tsx"]}]`. Supplied JSON is marked provisional; it is not independently verified merged-PR evidence. Automated mainline synchronization and minor-version proposals always use live GitHub metadata instead.
 
 ## Tags, builds and releases
 
 Feature roadmap names (such as V0.5) are not formal application releases. Never create a release tag merely because a roadmap item is checked.
 
-1. Merge a version bump after green CI, and complete any required platform-specific manual acceptance.
+1. Verify the synchronized mainline version (automated patch or reviewed minor PR), green CI, and any required platform-specific manual acceptance.
 2. Build, run and inspect the platform bundles; for macOS verify the fresh app bundle's About metadata.
 3. Create and push an annotated tag for the accepted main commit (for example: git tag -a v0.5.0 -m "VirtualLab 0.5.0"; git push origin v0.5.0).
 4. GitHub's tag verification workflow rejects a tag that does not match all five version sources; it does not publish unverified binaries.
