@@ -61,6 +61,8 @@ describe('task semantics and manual plan validation', () => {
     for (const path of ['src/','src/*','./src','src//file','.env-secret','src/\u0000file']) {
       expect(validateTaskPlan({...plan,tasks:[draftFixture({scope:[path]})]}).join()).toMatch(/范围/);
     }
+    expect(validateTaskPlan({...plan,tasks:[draftFixture({scope:['.']})]})).toEqual([]);
+    expect(validateTaskPlan({...plan,tasks:[draftFixture({scope:['.','src']})]}).join()).toMatch(/范围/);
     expect(validateTaskPlan({...plan,expectedHeadSha:'not-a-full-sha'}).join()).toMatch(/HEAD/);
     expect(validateTaskPlan({...plan,tasks:[draftFixture({key:'含空格 key'})]}).join()).toMatch(/任务键/);
   });

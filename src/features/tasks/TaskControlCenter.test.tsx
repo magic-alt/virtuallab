@@ -49,7 +49,7 @@ describe('task control center user flows',()=>{
   });
   it('requires explicit worktree form submission; duplicate start clicks cannot issue two writes',async()=>{
     tasks=[taskFixture({workspaceRoot:null})];render(<Harness/>);await openTask();
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/unicode');
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/unicode');
     await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_prepare_workspace',{request:{taskId:'task-1',branch:'task/unicode',targetPath:null}}));
     tasks=[taskFixture()];await act(async()=>{await import('@/stores/tasks').then(s=>s.refreshTasks());});
@@ -85,6 +85,8 @@ describe('task control center user flows',()=>{
   it('four steps allow manual implementation/integration nodes and preserve Profile paths',async()=>{
     render(<Harness/>);await screen.findByRole('button',{name:'修复解析器'});
     await userEvent.click(screen.getByRole('button',{name:'新建任务'}));
+    expect(screen.getByRole('dialog',{name:'自然语言创建任务'})).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button',{name:'高级任务图 / JSON'}));
     const wizard=screen.getByRole('dialog',{name:'创建任务计划'});
     expect(within(wizard).getByRole('button',{name:'AI 生成计划'})).toBeDisabled();
     await userEvent.type(within(wizard).getByLabelText('计划标题'),'支持新功能');
@@ -92,7 +94,7 @@ describe('task control center user flows',()=>{
     await userEvent.click(within(wizard).getByRole('button',{name:'读取当前 HEAD'}));
     await waitFor(()=>expect(within(wizard).getByLabelText('基线 HEAD')).toHaveValue('b'.repeat(40)));
     await userEvent.click(within(wizard).getByRole('button',{name:'下一步'}));
-    await userEvent.type(within(wizard).getByLabelText('允许修改的范围（每行一个）'),'src/');
+    await userEvent.clear(within(wizard).getByLabelText('允许修改的范围（每行一个）'));await userEvent.type(within(wizard).getByLabelText('允许修改的范围（每行一个）'),'src/');
     const profile={schemaVersion:1,id:'p',name:'测试',gates:[{id:'unit',label:'Unit',kind:'unit',required:true,approval:'none',executor:{type:'process',program:'npm',args:['test'],cwd:'workspace'}}],outputPaths:['dist'],sourcePaths:['ignored/source']};
     await userEvent.clear(within(wizard).getByLabelText('Profile JSON'));
     // paste avoids interpreting braces as user-event keyboard descriptors
@@ -176,7 +178,7 @@ describe('task control center user flows',()=>{
       return fallback(command,args);
     });
     render(<Harness/>);await openTask();expect(screen.queryByRole('button',{name:'核对已创建工作区'})).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/recover');await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/recover');await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
     await screen.findByRole('alert');const reconcile=await screen.findByRole('button',{name:'核对已创建工作区'});
     expect(native.invoke.mock.calls.some(([c])=>c==='task_reconcile_workspace')).toBe(false);expect(screen.getByRole('button',{name:'创建任务工作区'})).toBeDisabled();
     await userEvent.click(reconcile);await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_reconcile_workspace',{request:{taskId:'task-1'}}));
@@ -194,7 +196,7 @@ describe('task control center user flows',()=>{
     tasks=[taskFixture({workspaceRoot:null})];useTaskStore.setState({actionErrors:{'task-1':'Preparation intent persistence uncertain; manual reconciliation required'}});
     render(<Harness/>);await openTask();await userEvent.click(await screen.findByRole('button',{name:'核对已创建工作区'}));
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_reconcile_workspace',{request:{taskId:'task-1'}}));
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/corrected');
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/corrected');
     expect(screen.getByRole('button',{name:'创建任务工作区'})).toBeEnabled();expect(native.invoke.mock.calls.some(([c])=>c==='task_prepare_workspace')).toBe(false);
     expect(screen.getByText(/再次显式创建/)).toBeVisible();
   });

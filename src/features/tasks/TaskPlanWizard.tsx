@@ -11,12 +11,14 @@ import { parseTaskProfile, validateTaskPlan } from './model';
 const lines = (text: string) => text.split(/\r?\n/).map(value => value.trim().replaceAll('\\','/').replace(/\/+$/, '')).filter(Boolean);
 const profileHelp = 'Profile JSON 支持 outputPaths（相对生成输出，不可掩盖已跟踪源码）、sourcePaths（显式包含忽略的源码；空表示全部已跟踪及未忽略的新文件）、toolchainPrograms（命令名或绝对可执行路径，不含参数）。CMake 须先通过探索性 Run 配置 Ninja；正式验证支持默认目标与直接原生 C/C++ 编译器，使用 build/test Profile。未知 launcher、自定义目标或间接调用不能取得资格。';
 interface NodeEditor {localId: number; key: string; title: string; goal: string; scopeText: string; kind: TaskKind; dependenciesText: string; profileJson: string; autoCommit: boolean}
-export function TaskPlanWizard({repositories, activeRepository, onClose}: {repositories: RepositoryRecord[]; activeRepository: RepositoryRecord | null; onClose: () => void}) {
-  const [root, setRoot] = useState(activeRepository?.path ?? repositories[0]?.path ?? '');
-  const [head, setHead] = useState('');
+export function TaskPlanWizard({repositories, activeRepository, onClose, prefill = null}: {repositories: RepositoryRecord[]; activeRepository: RepositoryRecord | null; onClose: () => void; prefill?: TaskPlanRequest | null}) {
+  const [root, setRoot] = useState(prefill?.repositoryRoot ?? activeRepository?.path ?? repositories[0]?.path ?? '');
+  const [head, setHead] = useState(prefill?.expectedHeadSha ?? '');
   const [step, setStep] = useState(0);
-  const [nodes, setNodes] = useState<NodeEditor[]>([{localId:1,key:'impl-1',title:'',goal:'',scopeText:'',kind:'implementation',dependenciesText:'',profileJson:'null',autoCommit:false}]);
-  const nextId = useRef(2);
+  const [nodes, setNodes] = useState<NodeEditor[]>(() => prefill?.tasks.length
+    ? prefill.tasks.map((node, index) => ({localId:index + 1,key:node.key,title:node.title,goal:node.goal,scopeText:node.scope.join('\n'),kind:node.kind,dependenciesText:node.dependencyKeys.join(', '),profileJson:JSON.stringify(node.profile,null,2),autoCommit:node.autoCommit}))
+    : [{localId:1,key:'impl-1',title:'',goal:'',scopeText:'',kind:'implementation',dependenciesText:'',profileJson:'null',autoCommit:false}]);
+  const nextId = useRef((prefill?.tasks.length ?? 1) + 1);
   const liveContext=useRef({root,repositories});liveContext.current={root,repositories};
   const [error, setError] = useState(''); const [reading, setReading] = useState(false);
   const readGeneration = useRef(0); const alive = useRef(true); const dialog = useRef<HTMLDialogElement>(null);
@@ -24,7 +26,7 @@ export function TaskPlanWizard({repositories, activeRepository, onClose}: {repos
   useEffect(() => {void refreshTaskProfiles();}, []);
   const tasks = useTaskStore(s => s.tasks); const pending = useTaskStore(s => s.pending[`plan:${root}`]);
   useEffect(() => {alive.current = true; if (dialog.current?.showModal) dialog.current.showModal(); else dialog.current?.setAttribute('open',''); return () => {alive.current = false; ++readGeneration.current;};}, []);
-  useEffect(() => {++readGeneration.current; setReading(false); setHead('');}, [root]);
+  useEffect(() => {++readGeneration.current; setReading(false); setHead(root === prefill?.repositoryRoot ? prefill.expectedHeadSha : '');}, [root]);
   const profiles = [...new Map(tasks.filter(task => workspaceKey(task.repositoryRoot) === workspaceKey(root) && task.profile).map(task => [task.profile!.id, task.profile!])).values()];
   const update = (index: number, patch: Partial<NodeEditor>) => setNodes(current => current.map((node, i) => i === index ? {...node, ...patch} : node));
   const readHead = async () => {
