@@ -44,6 +44,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   const tasks = useTaskStore(state => state.tasks);
   const pending = useTaskStore(state => !!state.pending['plan:' + root]);
   const registered = repositories.some(repo => workspaceKey(repo.path) === workspaceKey(root));
+  const descriptionBytes = new TextEncoder().encode(description.trim()).byteLength;
 
   useEffect(() => {
     alive.current = true;
@@ -137,7 +138,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         <div className="task-quick-suggestions" aria-label="描述示例">
           {suggestions.map(item => <button key={item} type="button" onClick={() => setDescription(item)}>{item}</button>)}
         </div>
-        <p className="task-quick-hint">描述原样交给执行 Agent，不会假装生成 AI 计划。默认创建一个实现任务，后续显式创建独立 Worktree 并启动 Agent。</p>
+        <p className="task-quick-hint">描述原样交给执行 Agent，不会假装生成 AI 计划。默认创建一个实现任务，后续显式创建独立 Worktree 并启动 Agent。{descriptionBytes} / 8192 字节{descriptionBytes > 8192 ? ' · 描述过长，请缩短' : ''}</p>
         <details className="task-quick-advanced">
           <summary>可选设置 · 修改范围、验证 Profile、本地提交</summary>
           <label>允许修改范围
@@ -173,7 +174,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         {error && <p role="alert" className="task-error">{error}</p>}
         <footer className="task-row task-quick-actions">
           <button type="button" onClick={() => onAdvanced(draft())} disabled={submitting || pending}>高级任务图 / JSON</button>
-          <button type="submit" disabled={!description.trim() || !root || !registered || !snapshot || reading || !isDesktopRuntime()}>
+          <button type="submit" disabled={!description.trim() || descriptionBytes > 8192 || !root || !registered || !snapshot || reading || !isDesktopRuntime()}>
             {submitting || pending ? '正在创建…' : '创建任务'}
           </button>
         </footer>
