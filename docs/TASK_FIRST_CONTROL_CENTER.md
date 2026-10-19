@@ -8,7 +8,7 @@ The application navigation provides 控制中心, 任务, 工程仓库, 证据 a
 
 Tasks belong to a selected repository and reference explicitly created registered Git worktrees. A task never owns repository state through an Agent session. The footer build identity still identifies the running application independently of task/repository selection.
 
-Active PTYs, Agents, Run/build processes and verification hold the same workspace writer reservation. Stop an existing session before handing that workspace to another writer; navigation preserves sessions and never stops them implicitly. Independent worktrees can execute concurrently.
+Agents, Run/build processes and verification share an exclusive workspace writer reservation. Interactive PTYs hold separate terminal leases and coexist with branch switches, Run and other workspace operations; navigation and branch switches never stop them implicitly. Their leases block worktree removal and repository detach until terminal cleanup is observed. Independent worktrees can execute concurrently.
 
 ## Local workflow
 

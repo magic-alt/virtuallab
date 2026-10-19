@@ -161,7 +161,7 @@ pub async fn terminal_spawn(
     rows: u16,
 ) -> Result<(), String> {
     let manager = state.inner().clone();
-    let reservation = app.state::<WorkspaceLifecycle>().reserve(&cwd, "terminal")?;
+    let reservation = app.state::<WorkspaceLifecycle>().reserve_terminal(&cwd)?;
     {
         let mut pending = manager.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?;
         if app.state::<RunRegistry>().is_closed() { return Err("Application is shutting down".into()); }
@@ -171,17 +171,14 @@ pub async fn terminal_spawn(
     }
     let cleanup = manager.clone();
     let cleanup_id = id.clone();
+    let published = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let startup_published = published.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        terminal_spawn_blocking(app, manager, id, cwd, cols, rows, reservation)
+        terminal_spawn_blocking(app, manager, id, cwd, cols, rows, reservation, startup_published)
     }).await.map_err(|error| format!("Terminal startup task failed: {error}"))
         .and_then(|result| result);
     if result.is_err() {
-        // A cleanup failure retains ownership and its reservation for retry.
-        if let Ok(sessions) = cleanup.sessions.lock() {
-            if !sessions.contains_key(&cleanup_id) {
-                if let Ok(mut pending) = cleanup.reservations.lock() { pending.remove(&cleanup_id); }
-            }
-        }
+        cleanup.cleanup_failed_startup(&cleanup_id, published.load(std::sync::atomic::Ordering::Acquire));
     }
     result
 }
@@ -202,6 +199,7 @@ fn terminal_spawn_blocking(
     cols: u16,
     rows: u16,
     reservation: WorkspaceReservation,
+    published: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
     let cwd_path = std::path::Path::new(&cwd);
     if !cwd_path.is_dir() {
@@ -255,6 +253,7 @@ fn terminal_spawn_blocking(
     };
     let cancelled = app.state::<RunRegistry>().is_closed() || state.reservations.lock()
         .map(|pending| pending.get(&id).copied().unwrap_or(true)).unwrap_or(true);
+    let released = reservation.release_observer();
     let session = Arc::new(Mutex::new(TerminalSession {
         _reservation: reservation,
         cwd: cwd.clone(),
@@ -265,6 +264,7 @@ fn terminal_spawn_blocking(
     let startup_cleanup = if cancelled { session.lock().map_err(|_| "Terminal session lock poisoned")?.terminate() } else { Ok(()) };
 
     sessions.insert(id.clone(), session.clone());
+    published.store(true, std::sync::atomic::Ordering::Release);
     drop(sessions);
 
     {
@@ -333,12 +333,21 @@ fn terminal_spawn_blocking(
                 }
             }
         }
-        if let Ok(mut map) = sessions.lock() {
+        let retired = if let Ok(mut map) = sessions.lock() {
             // An old reader must not erase a newly created session with the same ID.
             if map.get(&id_for_reader).is_some_and(|current| Arc::ptr_eq(current, &session)) {
                 map.remove(&id_for_reader);
-                if let Ok(mut pending) = reservations.lock() { pending.remove(&id_for_reader); }
-            }
+                true
+            } else { false }
+        } else { false };
+        drop(session);
+        // Arc's strong count reaches zero before its fields finish dropping.
+        // Observe the lease's actual release, then acknowledge the exit.
+        while !released.load(std::sync::atomic::Ordering::Acquire) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        if retired {
+            if let Ok(mut pending) = reservations.lock() { pending.remove(&id_for_reader); }
         }
         let _ = app_for_reader.emit(
             "workbench://event",
@@ -397,26 +406,15 @@ pub fn terminal_resize(
 }
 
 #[tauri::command]
-pub fn terminal_stop(
+pub async fn terminal_stop(
     app: AppHandle,
     state: State<'_, TerminalManager>,
     id: String,
 ) -> Result<(), String> {
-    if let Some(cancelled) = state.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?.get_mut(&id) { *cancelled = true; }
-    let session = {
-        let sessions = state
-            .sessions
-            .lock()
-            .map_err(|_| "Terminal manager lock poisoned".to_string())?;
-        sessions.get(&id).cloned()
-    };
-
-    if let Some(session) = session {
-        let mut session = session
-            .lock()
-            .map_err(|_| "Terminal session lock poisoned".to_string())?;
-        session.terminate()?;
-    }
+    let manager = state.inner().clone();
+    let stop_id = id.clone();
+    tauri::async_runtime::spawn_blocking(move || manager.stop_terminal(&stop_id, Duration::from_secs(10)))
+        .await.map_err(|error| format!("Terminal shutdown task failed: {error}"))??;
 
     let _ = emit_event(&app,
         WorkbenchEvent::new("terminal.stopped", id),
@@ -991,6 +989,31 @@ fn terminal_lock_until<'a, T>(
 }
 
 impl TerminalManager {
+    fn cleanup_failed_startup(&self, id: &str, published: bool) {
+        // Once published, only the reader may retire pending state, including
+        // the gap after map removal but before final lease release.
+        if !published {
+            if let Ok(mut pending) = self.reservations.lock() { pending.remove(id); }
+        }
+    }
+
+    fn stop_terminal(&self, id: &str, timeout: Duration) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + timeout;
+        if let Some(cancelled) = terminal_lock_until(&self.reservations, deadline)?.get_mut(id) { *cancelled = true; }
+        // Let the existing monitor clean up, without blocking the IPC thread
+        // or retaining the very Arc whose reservation we are waiting to drop.
+        loop {
+            let retired = !terminal_lock_until(&self.reservations, deadline)?.contains_key(id);
+            if retired {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("Terminal shutdown is not complete; wait for cleanup and retry Stop.".into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// Cancel a fixed set of this worktree's terminals and wait for their
     /// existing monitors/readers to observe process exit and release ownership.
     pub(crate) fn stop_workspace_terminals(
@@ -1025,9 +1048,9 @@ impl TerminalManager {
         // Keeping these Arcs would itself retain WorkspaceReservation forever.
         drop(targets);
         loop {
-            // Map removal precedes the reader's final Arc drop; the native
-            // reservation, rather than map absence, is the release authority.
-            if lifecycle.try_is_reserved_identity(target)? == Some(false) { return Ok(()); }
+            // Wait only for terminal leases; independent Run/Agent work may
+            // continue while the terminal shuts down.
+            if lifecycle.try_has_terminals_identity(target)? == Some(false) { return Ok(()); }
             if std::time::Instant::now() >= deadline {
                 return Err("Terminal shutdown is not complete; the worktree was kept. Retry after cleanup finishes.".into());
             }
@@ -1083,7 +1106,8 @@ mod worktree_terminal_stop_tests {
             Self { root, manager: TerminalManager::default(), lifecycle: WorkspaceLifecycle::default() }
         }
         fn start(&self, id: &str, cwd: &Path) {
-            let reservation = self.lifecycle.reserve(cwd.to_str().unwrap(), "terminal").unwrap();
+            let reservation = self.lifecycle.reserve_terminal(cwd.to_str().unwrap()).unwrap();
+            let released = reservation.release_observer();
             let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
             let mut reader = pair.master.try_clone_reader().unwrap();
             let writer = Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
@@ -1118,6 +1142,10 @@ mod worktree_terminal_stop_tests {
                 let _ = read_terminal_output(&mut *reader, &writer, |_| {});
                 session.lock().unwrap().terminate().unwrap();
                 manager.sessions.lock().unwrap().remove(&id);
+                drop(session);
+                while !released.load(std::sync::atomic::Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(10));
+                }
                 manager.reservations.lock().unwrap().remove(&id);
             });
         }
@@ -1134,6 +1162,82 @@ mod worktree_terminal_stop_tests {
     }
 
     #[test]
+    fn live_terminal_survives_branch_switch_run_and_second_terminal() {
+        let fixture = Fixture::new();
+        let target = fixture.root.join("target 中文");
+        let git = |args: &[&str]| {
+            let status = background_command("git").args(args).current_dir(&target)
+                .stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+            assert!(status.success(), "fixture Git operation failed");
+        };
+        git(&["init", "-b", "main"]);
+        fs::write(target.join("README.md"), "fixture").unwrap();
+        git(&["add", "README.md"]);
+        git(&["-c", "user.name=VirtualLab QA", "-c", "user.email=qa@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"]);
+        git(&["branch", "topic"]);
+        fixture.start("original", &target);
+        let original = fixture.manager.sessions.lock().unwrap().get("original").unwrap().clone();
+        let original_pid = original.lock().unwrap().child.process_id();
+        {
+            let _switch = fixture.lifecycle.reserve(target.to_str().unwrap(), "Git branch switch").unwrap();
+            git(&["switch", "topic"]);
+        }
+        {
+            let _run = fixture.lifecycle.reserve(target.to_str().unwrap(), "process").unwrap();
+            fixture.start("second", &target);
+            let mut command = background_command("node");
+            command.args(["-e", "require('fs').writeFileSync('run-result.txt','passed')"])
+                .current_dir(&target).stdout(Stdio::null()).stderr(Stdio::null());
+            let mut child = crate::managed_process::spawn(&mut command).unwrap();
+            assert!(child.wait().unwrap().success());
+            child.terminate_remaining().unwrap();
+            assert_eq!(fs::read_to_string(target.join("run-result.txt")).unwrap(), "passed");
+        }
+        assert!(Arc::ptr_eq(fixture.manager.sessions.lock().unwrap().get("original").unwrap(), &original));
+        let mut session = original.lock().unwrap();
+        assert_eq!(session.child.process_id(), original_pid);
+        #[cfg(windows)]
+        assert!(session.child.try_wait().unwrap().is_none(), "branch switch and Run must keep the original shell alive");
+        #[cfg(unix)]
+        assert!(!session.process.cleanup_due(false).unwrap());
+        drop(session);
+        drop(original);
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("original"), Some(&false));
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("second"), Some(&false));
+    }
+
+    #[test]
+    fn single_terminal_stop_waits_for_final_owner_and_keeps_other_workspaces() {
+        let fixture = Fixture::new();
+        let target = fixture.root.join("target 中文");
+        fixture.start("target", &target);
+        fixture.start("other", &fixture.root.join("other"));
+        let held = fixture.manager.sessions.lock().unwrap().get("target").unwrap().clone();
+        let manager = fixture.manager.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let _ = send.send(manager.stop_terminal("target", Duration::from_secs(5)));
+        });
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while fixture.manager.reservations.lock().unwrap().get("target") == Some(&false) {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        while fixture.manager.sessions.lock().unwrap().contains_key("target") {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        // A cancelled startup can return an error in this retirement gap.
+        fixture.manager.cleanup_failed_startup("target", true);
+        assert!(matches!(receive.recv_timeout(Duration::from_millis(100)), Err(std::sync::mpsc::RecvTimeoutError::Timeout)), "Stop must not acknowledge before the final reservation owner drops");
+        drop(held);
+        receive.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        waiter.join().unwrap();
+        assert!(fixture.lifecycle.reserve(target.to_str().unwrap(), "Run after Stop").is_ok());
+        assert_eq!(fixture.manager.reservations.lock().unwrap().get("other"), Some(&false));
+    }
+
+    #[test]
     fn stops_target_terminal_started_in_subdirectory_and_observes_reservation_release() {
         let fixture = Fixture::new();
         let target = fixture.root.join("target 中文");
@@ -1143,7 +1247,8 @@ mod worktree_terminal_stop_tests {
         fixture.start("unrelated", &fixture.root.join("other"));
         fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_secs(10)).unwrap();
         assert!(!fixture.lifecycle.is_reserved(target.to_str().unwrap()).unwrap());
-        assert!(fixture.lifecycle.is_reserved(fixture.root.join("other").to_str().unwrap()).unwrap());
+        let other = WorkspaceLifecycle::resolve_identity(fixture.root.join("other").to_str().unwrap()).unwrap();
+        assert_eq!(fixture.lifecycle.try_has_terminals_identity(&other).unwrap(), Some(true));
         assert_eq!(fixture.manager.reservations.lock().unwrap().get("unrelated"), Some(&false));
     }
 
@@ -1202,11 +1307,11 @@ mod worktree_terminal_stop_tests {
     }
 
     #[test]
-    fn nonterminal_writer_times_out_without_releasing_its_reservation() {
+    fn stopping_terminals_does_not_wait_for_or_release_other_writers() {
         let fixture = Fixture::new();
         let target = fixture.root.join("target 中文");
         let writer = fixture.lifecycle.reserve(target.to_str().unwrap(), "agent").unwrap();
-        assert!(fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_millis(30)).is_err());
+        assert!(fixture.manager.stop_workspace_terminals(&WorkspaceLifecycle::resolve_identity(target.to_str().unwrap()).unwrap(), &fixture.lifecycle, Duration::from_millis(30)).is_ok());
         assert!(fixture.lifecycle.is_reserved(target.to_str().unwrap()).unwrap());
         drop(writer);
     }

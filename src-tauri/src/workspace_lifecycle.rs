@@ -10,9 +10,16 @@ pub struct WorkspaceLifecycle(Arc<Mutex<LifecycleState>>);
 
 #[derive(Default, Debug)]
 struct LifecycleState {
-    claims: HashMap<PathBuf, String>,
+    claims: HashMap<PathBuf, WriterClaim>,
+    terminals: HashMap<PathBuf, usize>,
     detached: HashSet<PathBuf>,
     activities: HashMap<PathBuf, usize>,
+}
+
+#[derive(Debug)]
+struct WriterClaim {
+    owner: String,
+    blocks_terminals: bool,
 }
 
 /// Nonexclusive task lifetime; nested native writers retain their own exclusive
@@ -41,12 +48,14 @@ impl LifecycleState {
     }
 }
 
-/// A unique, non-cloneable claim. Keep it in the runtime until process-tree
+/// A non-cloneable writer reservation or nonexclusive terminal lease. Keep it until process-tree
 /// exit is observed; requesting cancellation does not release ownership.
 #[derive(Debug)]
 pub struct WorkspaceReservation {
     lifecycle: WorkspaceLifecycle,
     key: PathBuf,
+    terminal: bool,
+    released: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn identity(root: &str) -> Result<PathBuf, String> {
@@ -75,16 +84,20 @@ fn identity(root: &str) -> Result<PathBuf, String> {
 impl WorkspaceLifecycle {
     pub(crate) fn resolve_identity(root: &str) -> Result<PathBuf, String> { identity(root) }
 
-    /// Query an already-resolved identity without following a replacement path.
-    pub(crate) fn try_is_reserved_identity(&self, root: &Path) -> Result<Option<bool>, String> {
+    /// Query terminal removal protection without following a replacement path.
+    pub(crate) fn try_has_terminals_identity(&self, root: &Path) -> Result<Option<bool>, String> {
         match self.0.try_lock() {
-            Ok(claims) => Ok(Some(claims.claims.contains_key(root))),
+            Ok(claims) => Ok(Some(claims.terminals.contains_key(root))),
             Err(std::sync::TryLockError::WouldBlock) => Ok(None),
             Err(std::sync::TryLockError::Poisoned(_)) => Err("Workspace lifecycle lock poisoned".into()),
         }
     }
 
     pub fn reserve(&self, root: &str, owner: &str) -> Result<WorkspaceReservation, String> {
+        self.reserve_writer(root, owner, false)
+    }
+
+    fn reserve_writer(&self, root: &str, owner: &str, blocks_terminals: bool) -> Result<WorkspaceReservation, String> {
         if owner.trim().is_empty() {
             return Err("Workspace owner must not be empty".into());
         }
@@ -97,16 +110,40 @@ impl WorkspaceLifecycle {
         // second identity for a dangling alias.
         let key = identity(root)?;
         claims.require_attached(&key)?;
+        if blocks_terminals && claims.terminals.contains_key(&key) {
+            return Err("Workspace is reserved by terminal; wait for observed completion.".into());
+        }
         if let Some(current) = claims.claims.get(&key) {
+            let current = &current.owner;
             return Err(format!(
                 "Workspace is reserved by {current}; wait for observed completion."
             ));
         }
-        claims.claims.insert(key.clone(), owner.to_owned());
+        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals });
         Ok(WorkspaceReservation {
             lifecycle: self.clone(),
             key,
+            terminal: false,
+            released: Arc::default(),
         })
+    }
+
+    /// A terminal is an interactive attachment, not a scheduled workspace writer.
+    /// Its lease protects removal while allowing Git, Run and other terminals.
+    pub(crate) fn reserve_terminal(&self, root: &str) -> Result<WorkspaceReservation, String> {
+        let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
+        let key = identity(root)?;
+        state.require_attached(&key)?;
+        // Before a new worktree has its .git marker, identity() may resolve its
+        // cwd to the parent worktree. Check the actual directory as well.
+        let directory = std::fs::canonicalize(root).map_err(|error| format!("Cannot resolve terminal directory: {error}"))?;
+        #[cfg(windows)]
+        let directory = PathBuf::from(directory.to_string_lossy().to_lowercase());
+        if let Some((_, claim)) = state.claims.iter().find(|(claimed, claim)| claim.blocks_terminals && directory.starts_with(claimed)) {
+            return Err(format!("Workspace is reserved by {}; wait for observed completion.", claim.owner));
+        }
+        *state.terminals.entry(key.clone()).or_default() += 1;
+        Ok(WorkspaceReservation { lifecycle: self.clone(), key, terminal: true, released: Arc::default() })
     }
 
     /// Reserve a not-yet-created worktree target before mkdir/Git registration.
@@ -161,12 +198,17 @@ impl WorkspaceLifecycle {
         let key = PathBuf::from(key.to_string_lossy().to_lowercase());
         claims.require_attached(&key)?;
         if let Some(current) = claims.claims.get(&key) {
-            return Err(format!("Workspace is reserved by {current}"));
+            return Err(format!("Workspace is reserved by {}", current.owner));
         }
-        claims.claims.insert(key.clone(), owner.to_owned());
+        if claims.terminals.contains_key(&key) {
+            return Err("Workspace is reserved by terminal; wait for observed completion.".into());
+        }
+        claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true });
         Ok(WorkspaceReservation {
             lifecycle: self.clone(),
             key,
+            terminal: false,
+            released: Arc::default(),
         })
     }
 
@@ -192,11 +234,15 @@ impl WorkspaceLifecycle {
         let mut state = self.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
         let keys = roots.iter().map(|root| identity(root)).collect::<Result<Vec<_>, _>>()?;
         for key in &keys {
+            if state.terminals.keys().any(|active| active.starts_with(key) || key.starts_with(active)) {
+                return Err("Workspace is reserved by terminal; stop native work and wait for observed completion before removing the repository.".into());
+            }
             if state.activities.keys().any(|active| active.starts_with(key) || key.starts_with(active)) {
                 return Err("Repository has an active task operation; cancel or wait for completion before removing it.".into());
             }
             if let Some((_, owner)) = state.claims.iter()
                 .find(|(claimed, _)| claimed.starts_with(key) || key.starts_with(claimed)) {
+                let owner = &owner.owner;
                 return Err(format!("Workspace is reserved by {owner}; stop native work and wait for observed completion before removing the repository."));
             }
         }
@@ -217,7 +263,7 @@ impl WorkspaceLifecycle {
     }
 
     pub fn begin_removal(&self, root: &str) -> Result<WorkspaceReservation, String> {
-        self.reserve(root, "worktree removal")
+        self.reserve_writer(root, "worktree removal", true)
     }
 
     pub fn is_reserved(&self, root: &str) -> Result<bool, String> {
@@ -225,6 +271,7 @@ impl WorkspaceLifecycle {
             .0
             .lock()
             .map_err(|_| "Workspace lifecycle lock poisoned")?;
+        // Scheduler/provider recovery observes controlled writers only.
         Ok(claims.claims.contains_key(&identity(root)?))
     }
 }
@@ -232,6 +279,8 @@ impl WorkspaceLifecycle {
 impl WorkspaceReservation {
     /// Immutable owner identity, including terminals started below a worktree root.
     pub(crate) fn workspace_root(&self) -> &Path { &self.key }
+
+    pub(crate) fn release_observer(&self) -> Arc<std::sync::atomic::AtomicBool> { self.released.clone() }
 }
 
 impl Drop for WorkspaceReservation {
@@ -243,7 +292,15 @@ impl Drop for WorkspaceReservation {
             .0
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        claims.claims.remove(&self.key);
+        if self.terminal {
+            if let Some(count) = claims.terminals.get_mut(&self.key) {
+                *count -= 1;
+                if *count == 0 { claims.terminals.remove(&self.key); }
+            }
+        } else {
+            claims.claims.remove(&self.key);
+        }
+        self.released.store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -274,14 +331,61 @@ mod tests {
         root
     }
     #[test]
+    fn nested_creation_blocks_terminal_start_before_git_marker_exists() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        fs::create_dir(root.join(".git")).unwrap();
+        let target = root.join("future");
+        let creation = service.reserve_creation(target.to_str().unwrap(), "creation").unwrap();
+        fs::create_dir(&target).unwrap();
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_err());
+        assert!(service.reserve_terminal(root.to_str().unwrap()).is_ok());
+        fs::create_dir(target.join(".git")).unwrap();
+        drop(creation);
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminals_do_not_block_workspace_work_but_keep_removal_protected() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let path = root.to_str().unwrap();
+        let first = service.reserve_terminal(path).unwrap();
+        let second = service.reserve_terminal(path).expect("multiple terminals must coexist");
+        assert!(!service.is_reserved(path).unwrap(), "shells must not block provider recovery");
+        for owner in ["Git branch switch", "process", "build workflow", "agent codex", "verification"] {
+            let writer = service.reserve(path, owner).expect("terminals must not block workspace work");
+            assert!(service.reserve(path, "competing writer").is_err());
+            let extra = service.reserve_terminal(path).expect("workspace work must not block terminals");
+            drop(extra);
+            drop(writer);
+        }
+        assert!(service.begin_removal(path).is_err());
+        assert!(service.detach_repository(&[path.into()], || Ok(())).is_err());
+        drop(first);
+        assert!(service.begin_removal(path).is_err(), "second terminal must retain removal protection");
+        let writer = service.reserve(path, "process").unwrap();
+        drop(second);
+        assert!(service.reserve(path, "agent").is_err(), "terminal exit must keep the writer claim");
+        drop(writer);
+        let removal = service.begin_removal(path).unwrap();
+        assert!(service.reserve_terminal(path).is_err());
+        drop(removal);
+        service.detach_repository(&[path.into()], || Ok(())).unwrap();
+        assert!(service.reserve_terminal(path).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn repository_detach_is_atomic_and_preserves_active_sibling_owners() {
         let service = WorkspaceLifecycle::default();
         let root = fixture();
         let paths = vec![root.to_string_lossy().into_owned(), root.join("other").to_string_lossy().into_owned()];
-        let owner = service.reserve(&paths[1], "terminal").unwrap();
+        let owner = service.reserve_terminal(&paths[1]).unwrap();
         assert!(service.detach_repository(&paths, || Ok(())).is_err());
         assert!(service.reserve(&paths[0], "agent").is_ok());
-        assert!(service.is_reserved(&paths[1]).unwrap());
+        assert_eq!(service.try_has_terminals_identity(&identity(&paths[1]).unwrap()).unwrap(), Some(true));
         drop(owner);
         service.detach_repository(&paths, || Ok(())).unwrap();
         assert!(service.reserve(&paths[0], "agent").is_err());
@@ -473,7 +577,7 @@ mod tests {
         let service = WorkspaceLifecycle::default();
         let root = fixture();
         let path = root.to_str().unwrap();
-        let startup = service.reserve(path, "terminal startup").unwrap();
+        let startup = service.reserve_terminal(path).unwrap();
         assert!(service.begin_removal(path).is_err());
         drop(startup);
         let removal = service.begin_removal(path).unwrap();
@@ -522,7 +626,7 @@ mod tests {
         let root = fixture();
         fs::create_dir(root.join(".git")).unwrap();
         let _claim = service
-            .reserve(root.join("other").to_str().unwrap(), "terminal")
+            .reserve_terminal(root.join("other").to_str().unwrap())
             .unwrap();
         assert!(service.begin_removal(root.to_str().unwrap()).is_err());
         fs::remove_dir_all(root).unwrap();
@@ -538,10 +642,10 @@ mod tests {
             .reserve_creation(path, "competing creation")
             .is_err());
         fs::create_dir_all(&target).unwrap();
-        assert!(service.reserve(path, "terminal").is_err());
+        assert!(service.reserve_terminal(path).is_err());
         assert!(service.begin_removal(path).is_err());
         drop(claim);
-        assert!(service.reserve(path, "terminal").is_ok());
+        assert!(service.reserve_terminal(path).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
