@@ -56,3 +56,24 @@
 .task-evidence-table {max-width:100%;overflow:auto;overscroll-behavior:contain;}
 .task-evidence-table table {width:100%;border-collapse:collapse;font-size:12px;}
 .task-evidence-table :is(th,td) {text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid var(--task-border);overflow-wrap:anywhere;max-width:240px;}
+
+/* Prompt-first task creation: advanced contracts do not consume the default view. */
+.task-quick-dialog { width:min(740px,calc(100vw - 32px)); }
+.task-quick-dialog header { align-items:flex-start; }
+.task-quick-dialog header p { color:var(--task-muted); }
+.task-quick-dialog .task-quick-prompt-label { font-weight:600; }
+.task-quick-dialog .task-quick-prompt { min-height:168px; resize:vertical; font:400 15px/1.7 system-ui,sans-serif; }
+.task-quick-baseline { display:flex; align-items:center; flex-wrap:wrap; gap:6px; color:var(--task-muted); padding:8px 12px; background:#11151b; border-radius:8px; overflow-wrap:anywhere; }
+.task-quick-baseline button { margin-left:auto; }
+.task-quick-suggestions { display:flex; flex-wrap:wrap; gap:8px; }
+.task-center .task-quick-suggestions button { font-size:12px; color:var(--task-muted); border-radius:16px; padding:5px 10px; }
+.task-quick-dialog .task-quick-hint { color:var(--task-muted); font-size:12px; }
+.task-quick-advanced { margin:18px 0; border-top:1px solid var(--task-border); padding-top:10px; }
+.task-quick-advanced[open] { border-bottom:1px solid var(--task-border); padding-bottom:14px; }
+.task-quick-advanced p { color:var(--task-muted); font-size:12px; }
+.task-quick-summary { display:flex; flex-wrap:wrap; gap:8px 14px; padding:12px 14px; background:#12171e; border:1px solid var(--task-border); border-radius:8px; color:var(--task-muted); font-size:12px; }
+.task-quick-summary strong { color:#e4e8ed; }
+.task-quick-actions { justify-content:space-between; padding-top:16px; }
+.task-center .task-quick-actions button[type=submit] { background:#6c4827; border-color:var(--task-accent); color:#fff; font-weight:650; padding:9px 20px; }
+.task-center .task-quick-actions button[type=submit]:hover:not(:disabled) { background:#85562e; }
+@media(max-width:700px) { .task-quick-dialog .task-quick-prompt { min-height:130px; } .task-quick-actions button { flex:1; } }
