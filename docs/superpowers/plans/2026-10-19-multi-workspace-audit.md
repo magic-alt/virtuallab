@@ -31,12 +31,18 @@
 
 ## Stage 2 — Frontend lifecycle, event order and visibility
 
-**Files:** `src/features/github/GithubPanel.tsx`, `src/stores/agentTimeline.ts`, `src/features/agents/AgentWorkspace.tsx`, `src/features/shell/WorkbenchShell.tsx`, `src/features/workspace/WorkspaceContent.tsx` and their tests.
+**Files:** `src/features/github/GithubPanel.tsx`, `src/stores/agentTimeline.ts`, `src/stores/workbench.ts`, `src/features/agents/AgentWorkspace.tsx`, `src/features/shell/WorkbenchShell.tsx`, `src/features/workspace/WorkspaceContent.tsx`, `src-tauri/src/agent.rs` and their tests.
 
 1. Reproduce GitHub A→B→A and detach-with-pending-request cases; reject obsolete responses before both local and persisted state writes.
 2. Reproduce completion-before-start/reply and old-completion-after-new-turn cases; bind active/terminal state to workspace and thread/turn identity with bounded memory.
 3. Navigate a real retained terminal pane through Tasks/Evidence/Settings/Home; propagate application visibility through the workspace host and include application view in Agent notification focus checks.
 4. Run focused UI/store regressions and the frontend typecheck; review and commit the stage.
+
+Independent review added four concrete retirement cases to this stage: late
+comment success after owner removal, the second native start event for an old
+turn, buffered provider identity after explicit Forget, and provider identity
+promotion after destination stop/completion. All received failing regressions,
+targeted fixes and a fresh independent recheck before the full acceptance run.
 
 ## Stage 3 — Task dependency contract and partial availability
 
@@ -49,7 +55,7 @@
 
 ## Stage 4 — Platform-correct workspace identities
 
-**Files:** `src-tauri/src/workspace_identity.rs`, `src/lib/workspaceKey.ts` and their tests.
+**Files:** `src-tauri/src/workspace_identity.rs`, `src/lib/workspaceKey.ts`, binding hydration tests, `scripts/workspace-key.test.mjs`, and the platform assertion in `src-tauri/src/agent.rs`.
 
 The native audit reproduced a collision between actual POSIX directories named
 `literal\child` and `literal/child`. Separator rewriting and trailing separator
@@ -71,14 +77,17 @@ Keep this correction in its own tested commit.
 - `npm run typecheck`: passed.
 - `npm test` under the restricted process sandbox: 420 passed, 1 skipped, 5 failed solely with `spawnSync ... EPERM`.
 - The identical `npm test` command with subprocess execution allowed: **425 passed, 1 skipped**. No test or product change was needed for those five failures.
-- Initial native dependency generation left an incomplete cached `web_atoms` file. Running its unchanged build script in an independent temporary directory produced complete output; only that dependency's build cache is being regenerated before the pristine-main native baseline.
+- Initial native dependency generation left an incomplete cached `web_atoms` file. Its unchanged build script produced complete output independently; only that dependency's cache was rebuilt.
+- The pristine-main native baseline was 353 passed, 6 failed, 1 ignored. Four fixture-root failures passed with the original tests under an independent temporary directory; the process timeout and ambient Git tests passed unchanged with a stable copied test executable. The overall run uses that independent fixture root and prohibits concurrent relinking. See the [audit evidence](../../MULTI_WORKSPACE_AUDIT_2026-10-19.md).
 
 ## Progress
 
 - [x] Latest main/PR alignment, isolated branch and independent worktree.
 - [x] Reproducible findings and disjoint file ownership assigned.
-- [x] Stage 1 tested: lifecycle 26/26, Git 53/53, metadata/watch 25/25; queued for commit.
-- [ ] Stage 2 tested and committed.
-- [ ] Stage 3 tested and committed.
-- [ ] Stage 4 identity correction tested and committed.
-- [ ] Overall regression, independent review, documentation and remote CI inspected.
+- [x] Stage 1: lifecycle 26/26, Git 53/53, metadata/watch 25/25; committed and pushed as `4e2a80a`.
+- [x] Stage 2: focused frontend 81/81, current-process exit 2/2, typecheck; committed and pushed as `2c3e88e`.
+- [x] Stage 3: Task runtime 18/18, frontend 44/44; committed and pushed as `4a2ef5f`.
+- [x] Stage 4: native identity 4/4, frontend key/binding 16/16, typecheck; committed and pushed as `2fabb7a`.
+- [x] Overall local regression: frontend 472 passed / 1 platform skip; native 375 passed / 1 explicit probe ignored; complete acceptance exit 0, production build and locked native check passed.
+- [x] Independent source review and four follow-up fixes rechecked; no unresolved Critical/Important/Minor finding.
+- [x] Architecture and audit evidence recorded. PR submission and the final revision's live CI status are recorded in the pull request and delivery handoff.
