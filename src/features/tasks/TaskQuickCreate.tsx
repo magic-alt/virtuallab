@@ -94,7 +94,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
       if (errors.length) throw new Error(errors.join('\n'));
       // Reinspect before accepting: a changed baseline must be visible before consent.
       const latest = await inspectRepository(root);
-      if (latest.headSha !== snapshot.headSha || workspaceKey(latest.root) !== workspaceKey(root)) {
+      if (latest.headSha !== snapshot.headSha || latest.currentBranch !== snapshot.currentBranch || workspaceKey(latest.root) !== workspaceKey(root)) {
         if (alive.current) setSnapshot(latest);
         throw new Error('仓库 HEAD 或根目录已发生变化，已更新预览；请确认后重新创建。');
       }
@@ -119,7 +119,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
     <form onSubmit={event => void submit(event)}>
       <fieldset disabled={submitting || pending}>
         <label>工作仓库
-          <select value={root} onChange={event => setRoot(event.target.value)}>
+          <select value={root} onChange={event => {setRoot(event.target.value);setScopeText(null);setProfileId('');setProfile(null);setAutoCommit(false);}}>
             {repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name} — {repo.path}</option>)}
           </select>
         </label>
