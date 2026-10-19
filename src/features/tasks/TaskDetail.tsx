@@ -21,7 +21,7 @@ function TaskDecisionBinding({decision}: {decision: {runId?: string | null; tool
 export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWorkspace: OpenTaskWorkspace}) {
   const tab = useTaskStore(state => state.activeTaskId === task.id ? state.activeTaskTab : '概览');
   const setTab = (value:typeof tabs[number]) => selectTask(task.id,value);
-  const [branch,setBranch] = useState(''); const [targetPath,setTargetPath] = useState(''); const [executablePath,setExecutablePath] = useState('');
+  const [branch,setBranch] = useState(() => 'task/' + task.id); const [targetPath,setTargetPath] = useState(''); const [executablePath,setExecutablePath] = useState('');
   const [preparationUncertain,setPreparationUncertain] = useState(false);
   const [preparationNotice,setPreparationNotice] = useState('');
   const [note,setNote] = useState(''); const [ackIdentity,setAckIdentity] = useState('');
