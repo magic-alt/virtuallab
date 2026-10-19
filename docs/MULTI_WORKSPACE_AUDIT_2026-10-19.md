@@ -22,8 +22,9 @@ filesystem and process identities before mutation. A Task records fixed work
 and evidence identities, while its worktree continues to own terminals, runs
 and attached harnesses. An Agent completion event does not qualify a delivery.
 
-The defects repaired here occur at transitions between these layers. A path
-reserved by the lifecycle service must be exactly the path passed to Git. A
+The defects repaired here occur at transitions between these layers. A physical
+target reserved by the lifecycle service must identify the same directory passed
+to Git; its internal comparison key is not a command argument. A
 retirement reservation must cover nested activity that deletion would affect.
 A delayed response must retain the authority of its original request. A Task
 consumer must retain per-repository failure information instead of interpreting
@@ -163,6 +164,30 @@ rehydration for old/current store versions. Bindings preserve their original
 `workspaceRoot`, allowing correct rekeying without borrowing another workspace's
 thread. No persistence version bump or unsafe legacy-key fallback is introduced.
 
+### 10. Windows creation-path regression caught by the first CI matrix
+
+The initial creation repair used `WorkspaceReservation::workspace_root()` as its
+frozen target. That accessor is an ownership comparison key. On Windows the key
+is case-folded and contains the verbatim filesystem prefix returned by
+`canonicalize`. Git for Windows rejected that representation, causing four
+native Git tests to fail in the first PR run even though Linux passed.
+
+The follow-up preserves the existing comparison-key API and adds an internal
+reservation result that returns the physical canonical target before case
+folding, from the same locked resolution. The Git boundary converts only
+recognized Windows drive/UNC representations to ordinary paths, preserving case,
+spaces and Unicode. Components ending in a dot or space, and unsupported device
+namespaces, are rejected when conversion could change the addressed directory.
+Directory creation, Git's structured arguments and the returned workspace path
+use the same physical target; the original cwd or symlink spelling is not resolved
+again. POSIX paths bypass that conversion.
+
+New tests cover drive/UNC representation, target case, ambiguous namespace
+rejection, real POSIX backslash worktree creation/removal, and a symlink parent
+that resolves to the reserved target. The existing real Git roundtrip now also
+checks a mixed-case target containing spaces and Unicode. This is a separately
+committed regression repair, not a skipped or weakened Windows test.
+
 ## Verification record
 
 ### Baseline
@@ -203,15 +228,15 @@ thread. No persistence version bump or unsafe legacy-key fallback is introduced.
 The regression cases failed before their corresponding fixes. Group totals
 overlap and must not be added to derive a suite total.
 
-### Overall regression and independent review
+### Initial overall regression and independent review
 
-Implementation is frozen at `2fabb7adbb37584ccc5753ae0f4882aae9bc38d7`.
+The initial full local run used `2fabb7adbb37584ccc5753ae0f4882aae9bc38d7`.
 The independent reviewer rechecked all four material follow-ups against the
 production reducer/store and reported no unresolved Critical, Important or
 Minor findings. The review applies to that published commit's tree.
 
 - Linux `cargo check --locked --manifest-path src-tauri/Cargo.toml`: passed.
-- Final acceptance frontend suite: **472 passed, 1 skipped**, across 78 passing
+- Acceptance frontend suite: **472 passed, 1 skipped**, across 78 passing
   files and one platform-specific skipped file. The skip is the existing Windows
   Cargo-path recovery test on Linux. The baseline had 425 passing tests; this
   branch adds 47 passing frontend regressions without converting failures to skips.
@@ -222,8 +247,9 @@ Minor findings. The review applies to that published commit's tree.
 - Frontend production build: passed, Vite completed in 56.38 s.
 - Complete `npm run acceptance:local`: **exit 0**, including toolchain doctor,
   typecheck, all frontend tests, production build and full native tests.
-- Final whitespace check: passed. Only the audit/plan documentation changes
-  follow the frozen implementation; no product or test change follows this run.
+- Whitespace check: passed. The next commit, `71cc1e8`, added only the audit/plan
+  record. The first remote CI run then exposed the Windows creation-path issue
+  described below, which is repaired in a separate follow-up commit.
 
 Local execution used Node 24.19.0, npm 11.9.0, Git 2.51.1 and Rust/Cargo 1.99.1
 on Linux. Locked dependency installation, version/icon checks and artifact
@@ -231,10 +257,42 @@ integrity checks use the same unchanged package/Cargo lockfiles. The native
 fixture root is outside another Git worktree, and no concurrent native build
 relinked the executable during this full run.
 
-The subsequent PR runs the existing Node 22/26 and Linux/Windows/macOS matrix.
+PR [#86](https://github.com/magic-alt/virtuallab/pull/86) runs the existing
+Node 22/26 and Linux/Windows/macOS matrix.
 Its live checks at the final branch head are the authoritative remote CI record;
 local Linux success is not copied into an unobserved platform status. See
 [branch CI runs](https://github.com/magic-alt/virtuallab/actions?query=branch%3Afix%2Fmulti-workspace-audit-20261019).
+
+### Windows CI follow-up and final-head verification
+
+The first [PR CI run](https://github.com/magic-alt/virtuallab/actions/runs/39219563284)
+tested `71cc1e8`. Both Node frontend jobs and Linux desktop acceptance passed.
+macOS desktop acceptance passed before its application packaging step. Windows
+reported **339 passed, 4 failed, 3 ignored** in the native suite. All four failures
+traced to the creation target's `//?/` comparison-key representation: direct
+roundtrip, repository-relative creation, external-worktree detach/re-import, and
+the detach inventory-change fixture's attempted worktree creation.
+
+The stage-six path regression first produced **1 passed, 2 failed**. After the
+repair, the complete native Git group passed **57/57**, and lifecycle passed
+**27/27** on Linux. Five tests were added and the existing roundtrip was
+strengthened. The four failing Windows cases are retained and run again by the
+final-head Windows job; their Linux execution alone is not Windows evidence.
+Independent source review approved this narrow correction with no unresolved
+finding. The UNC regression checks representation conversion; it does not claim
+an actual network-share or SMB qualification.
+
+The complete local acceptance workflow is repeated after this source correction,
+and pushing the follow-up reruns the whole existing CI matrix. Exact final-head
+results and the corresponding commit are recorded in
+[PR #86](https://github.com/magic-alt/virtuallab/pull/86) and its checks. The
+initial local totals above remain explicitly attached to their earlier source
+revision rather than being relabeled as results for changed code.
+
+The first local repetition passed all 472 frontend tests but its unchanged Vite
+build exhausted Node's default heap at approximately 2 GiB. The repetition uses
+`NODE_OPTIONS=--max-old-space-size=4096` as a validation-process setting; no
+application, dependency or test was changed to address that resource limit.
 
 ## Qualification boundaries and remaining work
 

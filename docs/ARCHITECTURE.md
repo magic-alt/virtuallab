@@ -21,9 +21,13 @@ normalizing separators and preserve POSIX spelling. They remain UI/persistence
 keys rather than filesystem authority or a security boundary.
 
 Workspace creation resolves custom relative paths against the selected repository,
-then freezes the lifecycle reservation's absolute canonical target for directory
-creation, Git arguments and the returned workspace path. Application cwd and Git
-cwd must never identify different creation targets.
+then freezes the lifecycle reservation's absolute physical target separately from
+its comparison key. Windows case-folded ownership keys are never filesystem or
+Git arguments. The Windows Git boundary converts recognized canonical drive/UNC
+paths to an equivalent ordinary path, preserving component spelling; an ambiguous
+conversion is rejected. Directory creation, Git arguments and the returned
+workspace path use that same target. Application cwd and Git cwd must never
+identify different creation targets, and POSIX literal backslashes stay intact.
 
 Retirement reservations protect overlapping directory trees: an active writer,
 terminal, task activity or pending creation in a nested workspace blocks parent

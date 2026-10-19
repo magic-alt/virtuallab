@@ -71,6 +71,21 @@ Keep this correction in its own tested commit.
 3. Update architecture and audit documentation with concrete test results and remaining qualification boundaries.
 4. Push every stage to the requested branch, create a reviewable PR, and inspect the existing Windows/macOS/Linux and Node CI matrix at the final revision.
 
+## Stage 6 — Windows creation boundary found by remote CI
+
+**Files:** `src-tauri/src/git.rs`, `src-tauri/src/workspace_lifecycle.rs`, architecture and audit evidence.
+
+The first Windows job exposed four actual Git failures because creation passed
+the lifecycle's case-folded, verbatim comparison key to Git. Preserve the existing
+identity accessor, return the canonical physical target from the same reservation
+operation, and convert recognized Windows drive/UNC representations only at the
+Git boundary. Keep directory creation, Git arguments and the returned path on the
+same target. Reject ambiguous conversions; retain POSIX literal backslashes.
+
+Add focused failing regressions and strengthen the existing mixed-case/Unicode
+roundtrip. Independently review this narrow follow-up, commit it separately, then
+repeat complete acceptance and inspect the final commit's entire CI matrix.
+
 ## Baseline evidence
 
 - `npm ci --no-audit --no-fund`: passed with the committed lockfile.
@@ -88,6 +103,8 @@ Keep this correction in its own tested commit.
 - [x] Stage 2: focused frontend 81/81, current-process exit 2/2, typecheck; committed and pushed as `2c3e88e`.
 - [x] Stage 3: Task runtime 18/18, frontend 44/44; committed and pushed as `4a2ef5f`.
 - [x] Stage 4: native identity 4/4, frontend key/binding 16/16, typecheck; committed and pushed as `2fabb7a`.
-- [x] Overall local regression: frontend 472 passed / 1 platform skip; native 375 passed / 1 explicit probe ignored; complete acceptance exit 0, production build and locked native check passed.
-- [x] Independent source review and four follow-up fixes rechecked; no unresolved Critical/Important/Minor finding.
-- [x] Architecture and audit evidence recorded. PR submission and the final revision's live CI status are recorded in the pull request and delivery handoff.
+- [x] Initial overall local regression at `2fabb7a`: frontend 472 passed / 1 platform skip; native 375 passed / 1 explicit probe ignored; complete acceptance exit 0, production build and locked native check passed.
+- [x] Initial independent source review and four follow-up fixes rechecked; no unresolved finding at that revision.
+- [x] Architecture and audit evidence committed as `71cc1e8`; draft [PR #86](https://github.com/magic-alt/virtuallab/pull/86) opened.
+- [x] Stage 6: first Windows CI failure reproduced at the path boundary; Git 57/57 and lifecycle 27/27 passed after correction on Linux. Five new tests and a strengthened real Git roundtrip retain the failing Windows cases.
+- Final-head complete acceptance, independent follow-up review, staged commit and remote matrix results are recorded in PR #86 and the delivery handoff. The initial run is not treated as qualification of the corrected Windows source.

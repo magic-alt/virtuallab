@@ -172,6 +172,16 @@ impl WorkspaceLifecycle {
         root: &str,
         owner: &str,
     ) -> Result<WorkspaceReservation, String> {
+        self.reserve_creation_target(root, owner).map(|(reservation, _)| reservation)
+    }
+
+    /// Freeze the filesystem target before Windows ownership case-folding.
+    /// Creation callers must use this path, not the reservation's comparison key.
+    pub(crate) fn reserve_creation_target(
+        &self,
+        root: &str,
+        owner: &str,
+    ) -> Result<(WorkspaceReservation, PathBuf), String> {
         if root.is_empty() || owner.trim().is_empty() {
             return Err("Creation path and owner must not be empty".into());
         }
@@ -207,15 +217,17 @@ impl WorkspaceLifecycle {
             );
             ancestor = ancestor.parent().ok_or("Cannot resolve creation parent")?;
         }
-        let mut key = std::fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
-        if !key.is_dir() {
+        let mut target = std::fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+        if !target.is_dir() {
             return Err("Worktree creation parent must be a directory".into());
         }
         for part in missing.into_iter().rev() {
-            key.push(part);
+            target.push(part);
         }
         #[cfg(windows)]
-        let key = PathBuf::from(key.to_string_lossy().to_lowercase());
+        let key = PathBuf::from(target.to_string_lossy().to_lowercase());
+        #[cfg(not(windows))]
+        let key = target.clone();
         claims.require_attached(&key)?;
         if let Some((_, current)) = claims.claims.iter().find(|(claimed, claim)| {
             *claimed == &key || (claim.blocks_terminals && overlaps(claimed, &key))
@@ -226,12 +238,12 @@ impl WorkspaceLifecycle {
             return Err("Workspace is reserved by terminal; wait for observed completion.".into());
         }
         claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true, removal: false });
-        Ok(WorkspaceReservation {
+        Ok((WorkspaceReservation {
             lifecycle: self.clone(),
             key,
             terminal: false,
             released: Arc::default(),
-        })
+        }, target))
     }
 
     pub(crate) fn begin_repository_activity(&self, root: &str) -> Result<Arc<RepositoryActivity>, String> {
@@ -826,6 +838,33 @@ mod tests {
         assert!(service.reserve_terminal(path).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn creation_returns_the_canonical_target_without_case_folding() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let parent = root.join("other");
+        let expected = fs::canonicalize(&parent).unwrap().join("Future Parent/Workspace 工程");
+        #[cfg(unix)]
+        let parent = {
+            let alias = root.join("Parent Alias");
+            std::os::unix::fs::symlink(&parent, &alias).unwrap();
+            alias
+        };
+        let requested = parent.join("Future Parent/Workspace 工程");
+        let (claim, target) = service.reserve_creation_target(requested.to_str().unwrap(), "creation").unwrap();
+        assert!(target.is_absolute());
+        assert_eq!(target.to_str(), expected.to_str(), "filesystem spelling must retain the chosen target case");
+        assert!(service.reserve_creation(expected.to_str().unwrap(), "competing creation").is_err());
+        #[cfg(windows)]
+        assert!(service.reserve_creation(&expected.to_string_lossy().to_lowercase(), "case alias").is_err());
+        fs::create_dir_all(&target).unwrap();
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_err());
+        drop(claim);
+        assert!(service.reserve_terminal(target.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn creation_dot_alias_keeps_the_same_identity_when_target_appears() {
         let service = WorkspaceLifecycle::default();

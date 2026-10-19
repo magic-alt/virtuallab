@@ -1813,10 +1813,13 @@ fn create_worktree_blocking(
         None => default_worktree_path(&repository_root, &branch)?,
     };
 
-    let _target = lifecycle.reserve_creation(&target.to_string_lossy(), "Git worktree creation target")?;
-    // Use the reservation's canonical parent spelling throughout creation,
-    // including symlink aliases and the workspace path returned to the UI.
-    let target = _target.workspace_root().to_path_buf();
+    let (_target, target) = lifecycle.reserve_creation_target(&target.to_string_lossy(), "Git worktree creation target")?;
+    // Keep the canonical target's case while presenting ordinary Windows paths
+    // to Git. Filesystem IO and the returned workspace use the same location.
+    let target_string = worktree_git_path(
+        target.to_str().ok_or("Workspace path must be valid Unicode")?, cfg!(windows),
+    )?;
+    let target = Path::new(&target_string);
     if target.exists() {
         return Err(format!(
             "Workspace target already exists: {}",
@@ -1829,7 +1832,6 @@ fn create_worktree_blocking(
             .map_err(|error| format!("Failed to create workspace parent directory: {error}"))?;
     }
 
-    let target_string = target.to_string_lossy().to_string();
     let base_ref = base_ref
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -1851,6 +1853,32 @@ fn create_worktree_blocking(
         path: target_string,
         branch,
     })
+}
+
+fn worktree_git_path(path: &str, windows: bool) -> Result<String, String> {
+    if !windows { return Ok(path.to_owned()); }
+    // Removing the verbatim namespace must not change a literal component
+    // into a different Win32 directory (for example, "Workspace.").
+    if path.split(['\\', '/']).any(|part| part.ends_with('.') || part.ends_with(' ')) {
+        return Err("Worktree target has an ambiguous Windows path component".into());
+    }
+    let slashed = path.replace('\\', "/");
+    if let Some(unc) = slashed.strip_prefix("//?/UNC/") {
+        return Ok(format!("//{unc}"));
+    }
+    if let Some(drive) = slashed.strip_prefix("//?/") {
+        let bytes = drive.as_bytes();
+        if bytes.first().is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(1) == Some(&b':') && bytes.get(2) == Some(&b'/')
+        {
+            return Ok(drive.to_owned());
+        }
+        return Err("Worktree target requires a regular drive or UNC path".into());
+    }
+    if slashed.starts_with("//./") {
+        return Err("Worktree target cannot use a Windows device namespace".into());
+    }
+    Ok(slashed)
 }
 
 /// A force-removal confirmation is bound to the checked-out HEAD, branch and
@@ -3404,7 +3432,7 @@ mod tests {
     fn create_and_remove_worktree_round_trip() {
         let sandbox = unique_root("worktree");
         let repo = sandbox.join("repo");
-        let target = sandbox.join("workspace");
+        let target = sandbox.join("Workspace 工程");
         fs::create_dir_all(&repo).expect("repo directory");
 
         git_ok(&repo, &["init"]);
@@ -3424,6 +3452,7 @@ mod tests {
         .expect("create worktree");
 
         assert_eq!(created.branch, "feat/control-test");
+        assert_eq!(Path::new(&created.path).file_name(), target.file_name());
         assert!(target.is_dir());
         let branch = git(target.to_string_lossy().as_ref(), &["branch", "--show-current"])
             .expect("branch lookup");
@@ -3442,6 +3471,64 @@ mod tests {
         assert!(!target.exists());
 
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn worktree_git_paths_preserve_windows_drive_unc_and_case() {
+        for (raw, expected) in [
+            (r"\\?\C:\Users\Dev\work tree\Workspace 工程", "C:/Users/Dev/work tree/Workspace 工程"),
+            (r"\\?\UNC\Server\Share\Workspace 工程", "//Server/Share/Workspace 工程"),
+            ("//?/C:/Users/Dev/Workspace 工程", "C:/Users/Dev/Workspace 工程"),
+            ("//?/UNC/Server/Share/Workspace 工程", "//Server/Share/Workspace 工程"),
+            (r"D:\work tree\Workspace 工程", "D:/work tree/Workspace 工程"),
+            (r"\\Server\Share\Workspace 工程", "//Server/Share/Workspace 工程"),
+            ("//Server/Share/Workspace 工程", "//Server/Share/Workspace 工程"),
+        ] {
+            assert_eq!(worktree_git_path(raw, true).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn worktree_git_paths_keep_posix_literal_backslashes() {
+        for raw in ["/tmp/Work tree/工作区", "/tmp/literal\\child", "/tmp/trailing\\", "/\\literal"] {
+            assert_eq!(worktree_git_path(raw, false).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn worktree_git_paths_reject_windows_namespace_aliases() {
+        for raw in [
+            r"\\?\C:\repo\alias.\Workspace",
+            r"\\?\C:\repo\alias \Workspace",
+            r"\\?\C:\repo\..\Workspace",
+            r"\\.\GLOBALROOT\Workspace",
+            r"\\?\GLOBALROOT\Workspace",
+        ] {
+            assert!(worktree_git_path(raw, true).is_err(), "must not change target identity: {raw}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creation_preserves_real_posix_literal_backslash_targets() {
+        let (sandbox, repo) = init_fixture_repo("literal-worktree-round-trip");
+        let lifecycle = WorkspaceLifecycle::default();
+        for (index, name) in ["literal\\child", "trailing\\"].into_iter().enumerate() {
+            let target = sandbox.join(name);
+            let created = create_worktree_blocking(
+                repo.to_string_lossy().into_owned(), format!("literal-{index}"), None,
+                Some(target.to_string_lossy().into_owned()), &lifecycle,
+            ).unwrap();
+            assert!(target.join(".git").is_file());
+            assert_eq!(created.path, fs::canonicalize(&target).unwrap().to_string_lossy());
+            assert!(!sandbox.join(name.replace('\\', "/")).exists());
+            assert!(matches!(remove_worktree_blocking(
+                repo.to_string_lossy().into_owned(), created.path,
+                false, None, &lifecycle,
+            ).unwrap(), WorktreeRemovalResult::Removed));
+            assert!(!target.exists());
+        }
+        fs::remove_dir_all(sandbox).unwrap();
     }
 
     #[test]
