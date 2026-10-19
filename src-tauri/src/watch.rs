@@ -120,18 +120,38 @@ fn watch_start_blocking(
         .watch(Path::new(&path), RecursiveMode::Recursive)
         .map_err(|error| format!("Failed to watch workspace: {error}"))?;
 
+    watch_git_metadata(&mut watcher, Path::new(&path), &git_directories)?;
+
+    if !install_watcher(&state, &id, generation, watcher)? { return Ok(()); }
+
+    let _ = app.emit(
+        "workbench://event",
+        WorkbenchEvent::new("fs.watch_started", id).path(path),
+    );
+    Ok(())
+}
+
+// Kept separate from the GUI emitter so real filesystem notification tests
+// exercise the same registration as the desktop watcher.
+fn watch_git_metadata(
+    watcher: &mut RecommendedWatcher,
+    workspace: &Path,
+    git_directories: &[PathBuf],
+) -> Result<(), String> {
     // Linked worktrees keep their real HEAD/index and shared branch refs
     // outside the workspace. Watch only relevant Git folders, never the
     // objects directory recursively.
     let mut watched = HashSet::new();
-    for directory in &git_directories {
+    for directory in git_directories {
         let targets = [
             (directory.to_path_buf(), RecursiveMode::NonRecursive),
             (directory.join("refs"), RecursiveMode::Recursive),
-            (directory.join("worktrees"), RecursiveMode::NonRecursive),
+            // Existing siblings switch branches by replacing their own HEAD;
+            // no shared ref or worktrees directory entry needs to change.
+            (directory.join("worktrees"), RecursiveMode::Recursive),
         ];
         for (target, mode) in targets {
-            if !target.is_dir() || target.starts_with(Path::new(&path)) ||
+            if !target.is_dir() || target.starts_with(workspace) ||
                 !watched.insert(target.clone()) {
                 continue;
             }
@@ -140,12 +160,6 @@ fn watch_start_blocking(
         }
     }
 
-    if !install_watcher(&state, &id, generation, watcher)? { return Ok(()); }
-
-    let _ = app.emit(
-        "workbench://event",
-        WorkbenchEvent::new("fs.watch_started", id).path(path),
-    );
     Ok(())
 }
 
@@ -334,6 +348,54 @@ mod tests {
         assert_eq!(classify_watch_path(&common.canonicalize().unwrap().join("refs/heads/new"), &roots),
             Some("git.changed"));
         std::fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn linked_workspace_observes_existing_sibling_branch_switches() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let sandbox = std::env::temp_dir().join(format!("vl-watch-sibling-{}-{nonce}", std::process::id()));
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        }
+        let _cleanup = Cleanup(sandbox.clone());
+        let primary = sandbox.join("primary 工程");
+        let active = sandbox.join("active workspace");
+        let sibling = sandbox.join("sibling workspace");
+        std::fs::create_dir_all(&primary).unwrap();
+        let git = |root: &Path, args: &[&str]| {
+            let output = crate::process::background_command("git")
+                .arg("-C").arg(root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        };
+        git(&primary, &["init", "--initial-branch=main"]);
+        git(&primary, &["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "commit", "--allow-empty", "-m", "base"]);
+        git(&primary, &["worktree", "add", "-b", "active", active.to_str().unwrap()]);
+        git(&primary, &["worktree", "add", "-b", "sibling-a", sibling.to_str().unwrap()]);
+        git(&primary, &["branch", "sibling-b"]);
+        let roots = resolve_git_directories(&active);
+        let sibling_head = resolve_git_directories(&sibling)[0].join("HEAD");
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut watcher = RecommendedWatcher::new(move |event: notify::Result<notify::Event>| {
+            if let Ok(event) = event { let _ = send.send(event); }
+        }, Config::default()).unwrap();
+        watch_git_metadata(&mut watcher, &active, &roots).unwrap();
+
+        // Neither branch ref changes: only the existing sibling's administrative
+        // HEAD changes. A nonrecursive common/worktrees watch misses this.
+        git(&sibling, &["switch", "sibling-b"]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let observed = loop {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else { break false; };
+            let Ok(event) = receive.recv_timeout(remaining) else { break false; };
+            if should_refresh_for_event(&event.kind) && event.paths.iter().any(|path| {
+                path == &sibling_head && classify_watch_path(path, &roots) == Some("git.changed")
+            }) { break true; }
+        };
+        drop(watcher);
+        assert!(observed, "active linked workspace missed sibling HEAD change");
     }
 
     #[test]

@@ -1797,11 +1797,26 @@ fn create_worktree_blocking(
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty())
     {
-        Some(path) => std::path::PathBuf::from(path),
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                // Git resolves relative worktree paths under -C. Freeze that
+                // same location before lifecycle reservation and filesystem IO.
+                if path.has_root() || path.components().any(|part| matches!(part, std::path::Component::Prefix(_))) {
+                    return Err("Worktree target must be absolute or relative to the selected repository".into());
+                }
+                std::path::Path::new(&repository_root).join(path)
+            }
+        },
         None => default_worktree_path(&repository_root, &branch)?,
     };
 
     let _target = lifecycle.reserve_creation(&target.to_string_lossy(), "Git worktree creation target")?;
+    // Use the reservation's canonical parent spelling throughout creation,
+    // including symlink aliases and the workspace path returned to the UI.
+    let target = _target.workspace_root().to_path_buf();
     if target.exists() {
         return Err(format!(
             "Workspace target already exists: {}",
@@ -3255,6 +3270,54 @@ mod tests {
         ).unwrap(), WorktreeRemovalResult::Removed));
         fs::remove_dir_all(sandbox).unwrap();
     }
+
+    #[test]
+    fn active_nested_worktree_prevents_parent_force_removal_across_two_repositories() {
+        let first = removal_fixture("nested-removal-first");
+        let second = removal_fixture("nested-removal-second");
+        let lifecycle = WorkspaceLifecycle::default();
+        let mut workspaces = Vec::new();
+        for (sandbox, repo, parent) in [&first, &second] {
+            let nested = parent.join("nested 工作区");
+            let sibling = sandbox.join("sibling");
+            git_ok(repo, &["worktree", "add", "-b", "nested-lane", nested.to_str().unwrap()]);
+            git_ok(repo, &["worktree", "add", "-b", "sibling-lane", sibling.to_str().unwrap()]);
+            workspaces.push((nested, sibling));
+        }
+        for (index, (_, repo, parent)) in [&first, &second].into_iter().enumerate() {
+            let state = match remove_worktree_blocking(
+                repo.to_string_lossy().into_owned(), parent.to_string_lossy().into_owned(),
+                false, None, &lifecycle,
+            ).unwrap() {
+                WorktreeRemovalResult::NeedsForce { state, .. } => state,
+                _ => panic!("nested worktree must appear in the parent removal preview"),
+            };
+            let nested = &workspaces[index].0;
+            let sibling = &workspaces[index].1;
+            let other = &workspaces[1 - index].0;
+            let writer = lifecycle.reserve(nested.to_str().unwrap(), "nested agent").unwrap();
+            let sibling_writer = lifecycle.reserve(sibling.to_str().unwrap(), "sibling build").unwrap();
+            let other_terminal = lifecycle.reserve_terminal(other.to_str().unwrap()).unwrap();
+            let result = remove_worktree_blocking(
+                repo.to_string_lossy().into_owned(), parent.to_string_lossy().into_owned(),
+                true, Some(state), &lifecycle,
+            );
+            assert!(result.is_err(), "force confirmation cannot bypass an active nested workspace owner");
+            for survivor in [nested, sibling, other] {
+                assert!(survivor.join("README.md").is_file());
+            }
+            assert!(repository_registered_paths(repo.to_str().unwrap()).unwrap().iter()
+                .any(|path| fs::canonicalize(path).unwrap() == fs::canonicalize(nested).unwrap()));
+            drop(writer);
+            assert!(lifecycle.begin_removal(parent.to_str().unwrap()).is_ok());
+            assert!(lifecycle.is_reserved(sibling.to_str().unwrap()).unwrap());
+            drop(other_terminal);
+            drop(sibling_writer);
+        }
+        fs::remove_dir_all(first.0).unwrap();
+        fs::remove_dir_all(second.0).unwrap();
+    }
+
     #[test]
     fn dirty_worktree_requires_explicit_force_snapshot_and_keeps_branch() {
         let (sandbox, repo, worktree) = removal_fixture("remove-dirty");
@@ -3379,6 +3442,44 @@ mod tests {
         assert!(!target.exists());
 
         let _ = fs::remove_dir_all(sandbox);
+    }
+
+    #[test]
+    fn relative_worktree_creation_respects_the_repository_target_reservation() {
+        let (sandbox, repo) = init_fixture_repo("relative-worktree-reservation");
+        let target = repo.join("relative 工作区");
+        let lifecycle = WorkspaceLifecycle::default();
+        let creation = lifecycle.reserve_creation(target.to_str().unwrap(), "existing creation").unwrap();
+        let result = create_worktree_blocking(
+            repo.to_string_lossy().into_owned(), "relative-lane".into(), None,
+            Some("relative 工作区".into()), &lifecycle,
+        );
+        let created = target.exists();
+        drop(creation);
+        fs::remove_dir_all(sandbox).unwrap();
+        assert!(result.is_err(), "relative target must use the reservation under the selected repository");
+        assert!(!created, "a reserved target must not be created by Git");
+    }
+
+    #[test]
+    fn relative_worktree_creation_returns_an_absolute_removable_workspace() {
+        let (sandbox, repo) = init_fixture_repo("relative-worktree-round-trip");
+        let lifecycle = WorkspaceLifecycle::default();
+        let created = create_worktree_blocking(
+            repo.to_string_lossy().into_owned(), "relative-lane".into(), None,
+            Some("relative 工作区".into()), &lifecycle,
+        ).unwrap();
+        let absolute = Path::new(&created.path).is_absolute();
+        let expected = fs::canonicalize(repo.join("relative 工作区")).unwrap();
+        let returned = fs::canonicalize(&created.path).ok();
+        let removed = remove_worktree_blocking(
+            repo.to_string_lossy().into_owned(), created.path,
+            false, None, &lifecycle,
+        );
+        fs::remove_dir_all(sandbox).unwrap();
+        assert!(absolute, "the UI must receive an absolute workspace path");
+        assert_eq!(returned.as_ref(), Some(&expected));
+        assert!(matches!(removed, Ok(WorktreeRemovalResult::Removed)));
     }
 }
 

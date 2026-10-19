@@ -13,6 +13,24 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 
 ## Application-level documentation
 
+Workspace creation resolves custom relative paths against the selected repository,
+then freezes the lifecycle reservation's absolute canonical target for directory
+creation, Git arguments and the returned workspace path. Application cwd and Git
+cwd must never identify different creation targets.
+
+Retirement reservations protect overlapping directory trees: an active writer,
+terminal, task activity or pending creation in a nested workspace blocks parent
+removal, and retirement already in progress blocks overlapping startups. Separate
+siblings and repositories keep independent ownership. Creation and removal retain
+different semantics so an existing parent terminal can coexist with creation of a
+nested worktree. External Git/process activity remains outside this process-local
+coordination boundary.
+
+Linked-workspace inventory watchers recursively observe the shared `worktrees`
+administration directory as well as refs. Switching an existing sibling between
+existing branches can change only its private HEAD, so a nonrecursive watch is
+insufficient. The shared Git objects directory is not added as a recursive watch.
+
 Repository snapshots and lightweight worktree status return the full lowercase HEAD object ID (40 or 64 hex characters). Task plan baselines and local-change preconditions use this same ID; only display labels abbreviate it. Detached branch labels remain compact. Task creation must never expand a short SHA by padding or relax its full-ID validation.
 
 Git ownership recovery is opt-in. Adding a repository may offer a native trust confirmation after a dubious-ownership error; an existing repository exposes an explicit **Trust repository** retry action. Background inspection and watcher refreshes never prompt or change Git configuration. The typed `trust_repository_directory` command canonicalizes an exact absolute repository/worktree root, rejects wildcard paths, verifies Git reports the same root with a process-scoped exception, and adds only that directory to global `safe.directory` when the ownership error persists. No blanket exception or OS ownership change is made.
