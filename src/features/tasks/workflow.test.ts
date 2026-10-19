@@ -8,7 +8,9 @@ describe('native-derived task guidance',()=>{
  it('prioritizes active/stopping work, missing configuration and explicit preparation',()=>{
   expect(nextTaskStep(taskFixture({attempts:[attempt('stopping')]})).tab).toBe('执行');
   expect(nextTaskStep(taskFixture({profile:newProfile(),workspaceRoot:null})).tab).toBe('概览');
-  expect(nextTaskStep(taskFixture()).detail).toMatch(/冻结|新计划/);
+  expect(nextTaskStep(taskFixture()).label).toBe('启动 Agent 执行');
+  expect(nextTaskStep(taskFixture({workspaceRoot:null,profile:null})).label).toBe('准备工作区');
+  expect(nextTaskStep(taskFixture()).detail).toMatch(/Profile/);
  });
  it('never promotes provider completion and historical PASS without native readiness',()=>{
   const evidence={runId:'old',headSha:'same',inputDigest:'i',profileDigest:'p',toolchainDigest:'t',status:'pass' as const,checks:[],artifacts:[],observedAtMs:1};
