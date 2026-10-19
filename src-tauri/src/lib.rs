@@ -122,6 +122,7 @@ pub fn run() {
             task_runtime::task_integration_confirm,
             task_runtime::task_export_passport,
             inspect_repository,
+            git::trust_repository_directory,
             inspect_worktree_status,
             open_workspace_directory,
             open_workspace_in_editor,

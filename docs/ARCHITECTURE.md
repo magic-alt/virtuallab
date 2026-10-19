@@ -13,6 +13,12 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 
 ## Application-level documentation
 
+Repository snapshots and lightweight worktree status return the full lowercase HEAD object ID (40 or 64 hex characters). Task plan baselines and local-change preconditions use this same ID; only display labels abbreviate it. Detached branch labels remain compact. Task creation must never expand a short SHA by padding or relax its full-ID validation.
+
+Git ownership recovery is opt-in. Adding a repository may offer a native trust confirmation after a dubious-ownership error; an existing repository exposes an explicit **Trust repository** retry action. Background inspection and watcher refreshes never prompt or change Git configuration. The typed `trust_repository_directory` command canonicalizes an exact absolute repository/worktree root, rejects wildcard paths, verifies Git reports the same root with a process-scoped exception, and adds only that directory to global `safe.directory` when the ownership error persists. No blanket exception or OS ownership change is made.
+
+The Git branches list routes a registered linked worktree's remove action through the same native confirmation, lifecycle checks and dirty-state preflight as Workspace lanes. Removing the directory retains its local branch; a later branch deletion requires its own confirmation. Primary worktrees remain protected, and unregistered/occupied branches remain ineligible for direct deletion.
+
 Bundled Help/Guide content is an application service, not a workspace tab or
 execution context. The GUI menu bar offers **Help → 使用文档** even without an
 active repository; it opens an overlay reader without changing the selected
@@ -380,7 +386,7 @@ Authenticated same-origin issue / PR reference
   → optional explicit, confirmed GitHub comment (PR head match only)
 ```
 
-Source references are workspace-local and restored when that worktree is revisited. `baseRefOid` and `headRefOid` from `gh pr view --json` are compared with the local (abbreviated) Git HEAD; a local HEAD at PR base does not authorize posting to PR head. A new worktree starts at a user-selected **local** base ref, not at a remote PR branch. Changes/Monaco always remain read-only. A post-refresh diff is considered invalid until explicitly reloaded.
+Source references are workspace-local and restored when that worktree is revisited. `baseRefOid` and `headRefOid` from `gh pr view --json` are compared with the full local Git HEAD; a local HEAD at PR base does not authorize posting to PR head. A new worktree starts at a user-selected **local** base ref, not at a remote PR branch. Changes/Monaco always remain read-only. A post-refresh diff is considered invalid until explicitly reloaded.
 
 The native boundary continues to reject nonmatching GitHub repository URLs; no automatic fetch/checkout/merge/reset/force-push behavior was added. Workspace and review state remain meaningful offline.
 
@@ -478,7 +484,7 @@ Windows canonical workspace identity removes the filesystem verbatim prefix and 
 
 ## Safe local changes recovery (branch switch / Pull)
 
-The Changes workspace provides `StashAll`, `DiscardTrackedAll`, `DiscardTrackedSelected` and `DeleteUntrackedSelected` typed scopes. The frontend gates them with a fail-closed Tauri native confirmation. The Rust `git_local_changes` backend rechecks registered worktree identity, selected branch, abbreviated HEAD and the entire parsed porcelain-z Git status **after** user confirmation. It rejects stale status/selection, never force-resets HEAD, and isolates explicit path operations using Git literal pathspecs after path traversal checks.
+The Changes workspace provides `StashAll`, `DiscardTrackedAll`, `DiscardTrackedSelected` and `DeleteUntrackedSelected` typed scopes. The frontend gates them with a fail-closed Tauri native confirmation. The Rust `git_local_changes` backend rechecks registered worktree identity, selected branch, full HEAD and the entire parsed porcelain-z Git status **after** user confirmation. It rejects stale status/selection, never force-resets HEAD, and isolates explicit path operations using Git literal pathspecs after path traversal checks.
 
 `stash push --include-untracked` is the preferred reversible route for dirty user workspaces, including KiCad untracked history. `restore --source=HEAD --staged --worktree` changes only tracked scopes; `git clean -f -d` is reserved for one explicitly selected untracked path, with an immediate dry-run guard, never repository-wide `clean -fdx`. Tracked-only restore preserves untracked content by default. Pull continues to use `--ff-only` and rejects tracked modifications, but lets Git preserve non-conflicting untracked files; Git refuses checkout collisions itself. No arbitrary shell string is executed. A GUI background refresh invalidates previous review content and opens the Pull button when the tracked dirty count clears.
 

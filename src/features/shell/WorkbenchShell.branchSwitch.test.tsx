@@ -398,7 +398,20 @@ describe("workbench branch switching with untracked artifacts", () => {
     expect(await screen.findByText(/Cannot switch branches with staged or modified tracked files/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
   });
-  it("keeps the active dirty worktree selected when the force dialog is cancelled", async () => {
+  it("offers ownership recovery only after an explicit user retry", async () => {
+    const user = userEvent.setup();
+    harness.inspect.mockRejectedValueOnce("fatal: detected dubious ownership in repository");
+    render(<WorkbenchShell />);
+    const retry = await screen.findByRole("button", { name: "Trust repository…" });
+    expect(harness.inspect).toHaveBeenCalledTimes(1);
+    expect(harness.inspect).toHaveBeenLastCalledWith(repoRoot);
+    await user.click(retry);
+    await waitFor(() => expect(harness.inspect).toHaveBeenCalledWith(repoRoot, { confirmOwnership: true }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Trust repository…" })).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Switch to codex/pr-15" })).toHaveTextContent("active");
+  });
+
+  it("keeps the active dirty worktree selected when the branch-row force dialog is cancelled", async () => {
     const user = userEvent.setup();
     let finishConfirmation!: (removed: boolean) => void;
     harness.inspect.mockImplementation(async (path: string) => linkedSnapshot(path));
@@ -416,7 +429,7 @@ describe("workbench branch switching with untracked artifacts", () => {
     render(<WorkbenchShell />);
     await screen.findByRole("button", { name: "Remove workspace" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Remove workspace" }));
+    await user.click(screen.getByRole("button", { name: "Remove worktree for feat/joint17-brake" }));
     expect(harness.removeWorktree).toHaveBeenCalledWith(repoRoot, linkedPath);
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove workspace" })).toBeDisabled());
     await user.click(screen.getByRole("button", { name: "Remove workspace" }));

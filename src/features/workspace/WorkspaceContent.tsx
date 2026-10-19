@@ -202,7 +202,7 @@ function Overview({
         <Metric
           label="Active branch"
           value={snapshot.currentBranch}
-          detail={`HEAD ${snapshot.headSha}`}
+          detail={`HEAD ${snapshot.headSha.slice(0, 10)}`}
           mono
         />
         <Metric
