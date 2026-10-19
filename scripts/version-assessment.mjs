@@ -162,7 +162,7 @@ function plain(value) {
 export function renderAssessment(report) {
   const lines = ["# Application version assessment", "", `Version: ${report.currentVersion} → ${report.nextVersion} (${report.bump}).`, "",
     `Baseline commit: ${report.baselineSha}`, `Assessed main commit: ${report.headSha}`, "",
-    "This is a version proposal. It does not authorize a tag, Release, deployment or hardware operation.", "", "## Merged PRs", ""];
+    "A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.", "", "## Merged PRs", ""];
   if (report.provisional || report.inputSource === "provided-json") {
     lines.splice(8, 0, "Provisional local preview: working-tree changes or supplied JSON have not been validated as a committed GitHub snapshot.", "");
   }
