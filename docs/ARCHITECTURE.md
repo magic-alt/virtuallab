@@ -203,9 +203,28 @@ The workspace survives even when there is no agent attached.
 
 Implemented delivery assessment is shared by readiness, acceptance and passport export. Exact fixed dependency lineage and atomic dependency-revision guards prevent newer/rejected sources from qualifying an older integration. Candidate adoption checks the full accepted base-to-HEAD scope, including manual first-conflict recovery. Source qualification compares actual byte-preserving files with committed/indexed objects, while `task_git_watch` observes linked-worktree HEAD/index/relevant refs outside the workspace. Tool/selection changes remain sticky within a session; restart requires new verification. Formal CMake verification requires preconfigured observable compiler selection; exploratory configuration grants no qualification.
 
-**Prompt-first Task creation (2026-10-19).** The React quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through the existing typed `inspectRepository` boundary and re-inspects before submitting `task_accept_plan`; any changed HEAD must be acknowledged on screen first. No frontend model inference, shell execution, implicit worktree creation or provider launch is introduced. The existing multi-node manual planner remains available as an advanced mode. A single scope entry `.` denotes the operator-approved repository-wide task scope, accepted only in task draft and persisted task validation; narrower Profile paths still require safe literal relative names, and native candidate/source checks reject Git metadata and environment-secret paths. Whole-repository scope does not grant OS isolation or override native verification/human review requirements.\n\n### Current Task boundary
+**Prompt-first Task creation (2026-10-19).** The React quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through the existing typed `inspectRepository` boundary and re-inspects before submitting `task_accept_plan`; any changed HEAD must be acknowledged on screen first. No frontend model inference, shell execution, implicit worktree creation or provider launch is introduced. The existing multi-node manual planner remains available as an advanced mode. A single scope entry `.` denotes the operator-approved repository-wide task scope, accepted only in task draft and persisted task validation; narrower Profile paths still require safe literal relative names, and native candidate/source checks reject Git metadata and environment-secret paths. Whole-repository scope does not grant OS isolation or override native verification/human review requirements.
+
+### Current Task boundary
 
 Task metadata, immutable Attempts, structural event sequence and superseded human decisions are persisted in a bounded, atomically replaced application-data JSON generation. Failed writes do not change in-memory state. Startup marks unfinished Attempts interrupted and never replays Git/process side effects. Store corruption is exposed as unavailable while direct workspace tools remain usable. App-level React observation reads native snapshots through typed wrappers and rejects delayed results after repository/action changes.
+
+Task list observation queries each registered repository independently through
+the existing strict native command. A failed root has a scoped error and loses
+its current task/evidence view while healthy roots retain fresh readiness and
+selection. Only an all-root failure makes the overall source unavailable. A
+partial failure resets the structural-event cursor so a recovered root can
+restore its history; refresh and observer generations still reject detached or
+otherwise obsolete responses. TaskManager clones share one serialized writer;
+independently opened application processes do not have a shared transaction or
+store-generation compare-and-swap and are not qualified concurrent writers.
+
+Implementation dependencies are fixed read-only context for work starting from
+the accepted base; candidate adoption does not require importing those commits.
+The accepted-base, committed source and full-scope checks remain mandatory.
+Integration candidates additionally require every fixed prerequisite commit to
+be an ancestor of the combined candidate. No implicit merge is introduced for
+ordinary dependent implementation Tasks.
 
 One shared `WorkspaceLifecycle` reservation spans startup through observed writer shutdown across harnesses, Run, Verification and Git mutations; subdirectory writers normalize to their owning worktree. Interactive PTYs use separate, counted terminal leases: terminals coexist with branch switches, Run, other workspace operations and each other, while protecting their worktree against removal and repository detach. Navigation and branch switches preserve terminal sessions without stopping or recreating their shells. Terminal commands are outside the scheduled-writer exclusion; verification must still detect source changes made through a terminal, as it does for external tools. Missing worktree creation targets have explicit reservations before directory creation/registration. Cancelling is not completion. Task scheduling is bounded to two active slots and 32 queued tasks; application shutdown revokes new dispatch and cancels pending controlled work before process managers shut down.
 

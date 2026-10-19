@@ -4,7 +4,7 @@ vi.mock('@tauri-apps/api/core', () => ({invoke: native.invoke}));
 vi.mock('@tauri-apps/api/event', () => ({listen: native.listen}));
 vi.mock('@tauri-apps/plugin-dialog', () => ({confirm: native.confirm, open: vi.fn()}));
 import * as api from '@/lib/tasks';
-import { observeTasks, refreshTasks, runTaskAction, runTaskCancellation, useTaskStore } from '@/stores/tasks';
+import { observeTasks, refreshTasks, runTaskAction, runTaskCancellation, selectTask, useTaskStore } from '@/stores/tasks';
 import { filterTasks, parseTaskProfile, taskStatus, validateTaskPlan } from './model';
 import { draftFixture, readinessFixture, taskFixture } from './fixtures';
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(r => {resolve = r;}); return {promise, resolve}; }
@@ -85,6 +85,64 @@ describe('task semantics and manual plan validation', () => {
   });
 });
 describe('single task observer generation guards', () => {
+  it('keeps healthy repository tasks selected when a sibling becomes unavailable and restores its history on recovery', async () => {
+    const records = [taskFixture(), taskFixture({id:'offline-task',repositoryRoot:'/offline'})];
+    const events = records.map((task,index) => ({schemaVersion:1 as const,eventId:`event-${index}`,seq:index+1,taskId:task.id,attemptId:null,kind:'plan.accepted',timestampMs:1}));
+    let offline = false;
+    native.invoke.mockImplementation((command,args) => {
+      if (command === 'task_list') {
+        if (offline && args.repositoryRoots.includes('/offline')) return Promise.reject(new Error('Repository path is unavailable.'));
+        return Promise.resolve(records.filter(task => args.repositoryRoots.includes(task.repositoryRoot)));
+      }
+      if (command === 'task_events') return Promise.resolve(events.filter(event => event.seq > args.afterSeq));
+      return Promise.resolve(readinessFixture({status:'ready'}));
+    });
+    const stop = observeTasks(['/repo','/offline']);
+    try {
+      await vi.waitFor(() => expect(useTaskStore.getState().tasks).toHaveLength(2));
+      selectTask('task-1','证据');
+      offline = true;
+      await refreshTasks();
+      expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['task-1']);
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+      expect(useTaskStore.getState().activeTaskTab).toBe('证据');
+      expect(useTaskStore.getState().readiness['task-1']?.status).toBe('ready');
+      expect(useTaskStore.getState().readiness['offline-task']).toBeUndefined();
+      expect(useTaskStore.getState().repositoryErrors).toEqual({'/offline':'Repository path is unavailable.'});
+      expect(useTaskStore.getState().error).toBeNull();
+      expect(useTaskStore.getState().events.map(event => event.taskId)).toEqual(['task-1']);
+
+      offline = false;
+      await refreshTasks();
+      expect(useTaskStore.getState().tasks).toHaveLength(2);
+      expect(useTaskStore.getState().repositoryErrors).toEqual({});
+      expect(useTaskStore.getState().events.map(event => event.taskId)).toEqual(['task-1','offline-task']);
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+    } finally { stop(); }
+  });
+  it('cannot reintroduce detached repository tasks or errors from a partial refresh already in flight', async () => {
+    const delayed = deferred<ReturnType<typeof taskFixture>[]>();
+    let oldGeneration = true;
+    native.invoke.mockImplementation((command,args) => {
+      if (command === 'task_list') {
+        if (args.repositoryRoots.includes('/offline')) return delayed.promise;
+        return oldGeneration ? Promise.reject(new Error('Old repository error')) : Promise.resolve([taskFixture()]);
+      }
+      return Promise.resolve(command === 'task_events' ? [] : readinessFixture());
+    });
+    const stopOld = observeTasks(['/repo','/offline']);
+    const staleRefresh = refreshTasks();
+    stopOld();
+    oldGeneration = false;
+    const stopNew = observeTasks(['/repo']);
+    try {
+      await vi.waitFor(() => expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['task-1']));
+      delayed.resolve([taskFixture({id:'detached',repositoryRoot:'/offline'})]);
+      await staleRefresh;
+      expect(useTaskStore.getState().tasks.map(task => task.id)).toEqual(['task-1']);
+      expect(useTaskStore.getState().repositoryErrors).toEqual({});
+    } finally { stopNew(); }
+  });
   it('ignores delayed list and readiness from removed repositories and late listener setup', async () => {
     const first=deferred<ReturnType<typeof taskFixture>[]>(); const unlisten=vi.fn(); const listener=deferred<() => void>();
     native.listen.mockReturnValueOnce(listener.promise);

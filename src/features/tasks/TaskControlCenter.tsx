@@ -38,10 +38,13 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
   const filtered = filterTasks(tasks,state.readiness,{query:searchQuery ?? query,repositoryRoot:roots.has(workspaceKey(repositoryRoot)) ? repositoryRoot : undefined,attention});
   const profiles = [...new Map(tasks.filter(task => task.profile).map(task => [task.profile!.id,task.profile!])).values()];
   const attached = Object.values(bindings).filter(binding => roots.has(workspaceKey(binding.workspaceRoot)) || tasks.some(task => task.workspaceRoot && workspaceKey(task.workspaceRoot) === workspaceKey(binding.workspaceRoot)));
-  const unavailable = !isDesktopRuntime() || !!state.error;
+  const repositoryFailures = Object.entries(state.repositoryErrors).filter(([root]) => roots.has(workspaceKey(root)));
+  const filteredError = repositoryFailures.find(([root]) => workspaceKey(root) === workspaceKey(repositoryRoot))?.[1];
+  const unavailable = !isDesktopRuntime() || !!state.error || !!filteredError;
   return <main className="task-center" aria-label="任务控制中心">
     <header className="task-row task-center-heading"><div><h1>{titles[view]}</h1><p>任务附着于工作区 · 本地工程交付</p></div><div className="task-row"><button disabled={state.loading} onClick={() => void refreshTasks()}>{state.loading ? '正在刷新…' : '刷新任务'}</button><button disabled={!repositories.length} onClick={() => {setPrefill(null);setCreating('quick');}}>新建任务</button></div></header>
     {state.error && <p role="alert" className="task-error">任务原生来源不可用：{state.error}</p>}
+    {!state.error && repositoryFailures.length > 0 && <section role="status" className="task-error"><p>部分仓库的任务来源不可用；下方仅显示可用仓库的任务。恢复仓库后可刷新任务。</p><ul>{repositoryFailures.map(([root, reason]) => <li key={root}>{root}：{reason}</li>)}</ul></section>}
     {!isDesktopRuntime() && !state.error && <p>当前为浏览器预览；任务原生来源不可用。没有模拟执行或验证结果。</p>}
     {state.observerError && <p role="status" className="task-error">{state.observerError}</p>}
     {!repositories.length && <section className="task-surface"><h2>先添加一个仓库</h2><p>在仓库视图选择本地 Git 仓库，然后手动创建计划。</p></section>}
@@ -62,8 +65,8 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
           <label>筛选仓库<select value={roots.has(workspaceKey(repositoryRoot)) ? repositoryRoot : ''} onChange={event => setTaskFilters({repositoryRoot:event.target.value})}><option value="">全部仓库</option>{repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name}</option>)}</select></label>
           <label className="task-checkbox"><input type="checkbox" checked={attention} onChange={event => setTaskFilters({attention:event.target.checked})}/>仅需关注</label>
         </div>
-        {view === 'evidence' ? <TaskEvidenceInventory tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || '原生来源不可用' : null} onOpenTask={selectTask}/> : view === 'home' ? <TaskDashboard tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || '原生来源不可用' : null} onOpenTask={selectTask}/> : <TaskList tasks={filtered} readiness={state.readiness} repositories={repositories} selectedId={selected?.id??null} onOpenTask={selectTask}/>}
-        {!filtered.length && !state.loading && !unavailable && <p>{tasks.length ? '没有匹配筛选条件的任务。' : '尚无任务。创建手动计划后再显式准备工作区和开始执行。'}</p>}
+        {view === 'evidence' ? <TaskEvidenceInventory tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || filteredError || '原生来源不可用' : null} onOpenTask={selectTask}/> : view === 'home' ? <TaskDashboard tasks={filtered} readiness={state.readiness} loading={state.loading} error={unavailable ? state.error || filteredError || '原生来源不可用' : null} onOpenTask={selectTask}/> : <TaskList tasks={filtered} readiness={state.readiness} repositories={repositories} selectedId={selected?.id??null} onOpenTask={selectTask}/>}
+        {!filtered.length && !state.loading && !unavailable && !repositoryFailures.length && <p>{tasks.length ? '没有匹配筛选条件的任务。' : '尚无任务。创建手动计划后再显式准备工作区和开始执行。'}</p>}
       </section>
       {selected ? <><TaskWorkflowGuide task={selected} readiness={state.readiness[selected.id]} onNavigate={tab => selectTask(selected.id, tab)}/><TaskDetail key={selected.id} task={selected} onOpenWorkspace={onOpenWorkspace}/></> : tasks.length > 0 && <p>选择一个任务查看详情。</p>}
     </>}

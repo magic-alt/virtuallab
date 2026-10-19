@@ -1081,11 +1081,15 @@ fn manual_candidate(task: &TaskRecord, prerequisite_commits: &[String]) -> Resul
                 &identity.head_sha,
             ],
         )?;
-        for source in prerequisite_commits {
-            git(
-                &workspace,
-                &["merge-base", "--is-ancestor", &source, &identity.head_sha],
-            )?;
+        // Implementation dependencies are frozen read-only context. Only an
+        // integration task incorporates their commits into its own history.
+        if task.kind == "integration" {
+            for source in prerequisite_commits {
+                git(
+                    &workspace,
+                    &["merge-base", "--is-ancestor", &source, &identity.head_sha],
+                )?;
+            }
         }
         // Integration scope must include the complete approved combined result,
         // including source changes and manual conflict resolution.
@@ -1572,6 +1576,80 @@ mod tests {
         assert!(manual_candidate(&record, &[old])
             .unwrap_err()
             .contains("范围外"));
+    }
+    struct DependencyWorktrees {
+        directory: PathBuf,
+        task: TaskRecord,
+        prerequisite: String,
+        candidate: String,
+    }
+    impl DependencyWorktrees {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!("vl-task-dependencies-{}", new_id()));
+            let repository = directory.join("主仓库 repo");
+            fs::create_dir_all(repository.join("src")).unwrap();
+            git(&repository, &["init", "--initial-branch=main"]).unwrap();
+            git(&repository, &["config", "core.autocrlf", "false"]).unwrap();
+            git(&repository, &["config", "user.name", "Task Fixture"]).unwrap();
+            git(&repository, &["config", "user.email", "fixture@example.invalid"]).unwrap();
+            fs::write(repository.join("src/base.txt"), "base\n").unwrap();
+            git(&repository, &["add", "--", "src/base.txt"]).unwrap();
+            git(&repository, &["commit", "-m", "base"]).unwrap();
+            let base = git(&repository, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+            for name in ["prerequisite", "implementation", "integration"] {
+                let workspace = directory.join(name);
+                git(&repository, &["worktree", "add", "-b", name, workspace.to_str().unwrap(), &base]).unwrap();
+            }
+            let prerequisite_root = directory.join("prerequisite");
+            fs::write(prerequisite_root.join("src/prerequisite.txt"), "read-only context\n").unwrap();
+            git(&prerequisite_root, &["add", "--", "src/prerequisite.txt"]).unwrap();
+            git(&prerequisite_root, &["commit", "-m", "prerequisite candidate"]).unwrap();
+            let prerequisite = git(&prerequisite_root, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+            let implementation = directory.join("implementation");
+            fs::write(implementation.join("src/implementation.txt"), "independent result\n").unwrap();
+            git(&implementation, &["add", "--", "src/implementation.txt"]).unwrap();
+            git(&implementation, &["commit", "-m", "implementation candidate"]).unwrap();
+            let candidate = git(&implementation, &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+            let mut task = task();
+            task.repository_root = repository.to_string_lossy().into_owned();
+            task.workspace_root = Some(implementation.to_string_lossy().into_owned());
+            task.base_sha = base;
+            task.scope = vec!["src/implementation.txt".into()];
+            task.dependencies = vec!["prerequisite-task".into()];
+            Self { directory, task, prerequisite, candidate }
+        }
+    }
+    impl Drop for DependencyWorktrees {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.directory);
+        }
+    }
+    #[test]
+    fn dependent_implementation_candidate_does_not_require_prerequisite_ancestry() {
+        let fixture = DependencyWorktrees::new();
+        let workspace = root(&fixture.task).unwrap();
+        assert!(git(&workspace, &["merge-base", "--is-ancestor", &fixture.prerequisite, &fixture.candidate]).is_err());
+        assert_eq!(manual_candidate(&fixture.task, &[fixture.prerequisite.clone()]).unwrap(), fixture.candidate);
+        assert_eq!(git(&workspace, &["rev-parse", "HEAD"]).unwrap().trim(), fixture.candidate);
+        assert!(!workspace.join("src/prerequisite.txt").exists());
+        assert_eq!(git(&fixture.directory.join("prerequisite"), &["rev-parse", "HEAD"]).unwrap().trim(), fixture.prerequisite);
+
+        let mut outside_scope = fixture.task.clone();
+        outside_scope.scope = vec!["src/other.txt".into()];
+        assert!(manual_candidate(&outside_scope, &[fixture.prerequisite.clone()]).is_err());
+    }
+    #[test]
+    fn integration_candidate_still_requires_every_fixed_prerequisite_ancestor() {
+        let fixture = DependencyWorktrees::new();
+        let mut integration = fixture.task.clone();
+        integration.kind = "integration".into();
+        integration.scope = vec!["src".into()];
+        integration.workspace_root = Some(fixture.directory.join("integration").to_string_lossy().into_owned());
+        let sources = [fixture.prerequisite.clone(), fixture.candidate.clone()];
+        assert!(manual_candidate(&integration, &sources).is_err());
+        let workspace = root(&integration).unwrap();
+        let candidate = crate::task_inputs::integrate_candidates(&workspace, &integration.base_sha, &sources, || Ok(())).unwrap();
+        assert_eq!(manual_candidate(&integration, &sources).unwrap(), candidate);
     }
     fn task() -> TaskRecord {
         serde_json::from_value(json!({
