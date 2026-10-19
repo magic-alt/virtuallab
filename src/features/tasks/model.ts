@@ -67,7 +67,7 @@ export function validateTaskPlan(request: TaskPlanRequest, existing: TaskRecord[
     if (!/^[a-z0-9_-]{1,64}$/i.test(task.key) || keys.has(task.key) || existingIds.has(task.key)) errors.push('任务键必须为 1–64 位 ASCII 字母、数字、_ 或 -，且唯一。');
     keys.add(task.key);
     if (!task.title.trim() || !task.goal.trim()) errors.push(`${task.key}: 需要标题和目标。`);
-    if (!task.scope.length || task.scope.length > 128 || new Set(task.scope).size !== task.scope.length || task.scope.some(path => !safeRelative(path))) errors.push(`${task.key}: 范围必须为安全的相对路径。`);
+    if (!task.scope.length || task.scope.length > 128 || new Set(task.scope).size !== task.scope.length || (task.scope.includes('.') && task.scope.length !== 1) || task.scope.some(path => path !== '.' && !safeRelative(path))) errors.push(`${task.key}: 范围必须为安全的相对路径。`);
     if (task.kind !== 'implementation' && task.kind !== 'integration') errors.push(`${task.key}: 类型无效。`);
     if (task.profile) { try {parseTaskProfile(JSON.stringify(task.profile));} catch (error) {errors.push(`${task.key}: Profile ${String(error)}`);} }
   }
