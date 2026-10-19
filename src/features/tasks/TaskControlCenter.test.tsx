@@ -49,7 +49,7 @@ describe('task control center user flows',()=>{
   });
   it('requires explicit worktree form submission; duplicate start clicks cannot issue two writes',async()=>{
     tasks=[taskFixture({workspaceRoot:null})];render(<Harness/>);await openTask();
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/unicode');
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/unicode');
     await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_prepare_workspace',{request:{taskId:'task-1',branch:'task/unicode',targetPath:null}}));
     tasks=[taskFixture()];await act(async()=>{await import('@/stores/tasks').then(s=>s.refreshTasks());});
@@ -178,7 +178,7 @@ describe('task control center user flows',()=>{
       return fallback(command,args);
     });
     render(<Harness/>);await openTask();expect(screen.queryByRole('button',{name:'核对已创建工作区'})).not.toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/recover');await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/recover');await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
     await screen.findByRole('alert');const reconcile=await screen.findByRole('button',{name:'核对已创建工作区'});
     expect(native.invoke.mock.calls.some(([c])=>c==='task_reconcile_workspace')).toBe(false);expect(screen.getByRole('button',{name:'创建任务工作区'})).toBeDisabled();
     await userEvent.click(reconcile);await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_reconcile_workspace',{request:{taskId:'task-1'}}));
@@ -196,7 +196,7 @@ describe('task control center user flows',()=>{
     tasks=[taskFixture({workspaceRoot:null})];useTaskStore.setState({actionErrors:{'task-1':'Preparation intent persistence uncertain; manual reconciliation required'}});
     render(<Harness/>);await openTask();await userEvent.click(await screen.findByRole('button',{name:'核对已创建工作区'}));
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_reconcile_workspace',{request:{taskId:'task-1'}}));
-    await userEvent.type(screen.getByLabelText('工作区分支'),'task/corrected');
+    await userEvent.clear(screen.getByLabelText('工作区分支'));await userEvent.type(screen.getByLabelText('工作区分支'),'task/corrected');
     expect(screen.getByRole('button',{name:'创建任务工作区'})).toBeEnabled();expect(native.invoke.mock.calls.some(([c])=>c==='task_prepare_workspace')).toBe(false);
     expect(screen.getByText(/再次显式创建/)).toBeVisible();
   });
