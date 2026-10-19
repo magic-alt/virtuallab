@@ -11,6 +11,8 @@ import { TaskDashboard } from './TaskDashboard';
 import { TaskList } from './TaskList';
 import { TaskDetail } from './TaskDetail';
 import { TaskPlanWizard } from './TaskPlanWizard';
+import { TaskQuickCreate } from './TaskQuickCreate';
+import type { TaskPlanRequest } from '@/types/tasks';
 import { TemplateWorkbench } from './templates/TemplateWorkbench';
 import { TaskWorkflowGuide } from './templates/TaskWorkflowGuide';
 import './tasks.css';
@@ -27,7 +29,8 @@ const titles = {home:'控制中心', tasks:'任务', evidence:'证据', settings
 export function TaskControlCenter({view, repositories, activeRepository, onOpenWorkspace, searchQuery}: TaskControlCenterProps) {
   const state = useTaskStore();
   const {query,repositoryRoot,attention}=state.filters;
-  const [creating,setCreating] = useState(false);
+  const [creating,setCreating] = useState<'quick' | 'advanced' | null>(null);
+   const [prefill,setPrefill] = useState<TaskPlanRequest | null>(null);
   const bindings = useAgentSessionStore(store => store.bindings);
   const roots = new Set(repositories.map(repo => workspaceKey(repo.path)));
   const tasks = state.tasks.filter(task => roots.has(workspaceKey(task.repositoryRoot)));
@@ -37,7 +40,7 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
   const attached = Object.values(bindings).filter(binding => roots.has(workspaceKey(binding.workspaceRoot)) || tasks.some(task => task.workspaceRoot && workspaceKey(task.workspaceRoot) === workspaceKey(binding.workspaceRoot)));
   const unavailable = !isDesktopRuntime() || !!state.error;
   return <main className="task-center" aria-label="任务控制中心">
-    <header className="task-row task-center-heading"><div><h1>{titles[view]}</h1><p>任务附着于工作区 · 本地工程交付</p></div><div className="task-row"><button disabled={state.loading} onClick={() => void refreshTasks()}>{state.loading ? '正在刷新…' : '刷新任务'}</button><button disabled={!repositories.length} onClick={() => setCreating(true)}>新建任务</button></div></header>
+    <header className="task-row task-center-heading"><div><h1>{titles[view]}</h1><p>任务附着于工作区 · 本地工程交付</p></div><div className="task-row"><button disabled={state.loading} onClick={() => void refreshTasks()}>{state.loading ? '正在刷新…' : '刷新任务'}</button><button disabled={!repositories.length} onClick={() => {setPrefill(null);setCreating('quick');}}>新建任务</button></div></header>
     {state.error && <p role="alert" className="task-error">任务原生来源不可用：{state.error}</p>}
     {!isDesktopRuntime() && !state.error && <p>当前为浏览器预览；任务原生来源不可用。没有模拟执行或验证结果。</p>}
     {state.observerError && <p role="status" className="task-error">{state.observerError}</p>}
@@ -64,6 +67,7 @@ export function TaskControlCenter({view, repositories, activeRepository, onOpenW
       </section>
       {selected ? <><TaskWorkflowGuide task={selected} readiness={state.readiness[selected.id]} onNavigate={tab => selectTask(selected.id, tab)}/><TaskDetail key={selected.id} task={selected} onOpenWorkspace={onOpenWorkspace}/></> : tasks.length > 0 && <p>选择一个任务查看详情。</p>}
     </>}
-    {creating && <TaskPlanWizard repositories={repositories} activeRepository={activeRepository} onClose={() => setCreating(false)}/>}
+    {creating === 'quick' && <TaskQuickCreate repositories={repositories} activeRepository={activeRepository} onClose={() => setCreating(null)} onAdvanced={draft => {setPrefill(draft);setCreating('advanced');}}/>}
+    {creating === 'advanced' && <TaskPlanWizard repositories={repositories} activeRepository={activeRepository} prefill={prefill} onClose={() => setCreating(null)}/>}
   </main>;
 }
