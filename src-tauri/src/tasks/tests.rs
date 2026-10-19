@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn natural_language_task_can_explicitly_scope_the_repository_without_weakening_profile_paths() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let mut wide = draft("wide", &[]);
+    wide.scope = vec![".".into()];
+    let accepted = m.accept_plan(f.request(vec![wide])).unwrap().remove(0);
+    assert_eq!(accepted.scope, vec!["."]);
+    assert_eq!(m.get(&accepted.id).unwrap().scope, vec!["."]);
+    drop(m);
+    assert_eq!(f.manager().get(&accepted.id).unwrap().scope, vec!["."]);
+
+    for scope in [vec![".".into(), "src".into()], vec![".git".into()], vec![".env".into()]] {
+        let mut unsafe_draft = draft("unsafe", &[]);
+        unsafe_draft.scope = scope;
+        assert!(f.manager().accept_plan(f.request(vec![unsafe_draft])).is_err());
+    }
+    for field in ["sourcePaths", "outputPaths"] {
+        let mut unsafe_draft = draft("unsafe-profile", &[]);
+        let mut profile = serde_json::json!({"schemaVersion":1,"id":"p","name":"p",
+            "gates":[{"id":"test","label":"Test","kind":"unit","required":true,"approval":"none",
+                "executor":{"type":"process","program":"npm","args":["test"],"cwd":"workspace"}}]});
+        profile[field] = serde_json::json!(["."]);
+        unsafe_draft.profile = Some(profile);
+        assert!(f.manager().accept_plan(f.request(vec![unsafe_draft])).is_err());
+    }
+}
+
+
+#[test]
 fn dependency_revision_guard_rejects_stale_decisions_without_persistence() {
     let f = Fixture::new();
     let m = f.manager();
