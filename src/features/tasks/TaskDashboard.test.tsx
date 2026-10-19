@@ -10,7 +10,7 @@ describe('actionable task dashboard',()=>{
  });
  it('routes guidance without invoking native work',async()=>{
   const task=taskFixture();const open=vi.fn();render(<TaskDashboard tasks={[task]} readiness={{}} loading={false} onOpenTask={open}/>);
-  await userEvent.click(screen.getAllByRole('button',{name:/修复解析器/})[0]);expect(open).toHaveBeenCalledWith(task.id,'概览');expect(screen.getByText(/可同时属于多个/)).toBeVisible();
+  await userEvent.click(screen.getAllByRole('button',{name:/修复解析器/})[0]);expect(open).toHaveBeenCalledWith(task.id,'执行');expect(screen.getByText(/可同时属于多个/)).toBeVisible();
  });
 });
 it('does not display a zero readiness-dependent count when a task observation is unavailable',()=>{

@@ -12,14 +12,14 @@ Agents, Run/build processes and verification share an exclusive workspace writer
 
 ## Local workflow
 
-1. Add/select a local repository and choose 新建任务. Read its current HEAD, define goals and relative file scope, and configure a verification Profile. Edit the implementation/integration nodes and dependencies, then accept the frozen plan.
+1. Add/select a local repository and choose 新建任务. The default prompt-first composer accepts a natural-language goal, automatically inspects the active repository HEAD and displays its branch/baseline, then creates **one implementation Task** after a native recheck. The default approved task scope is the full repository (`.`), but native source and commit controls still reject `.git` and `.env` paths; it is not an OS sandbox. Optional settings can narrow the scope, copy a frozen Profile, or explicitly allow native scoped local sealing. The new Task opens on its overview. Existing four-step manual planning remains available under **高级任务图 / JSON** for multi-node dependencies, integration, and direct Profile JSON edits; the prompt/baseline/selected Profile are carried into that editor.
 2. Create each task worktree explicitly. Creation does not start an Agent. A partial creation/persistence failure preserves the worktree and its preparation intent for manual reconciliation; it never silently cleans up or replays creation.
 3. Start implementation tasks. The native coordinator has two global execution slots and a queue of at most 32 tasks. Retry creates a new Attempt. Provider completion only advances execution; Native observes shutdown, checks scope and optionally seals a local candidate commit.
 4. The native verifier runs the accepted structured software gates against committed, clean controlled inputs. Failed/unsupported/missing required gates prevent readiness. Optional limitations remain warnings. Ordinary Run output is exploratory and does not grant task readiness.
 5. For integration, prepare a dedicated worktree from the accepted base. Wait for fresh prerequisite checks and candidates, preview their exact source commits and target HEAD, then confirm through the native dialog. The preview expires after five minutes and is consumed once. No remote fetch/checkout, push or PR merge occurs.
 6. Independently verify the final integrated commit, review that revision, and explicitly accept it. After a conflict or interrupted merge, use the IDE to inspect/resolve/commit the worktree, then choose 验证已解决的集成. Native checks the clean source and dependency ancestry; it does not replay merges.
 
-AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through workspace Agents; the task coordinator's first implementation uses Codex only.
+AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. The quick composer **does not invoke an AI planner** or synthesize a dependency DAG: it freezes the user's words as the implementation Agent's goal, with a bounded title derived locally. This provides low-friction Vibe Coding task creation without fabricating an AI capability, execution or verification. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through workspace Agents; the task coordinator's first implementation uses Codex only.
 
 ## Task-driven surfaces
 
@@ -31,7 +31,7 @@ your draft intact: explicitly reload the latest selected record, or copy it to a
 new ID. An ID change creates a separate record; delete/rename migration is not
 provided. Saving configuration proves neither tool availability nor authentication.
 
-In the task wizard, 已保存 Profile copies a full snapshot into the draft.
+In the quick composer, a Profile is **optional** and defaults to none; without one, formal native verification/readiness is unavailable. Choose a saved Profile explicitly from the advanced section to freeze a copy. In the advanced task wizard, 已保存 Profile copies a full snapshot into the draft.
 Changing the library later cannot update the draft or an accepted task. Manual
 JSON and existing-task reuse remain available if library storage is unavailable.
 A task accepted without a Profile keeps that frozen policy; create a new plan

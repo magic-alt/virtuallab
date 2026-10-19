@@ -1,15 +1,15 @@
 # Application version assessment
 
-Version: 0.5.1 → 0.5.2 (patch).
+Version: 0.5.2 → 0.5.3 (patch).
 
-Baseline commit: d3feb5dccfd144fb334edea5c9fa1846b552f5e2
-Assessed main commit: 320409dc3f92f1e015ec650e440188303bab52e0
+Baseline commit: 8f9133d2a6b5880aae735b460f071a24abebc5eb
+Assessed main commit: 0db639ebdfad740f090e8a70254a5fb8cd1c0b25
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #82 — fix\(run\): simplify build selection and support project build scripts (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #83 — feat\(tasks\): prompt-first Vibe Coding task creation (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 
