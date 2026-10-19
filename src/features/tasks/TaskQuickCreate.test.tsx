@@ -117,6 +117,15 @@ describe('natural-language task creation', () => {
     expect(native.invoke.mock.calls.some(([cmd])=>cmd==='task_accept_plan')).toBe(false);
   });
 
+  it('shows a read-only browser preview without calling native methods', () => {
+    Reflect.deleteProperty(window, '__TAURI_INTERNALS__');
+    native.invoke.mockClear();
+    render(<TaskQuickCreate {...opening()}/>);
+    expect(screen.getByRole('button',{name:'创建任务'})).toBeDisabled();
+    expect(screen.getByText('仓库基线尚不可用')).toBeInTheDocument();
+    expect(native.invoke).not.toHaveBeenCalled();
+  });
+
   it('does not submit malformed custom paths or claim native access in browser preview', async () => {
     const props=opening();
     render(<TaskQuickCreate {...props}/>);
