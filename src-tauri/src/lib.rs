@@ -46,7 +46,7 @@ use agent::{
 use agent_ownership::AgentOwnership;
 use agent_journal::{agent_journal_recent, agent_journal_recover, agent_journal_purge_all, AgentJournal};
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
-use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
+use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_import_script, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
 use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
@@ -152,6 +152,7 @@ pub fn run() {
             process_spawn,
             process_stop,
             build_workflow_discover,
+            build_workflow_import_script,
             build_workflow_self_update_available,
             build_workflow_start,
             build_workflow_cancel,

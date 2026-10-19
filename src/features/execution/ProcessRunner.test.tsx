@@ -5,6 +5,8 @@ import { ProcessRunner } from "./ProcessRunner";
 import { useWorkbenchStore } from "@/stores/workbench";
 
 const backend = vi.hoisted(() => ({
+  importBuildScript: vi.fn().mockResolvedValue(null),
+  chooseBuildProgram: vi.fn().mockResolvedValue(null),
   buildWorkflowDiscover: vi.fn().mockResolvedValue([]),
   buildWorkflowSelfUpdateAvailable: vi.fn().mockResolvedValue(false),
   buildWorkflowStart: vi.fn().mockResolvedValue(undefined),
@@ -17,6 +19,8 @@ const backend = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/backend", () => ({
+  importBuildScript: backend.importBuildScript,
+  chooseBuildProgram: backend.chooseBuildProgram,
   buildWorkflowDiscover: backend.buildWorkflowDiscover,
   buildWorkflowSelfUpdateAvailable: backend.buildWorkflowSelfUpdateAvailable,
   buildWorkflowStart: backend.buildWorkflowStart,
@@ -34,6 +38,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 describe("ProcessRunner controls", () => {
   beforeEach(() => {
+    backend.importBuildScript.mockReset().mockResolvedValue(null);
     backend.buildWorkflowDiscover.mockReset().mockResolvedValue([]);
     backend.buildWorkflowSelfUpdateAvailable.mockReset().mockResolvedValue(false);
     backend.buildWorkflowStart.mockReset().mockResolvedValue(undefined);
@@ -193,7 +198,9 @@ describe("ProcessRunner controls", () => {
     const user = userEvent.setup();
     render(<ProcessRunner cwd="D:/repo" repositoryRoot="D:/repo" enabled />);
     expect(await screen.findByRole("button", { name: "Build desktop app" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Build configuration' }), 'npm-build');
     expect(screen.getByRole("button", { name: "Build frontend" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Build configuration' }), 'npm-tauri-package');
     await user.click(screen.getByRole("button", { name: "Build desktop app" }));
     expect(backend.processSpawn).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "D:/repo", program: "npm", args: ["run", "tauri:build"],
@@ -300,6 +307,60 @@ describe("ProcessRunner controls", () => {
         { name: "Compile", program: "cmake", args: ["--build", "--preset", "windows-mingw-release-qt6"] },
       ],
     }));
+  });
+
+  it("shows one build recipe at a time and runs the selected MSVC configuration", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.buildWorkflowDiscover.mockResolvedValueOnce(['MinGW', 'MSVC'].map(tool => ({
+      id: tool, name: `${tool} Release`, kind: 'build', tool, supported: true,
+      description: `${tool} project configuration`,
+      steps: [{ name: 'Build', program: 'cmake', args: ['--build', '--preset', tool] }],
+    })));
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+    const selector = await screen.findByRole('combobox', { name: 'Build configuration' });
+    expect(screen.getAllByRole('button', { name: 'Build now' })).toHaveLength(1);
+    await user.selectOptions(selector, 'MSVC');
+    expect(screen.queryByText('MinGW project configuration')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Build now' }));
+    expect(backend.processSpawn).toHaveBeenCalledWith(expect.objectContaining({args: ['--build', '--preset', 'MSVC']}));
+  });
+
+  it("imports a script for review and saves its interpreter and literal arguments", async () => {
+    useWorkbenchStore.setState({ profiles: [] });
+    backend.importBuildScript.mockResolvedValueOnce({
+      id: 'script-build', name: 'Build script · build.ps1', kind: 'build', tool: 'Script',
+      description: 'Selected script', supported: true,
+      steps: [{ name: 'Build script', program: 'pwsh', args: ['-NoProfile', '-File', 'script/build.ps1', '-Label', ' a b '] }],
+    });
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole('button', { name: 'Import build script' }));
+    expect(await screen.findByLabelText('Program')).toHaveValue('pwsh');
+    expect(backend.processSpawn).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Save profile' }));
+    expect(useWorkbenchStore.getState().profiles[0].args).toEqual(['-NoProfile', '-File', 'script/build.ps1', '-Label', ' a b ']);
+  });
+
+  it('ignores an imported script when its workspace was changed during the picker', async () => {
+    let resolveImport!: (value: unknown) => void;
+    backend.importBuildScript.mockReturnValueOnce(new Promise(resolve => { resolveImport = resolve; }));
+    const user = userEvent.setup();
+    const view = render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole('button', { name: 'Import build script' }));
+    view.rerender(<ProcessRunner cwd="D:/other" repositoryRoot="D:/other" enabled />);
+    resolveImport({ id:'old', name:'Old script', kind:'build', supported:true, tool:'Script', description:'', steps:[{name:'Build',program:'node',args:['build.js']}] });
+    await waitFor(() => expect(backend.buildWorkflowDiscover).toHaveBeenLastCalledWith('D:/other'));
+    expect(screen.queryByText('Edit run profile')).not.toBeInTheDocument();
+  });
+
+  it("uses the native workflow adapter for single-step Keil builds", async () => {
+    useWorkbenchStore.setState({ profiles: [{id:'keil', name:'Firmware app', kind:'build', repositoryRoot:'D:/repo', program:'C:/Keil/UV4/UV4.exe',args:['-b','Board.uvprojx','-t','app']}] });
+    const user = userEvent.setup();
+    render(<ProcessRunner cwd="D:/workspace" repositoryRoot="D:/repo" enabled />);
+    await user.click(screen.getByRole('button', {name: /^run$/i}));
+    expect(backend.buildWorkflowStart).toHaveBeenCalledWith(expect.objectContaining({steps:[expect.objectContaining({args:['-b','Board.uvprojx','-t','app']})]}));
+    expect(backend.processSpawn).not.toHaveBeenCalled();
   });
 
   it("saves and executes a configurable two-step workflow", async () => {

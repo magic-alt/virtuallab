@@ -461,7 +461,7 @@ fn process_spawn_blocking(
     let mut map = state.children.lock().map_err(|_| "Process manager lock poisoned")?;
     if map.contains_key(&spec.id) { return Err("Process id is already running".into()); }
 
-    let mut command = process_command(spec.program.trim());
+    let mut command = workspace_process_command(spec.program.trim(), std::path::Path::new(&spec.cwd));
     command
         .args(&spec.args)
         .current_dir(&spec.cwd)
@@ -693,6 +693,21 @@ pub(crate) fn process_command(program: &str) -> Command {
     // required outer quotes and batch argument escaping. A manual cmd /c
     // wrapper bypasses that protection and breaks spaces/metacharacters.
     background_command(resolved)
+}
+
+/// Resolve explicit relative launcher paths against the selected workspace,
+/// before Windows launcher lookup consults the application's own directory.
+pub(crate) fn workspace_process_command(program: &str, root: &std::path::Path) -> Command {
+    let path = std::path::Path::new(program);
+    if !path.is_absolute() && path.components().count() > 1 {
+        let root = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+        let resolved = root.join(path).to_string_lossy().into_owned();
+        #[cfg(windows)]
+        let resolved = crate::process::windows_desktop_path(&resolved);
+        process_command(&resolved)
+    } else {
+        process_command(program)
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
