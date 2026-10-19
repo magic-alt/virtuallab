@@ -1,15 +1,15 @@
 # Application version assessment
 
-Version: 0.5.3 → 0.5.4 (patch).
+Version: 0.5.4 → 0.5.5 (patch).
 
-Baseline commit: 1d4c79b5f3af486e17f72fd69cff71f767573ad3
-Assessed main commit: 9dfae55923535185fcbfa2a0e2d03ce1f4f86c0e
+Baseline commit: fa92ca9aefab0fb0b19d6912fe8bc8830e14f131
+Assessed main commit: 6f6491a1085c0e2e8118ef2e87ab2b8319c6e64a
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #84 — fix\(terminal\): keep open shells independent of workspace operations (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #85 — fix: recover Git ownership, worktree removal and task HEAD validation (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 

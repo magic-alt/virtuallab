@@ -1,6 +1,6 @@
 [package]
 name = "virtuallab"
-version = "0.5.4"
+version = "0.5.5"
 description = "VirtualLab Engineering Workbench"
 authors = ["magic-alt"]
 edition = "2021"
