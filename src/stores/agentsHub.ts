@@ -6,10 +6,11 @@ export interface AgentHubTarget {
 }
 
 interface AgentsHubState {
-  section: 'tasks' | 'sessions';
+  section: 'tasks' | 'sessions' | 'configuration';
   sessionTarget: AgentHubTarget | null;
   visibleSessionRoot: string | null;
   showTasks: () => void;
+  showConfiguration: () => void;
   showSession: (target: AgentHubTarget) => void;
   setVisibleSessionRoot: (root: string | null) => void;
 }
@@ -20,6 +21,7 @@ export const useAgentsHubStore = create<AgentsHubState>()((set) => ({
   sessionTarget: null,
   visibleSessionRoot: null,
   showTasks: () => set({ section: 'tasks', visibleSessionRoot: null }),
+  showConfiguration: () => set({ section: 'configuration', visibleSessionRoot: null }),
   showSession: (sessionTarget) => set({ section: 'sessions', sessionTarget, visibleSessionRoot: null }),
   setVisibleSessionRoot: (visibleSessionRoot) => set({ visibleSessionRoot }),
 }));

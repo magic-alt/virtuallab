@@ -24,9 +24,10 @@ let afterSeq = 0;
 const activeAttempt = (state:TaskAttemptState) => ['queued','running','stopping'].includes(state);
 
 /** Follow only the attempt the user was viewing, never a different task or tab. */
-function refreshedTab(state:TaskState, tasks:TaskRecord[]):TaskDetailTab {
+function refreshedTab(state:TaskState, tasks:TaskRecord[], navigationRevision:number):TaskDetailTab {
   const selected=tasks.find(task=>task.id===state.activeTaskId);
   if (!selected) return '概览';
+  if (state.navigationRevision!==navigationRevision) return state.activeTaskTab;
   const previous=state.tasks.find(task=>task.id===selected.id)?.attempts.at(-1);
   const current=selected.attempts.at(-1);
   return state.activeTaskTab==='执行' && previous && current && previous.id===current.id
@@ -41,7 +42,9 @@ function mergeEvents(current: TaskEvent[], incoming: TaskEvent[], tasks: TaskRec
 export async function refreshTasks(): Promise<void> {
   if (!observed) return;
   const epoch = generation; const sequence = ++refreshSequence;
-  const roots = [...useTaskStore.getState().roots];
+  const snapshot = useTaskStore.getState();
+  const roots = [...snapshot.roots];
+  const navigationRevision = snapshot.navigationRevision;
   const current = () => observed && generation === epoch && refreshSequence === sequence;
   useTaskStore.setState({loading: true, readiness: {}, readinessErrors: {}, error: null});
   const [records, [events]] = await Promise.all([
@@ -65,7 +68,23 @@ export async function refreshTasks(): Promise<void> {
       error: Object.entries(repositoryErrors).map(([root, reason]) => `${root}: ${reason}`).join('\n')});
     return;
   }
-  const tasks = [...new Map(scopedTasks.map(task => [task.id, task])).values()];
+  const retained = new Map(useTaskStore.getState().tasks.map(task => [task.id, task]));
+  const tasks = [...new Map(scopedTasks.map(task => {
+    const existing = retained.get(task.id);
+    return [task.id, existing && existing.revision > task.revision ? existing : task] as const;
+  })).values()];
+  if (events.status === 'fulfilled' && !Object.keys(repositoryErrors).length) afterSeq = Math.max(afterSeq, ...events.value.map(event => event.seq));
+  // Execution is a durable structural snapshot. Do not wait for source hashing,
+  // toolchain observation or another task's readiness to show its current state.
+  useTaskStore.setState(state => ({
+    tasks, repositoryErrors,
+    launchErrors: Object.fromEntries(Object.entries(state.launchErrors).filter(([id]) => tasks.some(task => task.id === id && !task.attempts.length))),
+    events: mergeEvents(state.events, events.status === 'fulfilled' ? events.value : [], tasks),
+    observerError: events.status === 'rejected' ? `事件来源不可用: ${errorText(events.reason)}` : state.observerError,
+    activeTaskId: state.activeTaskId && tasks.some(task => task.id === state.activeTaskId) ? state.activeTaskId : null,
+    activeTaskRepositoryRoot: tasks.find(task => task.id === state.activeTaskId)?.repositoryRoot ?? null,
+    activeTaskTab: refreshedTab(state,tasks,navigationRevision),
+  }));
   const preparing=tasks.filter(task=>!task.attempts.length);
   const [results,launchResults] = await Promise.all([
     Promise.allSettled(tasks.map(task=>getTaskReadiness(task.id))),
@@ -82,15 +101,15 @@ export async function refreshTasks(): Promise<void> {
     if (result.status==='rejected') launchErrors[preparing[index].id]='启动记录不可用：'+errorText(result.reason);
     else if (typeof result.value==='string' && result.value) launchErrors[preparing[index].id]=result.value;
   });
-  if (events.status === 'fulfilled' && !Object.keys(repositoryErrors).length) afterSeq = Math.max(afterSeq, ...events.value.map(event => event.seq));
-  useTaskStore.setState(state => ({
-    tasks, readiness, readinessErrors, launchErrors, repositoryErrors, loading: false,
-    events: mergeEvents(state.events, events.status === 'fulfilled' ? events.value : [], tasks),
-    observerError: events.status === 'rejected' ? `事件来源不可用: ${errorText(events.reason)}` : state.observerError,
-    activeTaskId: state.activeTaskId && tasks.some(task => task.id === state.activeTaskId) ? state.activeTaskId : null,
-    activeTaskRepositoryRoot: tasks.find(task => task.id === state.activeTaskId)?.repositoryRoot ?? null,
-    activeTaskTab: refreshedTab(state,tasks),
-  }));
+  useTaskStore.setState(state => {
+    // A confirmed launch can retain a newer record while readiness is in flight.
+    // Never attach that earlier observation (or its errors) to a new revision.
+    const currentRevisions = new Map(state.tasks.map(task => [task.id, task.revision]));
+    const matching = new Set(tasks.filter(task => currentRevisions.get(task.id) === task.revision).map(task => task.id));
+    const scoped = <T,>(values: Record<string, T>) => Object.fromEntries(Object.entries(values).filter(([id]) => matching.has(id)));
+    return {readiness: scoped(readiness), readinessErrors: scoped(readinessErrors),
+      launchErrors: {...Object.fromEntries(Object.entries(state.launchErrors).filter(([id]) => !matching.has(id))), ...scoped(launchErrors)}, loading: false};
+  });
 }
 /** Called once by the shell hook. Cleanup also handles a delayed native listener. */
 export function observeTasks(roots: string[]): () => void {

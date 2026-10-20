@@ -4,22 +4,69 @@ Every visible interactive control must have an automated test and/or an explicit
 
 ## Agents Hub consolidation (2026-10-20)
 
-The application has one **Agents Hub**, with **Agent 任务** for managed Tasks and
-**工作区会话** for direct Provider sessions. Repository tools remain Overview,
-Changes, GitHub, Terminal and Run. The two Hub sections share navigation and
-configuration; a saved session binding does not become a Task or verification
-evidence. See [the architecture audit](AGENTS_HUB_AUDIT_2026-10-20.md) for the
-latest baseline, implementation findings and verification results.
+Application navigation is **Agents Hub / 工程仓库 / 设置**. The Hub contains
+**Agent 任务** for managed Tasks and their reports, **工作区会话** for direct
+Provider sessions, and **执行配置** for the shared Codex executable and Verification
+Profile library. There is no standalone Reports page. Global Settings provides
+IDE, notification and terminal preferences. Repository tools remain Overview,
+Changes, GitHub, Terminal and Run. A saved session binding does not become a Task
+or verification evidence. The [architecture audit](AGENTS_HUB_AUDIT_2026-10-20.md)
+records the earlier consolidation baseline; current navigation and ownership are
+described in [architecture](ARCHITECTURE.md#agents-hub-and-execution-ownership).
+The steps below are acceptance requirements, not a claim of packaged desktop
+qualification.
 
 | Control or boundary | Automated evidence | Desktop acceptance still required |
 | --- | --- | --- |
-| Hub entry, sections and retained drafts | `AgentsHub.test.tsx`, `AgentSessionHub.test.tsx`, `agentsHub.test.ts` | Switch tasks, sessions, reports and settings with an unsent prompt and a running Agent |
+| Hub entry, sections and retained drafts | `AgentsHub.test.tsx`, `AgentSessionHub.test.tsx`, `agentsHub.test.ts` | Switch all three Hub sections, a selected task report, repository tools and global Settings with an unsent prompt and a running Agent; no separate Reports navigation remains |
 | Existing repository selection and old Agents tab | `workbench.test.ts`, `WorkspaceContent.test.tsx`, `WorkbenchShell.agentsHub.test.tsx` | Upgrade a saved v7 workspace on an external linked worktree; confirm Overview and exact path are restored |
 | Session repository/worktree ownership | `AgentSessionHub.test.tsx`, shell Hub routing tests | Select sibling/Unicode worktrees, then remove a selected worktree externally and try to connect; it must be refused without silently selecting another target |
 | Task ownership and native session controls | `AgentSessionHub.test.tsx`, `agent::tests`, `task_execution` fixtures | Open a running task worktree from the repository header and a notification; use Task cancellation, then inspect retained Task/Attempt history |
-| Provider configuration and request recovery | `agentPreferences.test.ts`, `AgentWorkspace.test.tsx`, `TaskQuickCreate.test.tsx` | Change default Codex path; start a new Task and a new direct session; confirm an already accepted request retains its original executable |
+| Provider configuration and request recovery | `agentPreferences.test.ts`, `AgentWorkspace.test.tsx`, `TaskQuickCreate.test.tsx` | Change default Codex path in Hub → 执行配置; start a new Task and a new direct session; confirm an already accepted request retains its original executable |
 | Agent and Terminal notifications | `taskNotifications.test.ts`, `WorkbenchShell.agentsHub.test.tsx`, existing Terminal notice tests | Receive notices in another repository and under Help; open the exact execution/session or terminal without stopping PTYs |
 | Session recovery and cleanup | Existing journal tests plus `AgentWorkspace.test.tsx` | Reopen an existing saved thread, inspect metadata-only history, and exercise the existing native confirmation for history deletion |
+
+### Navigation, task identity and practical settings desktop checks
+
+1. Confirm the application sidebar exposes only **Agents Hub**, **工程仓库** and
+   **设置**. In the Hub, switch **Agent 任务 / 工作区会话 / 执行配置**. A task's
+   **报告** stays within its detail. Confirm the three primary detail tabs are
+   **概览 / 执行 / 报告**, with secondary **结果报告 / 变更与审查 / 交付** controls
+   under Report; old internal review/delivery keys still open the matching secondary
+   surface. Attempt history and detailed check/acceptance status can be expanded,
+   while current failures remain visible. The collapsed historical verification
+   inventory still includes failed and superseded Runs. Compatibility callers using
+   `view="evidence"` reach Hub task reports rather than a separate report page.
+2. Launch two disposable tasks with the same first prompt line. Distinguish them
+   by task ID, time and goal context, select each, and verify the selected task's
+   execution, errors and report match that identity. Change repository/status/search
+   filters and confirm the selected detail is clearly identified, including when
+   the selected task is outside the current filtered list. Filtering must never
+   cancel, retry or start a task.
+3. Delay or fail the delivery-readiness source while a task is running. Its task
+   row, latest execution state and live output must remain available; readiness
+   shows loading/unavailable without inventing qualification. Review/acceptance
+   actions still obey their native readiness requirements. Restore the source
+   and confirm readiness updates without changing the selected task.
+4. In **执行配置**, change the default Codex executable and maintain a disposable
+   Verification Profile. New task/session inputs follow the selected default;
+   already accepted requests and frozen task Profiles retain their prior values.
+   Provider and Run configuration buttons navigate to their explicit targets;
+   merely entering configuration does not run a command or connect a Provider.
+5. In global **设置**, change the preferred IDE, notification preferences and
+   terminal preferences. Confirm supported preferences survive application restart
+   and apply to their intended future action or terminal; existing PTYs and Agent
+   runtimes remain attached. Exercise the IDE action on a disposable workspace and
+   notification behavior with a harmless task completion. Changing a preference
+   must not launch a shell, replay a task or expose prompt/output in a notice.
+6. At wide and narrow window sizes, verify the Hub uses the available stage width,
+   long Unicode paths/IDs wrap, task rows remain identifiable, and the bounded task
+   list scrolls without forcing the selected detail to jump. Navigate away and back
+   with an unsent prompt and running terminal; their contents and ownership remain.
+7. In a task report, confirm independent verification remains available when its
+   native prerequisites are satisfied. The exploratory legacy Run context appears
+   only once among secondary report controls and continues to state that it does
+   not grant Task verification or human acceptance.
 
 ## Task workflow local implementation
 
@@ -27,7 +74,7 @@ See [capability boundaries](TASK_FIRST_CONTROL_CENTER.md). These automated regre
 
 | Surface | Automated evidence | Desktop acceptance still required |
 | --- | --- | --- |
-| App navigation and terminal retention | `WorkbenchShell.tasks.test.tsx`, existing workspace/terminal tests | Switch Task/repository pages with live PTYs in multiple worktrees |
+| App navigation and terminal retention | `WorkbenchShell.tasks.test.tsx`, existing workspace/terminal tests | Switch Hub, repository tools and global Settings with live PTYs in multiple worktrees |
 | Natural-language quick create | `TaskQuickCreate.test.tsx`, `tasks.test.ts`, native task-scope tests | Enter Unicode goal in the composer; inspect auto HEAD; change/switch repository; confirm **开始任务** accepts the request, prepares its workspace and queues execution, while protected paths are refused |
 | Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Use the advanced node wizard to accept a plan, then explicitly prepare its workspace; reconcile interrupted preparation |
 | Execute, Cancel and Retry | Task cancellation tests; exact-run/thread and bounded-slot native fixtures | Authenticated concurrent Codex instances; cancellation during startup, verification and integration |
@@ -294,7 +341,7 @@ has been observed and resolved on a physical Windows session.
 
 | Surface | Control or safety contract | Automated evidence | Desktop acceptance required |
 | --- | --- | --- | --- |
-| Navigation | Agents tab | \`WorkspaceContent.test.tsx\` | switch across all tabs and reopen Agents |
+| Navigation | Agents Hub → 工作区会话 | \`WorkspaceContent.test.tsx\`, `AgentsHub.test.tsx` | switch repository tools, then reopen the same Hub workspace session |
 | Agents | provider selector, explicit Codex path, capability detection | \`agentHarness.test.ts\`, \`AgentWorkspace.test.tsx\`, Rust launcher-path tests | Compare PowerShell 0.162 against a GUI that resolves older 0.157.1; inspect path; choose newer launcher; verify detected/runtime paths match |
 | Agents | One-click Connect & send, manual Attach, stop and forget thread | \`AgentWorkspace.test.tsx\`, \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | Run harmless turn without pre-attaching; stop and explicitly resume saved thread after restart |
 | Native | exactly one harness runtime per workspace | \`agent_ownership.rs\` Rust test | attempt a second provider without stopping first; must refuse |

@@ -9,6 +9,7 @@ import { TaskControlCenter } from './TaskControlCenter';
 import { useTaskObserver } from './useTaskObserver';
 import { refreshTasks, runTaskAction, useTaskStore } from '@/stores/tasks';
 import { taskFixture,readinessFixture } from './fixtures';
+import { useAgentsHubStore } from '@/stores/agentsHub';
 import type { TaskRecord } from '@/types/tasks';
 import type { RepositoryRecord } from '@/types/workbench';
 const repo: RepositoryRecord = {id:'r',name:'工作仓库',path:'/repo',lastOpenedAt:1};
@@ -21,6 +22,7 @@ function Harness(props: Partial<React.ComponentProps<typeof TaskControlCenter>>)
 beforeEach(()=>{
   Object.defineProperty(window,'__TAURI_INTERNALS__',{value:{},configurable:true});
   tasks=[taskFixture()];ready=readinessFixture();
+  useAgentsHubStore.setState(useAgentsHubStore.getInitialState(), true);
   useTaskStore.setState({filters:{query:'',repositoryRoot:'',attention:false},activeTaskTab:'概览',activeTaskId:null,pending:{},cancelling:{},actionErrors:{},observerError:null});
   native.listen.mockResolvedValue(vi.fn());native.confirm.mockResolvedValue(false);
   native.invoke.mockImplementation(async(command,args)=>{
@@ -60,13 +62,31 @@ describe('task control center user flows',()=>{
     expect(screen.getByRole('article', { name: '任务详情' })).toBeVisible();
     expect(native.invoke.mock.calls.some(([name]) => ['task_launch', 'task_start', 'task_prepare_workspace'].includes(name))).toBe(false);
   });
-  it('includes unprofiled tasks in reports and opens their readable result tab', async () => {
+  it('maps the legacy report view into the Hub and opens an unprofiled task report', async () => {
     render(<Harness view="evidence" />);
-    expect(screen.getByRole('heading', { level: 1, name: '报告' })).toBeVisible();
-    const list = screen.getByRole('region', { name: '任务报告列表' });
+    expect(screen.getByRole('heading', { level: 1, name: 'Agents Hub' })).toBeVisible();
+    const list = screen.getByRole('region', { name: '任务列表' });
     await userEvent.click(await within(list).findByRole('button', { name: '修复解析器' }));
     expect(screen.getByRole('tab', { name: '报告' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: '任务结果报告' })).toBeVisible();
+  });
+
+  it('opens existing tasks at their current execution phase and preserves an explicit same-task tab', async () => {
+    const attempt = { id: 'attempt', state: 'running' as const, phase: 'implementation' as const,
+      candidateSha: null, failure: null, startedAtMs: 1, endedAtMs: null, evidence: null };
+    tasks = [taskFixture({ id: 'active', title: '当前运行任务', attempts: [attempt] }),
+      taskFixture({ id: 'failed', title: '已失败任务', attempts: [{ ...attempt, state: 'failed', failure: 'Provider failed', endedAtMs: 2 }] }),
+      taskFixture({ id: 'idle', title: '未开始任务' })];
+    render(<Harness view="home" />);
+    await userEvent.click(await screen.findByRole('button', { name: '当前运行任务' }));
+    expect(screen.getByRole('tab', { name: '执行' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('tab', { name: '概览' }));
+    await userEvent.click(screen.getByRole('button', { name: '当前运行任务' }));
+    expect(screen.getByRole('tab', { name: '概览' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('button', { name: '已失败任务' }));
+    expect(screen.getByRole('tab', { name: '报告' })).toHaveAttribute('aria-selected', 'true');
+    await userEvent.click(screen.getByRole('button', { name: '未开始任务' }));
+    expect(screen.getByRole('tab', { name: '概览' })).toHaveAttribute('aria-selected', 'true');
   });
   it('shows a recoverable repository warning while healthy repository tasks remain usable',async()=>{
     const offline:RepositoryRecord={id:'offline',name:'离线仓库',path:'/offline',lastOpenedAt:1};
@@ -91,13 +111,14 @@ describe('task control center user flows',()=>{
     expect(screen.queryByText(/Repository path is unavailable/)).not.toBeInTheDocument();
     expect(screen.getByRole('button',{name:'开始执行'})).toBeEnabled();
   });
-  it('keeps selection across app views and routes all five detail tabs to workspace-owned tools',async()=>{
+  it('keeps selection and all legacy detail actions behind the three primary task tabs',async()=>{
     const onOpen=vi.fn(); const page=render(<Harness onOpenWorkspace={onOpen}/>);await openTask();
     expect(within(screen.getByRole('article',{name:'任务详情'})).getByText('未运行')).toBeInTheDocument();
     page.rerender(<Harness view="evidence" onOpenWorkspace={onOpen}/>);
     expect(screen.getByRole('heading',{name:'修复解析器'})).toBeInTheDocument();
     for(const [tab,label,target] of [['概览','打开工作区','overview'],['执行','打开终端','terminal'],['变更与审查','打开变更','changes'],['报告','打开 Run','run'],['交付','打开 GitHub','github']] as const){
-      await userEvent.click(screen.getByRole('tab',{name:tab}));await userEvent.click(screen.getByRole('button',{name:label}));
+      if(tab==='变更与审查'||tab==='交付')await userEvent.click(screen.getByRole('tab',{name:'报告'}));
+      await userEvent.click(screen.getByRole(tab==='变更与审查'||tab==='交付'?'button':'tab',{name:tab}));await userEvent.click(screen.getByRole('button',{name:label}));
       expect(onOpen).toHaveBeenLastCalledWith('/work/task-1',target,'/repo');
     }
     expect(native.invoke.mock.calls.some(([c])=>c==='task_start'||c==='task_prepare_workspace')).toBe(false);
@@ -117,16 +138,16 @@ describe('task control center user flows',()=>{
   });
   it('review and acceptance bind the visible native SHA and require warning acknowledgment',async()=>{
     ready=readinessFixture({status:'warning',candidateSha:'exact-sha',warnings:['optional check missing'],reviewCurrent:true});
-    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'变更与审查'}));
+    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'变更与审查'}));
     await userEvent.type(screen.getByLabelText('审查说明'),'检查完成');await userEvent.click(screen.getByRole('button',{name:'批准此修订'}));
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_review',{request:{taskId:'task-1',expectedHeadSha:'exact-sha',note:'检查完成',approved:true}}));
-    await userEvent.click(screen.getByRole('tab',{name:'交付'}));
+    await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'交付'}));
     const accept=screen.getByRole('button',{name:'验收此修订'});expect(accept).toBeDisabled();
     await userEvent.click(screen.getByLabelText('我已了解当前警告'));await userEvent.click(accept);
     await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_accept_result',{request:{taskId:'task-1',expectedHeadSha:'exact-sha',acknowledgedWarnings:true}}));
   });
   it('integration previews fixed sources and surfaces native confirmation cancellation',async()=>{
-    tasks=[taskFixture({kind:'integration'})];render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'交付'}));
+    tasks=[taskFixture({kind:'integration'})];render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'交付'}));
     await userEvent.click(screen.getByRole('button',{name:'预览集成'}));
     expect(await screen.findByText('source')).toBeInTheDocument();
     const original=native.invoke.getMockImplementation()!;
@@ -175,7 +196,7 @@ describe('task control center user flows',()=>{
   });
   it('revokes warning acknowledgment after native refresh changes the candidate revision',async()=>{
     ready=readinessFixture({status:'warning',candidateSha:'first-sha',warnings:['check skipped'],reviewCurrent:true});
-    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'交付'}));
+    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'交付'}));
     await userEvent.click(screen.getByLabelText('我已了解当前警告'));expect(screen.getByRole('button',{name:'验收此修订'})).toBeEnabled();
     tasks=[taskFixture({revision:2})];ready={...ready,candidateSha:'next-sha'};
     await act(async()=>{await import('@/stores/tasks').then(s=>s.refreshTasks());});
@@ -194,6 +215,7 @@ describe('task control center user flows',()=>{
     const previous={id:'previous',state:'failed' as const,phase:'verification' as const,candidateSha:'old-head',failure:null,startedAtMs:1,endedAtMs:2,evidence};
     tasks=[taskFixture({attempts:[previous,{...previous,id:'latest',evidence:{...evidence,runId:'latest-run'}}]})];
     render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'执行'}));
+    await userEvent.click(screen.getByText('执行记录（2）'));
     await userEvent.click(screen.getByText('历史证据 · previous'));
     expect(screen.getByText('old-run')).toBeVisible();expect(screen.getByText('old-manifest')).toBeVisible();expect(screen.getByText('old-input')).toBeVisible();expect(screen.getByText('old check failed')).toBeVisible();expect(screen.getByText('logs/old.log')).toBeVisible();
     await userEvent.click(screen.getByRole('tab',{name:'报告'}));expect(screen.getByText('latest-run')).toBeVisible();
@@ -222,10 +244,10 @@ describe('task control center user flows',()=>{
     const decision={headSha:'same-sha',inputDigest:'same-input',profileDigest:'same-profile',runId:'reviewed-run',toolchainDigest:'reviewed-tools'};
     tasks=[taskFixture({review:{...decision,approved:true,note:'Reviewed',createdAtMs:1},acceptance:{...decision,acceptedAtMs:2,acknowledgedWarnings:false}})];
     ready=readinessFixture({candidateSha:'same-sha',status:'unverified',reviewCurrent:false,acceptanceCurrent:false});
-    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'变更与审查'}));
+    render(<Harness/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'变更与审查'}));
     expect(screen.getByText('reviewed-run')).toBeVisible();expect(screen.getByText('reviewed-tools')).toBeVisible();expect(screen.getByText(/每次新的验证 Run/)).toBeVisible();
     expect(screen.getByText('审查状态：审查已过期')).toBeVisible();
-    await userEvent.click(screen.getByRole('tab',{name:'交付'}));expect(screen.getByText('reviewed-run')).toBeVisible();expect(screen.getByRole('button',{name:'验收此修订'})).toBeDisabled();
+    await userEvent.click(screen.getByRole('tab',{name:'报告'}));await userEvent.click(screen.getByRole('button',{name:'交付'}));expect(screen.getByText('reviewed-run')).toBeVisible();expect(screen.getByRole('button',{name:'验收此修订'})).toBeDisabled();
   });
   it('offers explicit reconciliation only after uncertain native preparation and never retries creation implicitly',async()=>{
     tasks=[taskFixture({workspaceRoot:null})];const fallback=native.invoke.getMockImplementation()!;
@@ -293,7 +315,7 @@ describe('task control center user flows',()=>{
         if(retired)return Promise.reject(new Error('No retained preparation intent; use explicit preparation'));
         retired=true;tasks=[{...tasks[0],revision:tasks[0].revision+1}];return Promise.resolve(tasks[0]);
       }
-      if(command==='task_prepare_workspace'){tasks=[taskFixture({workspaceRoot:'/work/after-retirement'})];return Promise.resolve(tasks[0]);}
+      if(command==='task_prepare_workspace'){tasks=[{...tasks[0],revision:tasks[0].revision+1,workspaceRoot:'/work/after-retirement'}];return Promise.resolve(tasks[0]);}
       return fallback(command,args);
     });
     const page=render(<Harness/>);await openTask();
@@ -335,8 +357,8 @@ describe('task control center user flows',()=>{
 it('retains detail tab and filters across views while Profile failure leaves workspace controls available',async()=>{
  const original=native.invoke.getMockImplementation()!;native.invoke.mockImplementation((command,args)=>command==='task_profile_list'?Promise.reject(new Error('corrupt Profile store')):original(command,args));
  const open=vi.fn();const page=render(<Harness onOpenWorkspace={open}/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'执行'}));
- await userEvent.type(screen.getByLabelText('搜索任务'),'Unicode');page.rerender(<Harness view="settings" onOpenWorkspace={open}/>);expect(await screen.findByText('corrupt Profile store')).toBeVisible();
- expect(screen.getByRole('button',{name:'管理 Provider 与会话'})).toBeEnabled();page.rerender(<Harness view="tasks" onOpenWorkspace={open}/>);
+ await userEvent.type(screen.getByLabelText('搜索任务'),'Unicode');await userEvent.click(screen.getByRole('tab',{name:'执行配置'}));expect(await screen.findByText('corrupt Profile store')).toBeVisible();
+ expect(screen.getByRole('button',{name:'管理 Provider 与会话'})).toBeEnabled();page.rerender(<Harness view="tasks" onOpenWorkspace={open}/>);await userEvent.click(screen.getByRole('tab',{name:'Agent 任务'}));
  expect(screen.getByLabelText('搜索任务')).toHaveValue('Unicode');expect(screen.getByRole('tab',{name:'执行'})).toHaveAttribute('aria-selected','true');
  expect(screen.queryByRole('button',{name:'打开 Agents'})).not.toBeInTheDocument();
  await userEvent.click(screen.getByRole('button',{name:'打开终端'}));expect(open).toHaveBeenCalledWith('/work/task-1','terminal','/repo');

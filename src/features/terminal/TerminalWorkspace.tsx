@@ -28,6 +28,8 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   setTerminalFontSize,
   useTerminalFontSize,
+  useTerminalScrollback,
+  useTerminalCursorBlink,
 } from "./terminalAppearance";
 import type { TerminalOutput, WorkbenchEvent } from "@/types/workbench";
 
@@ -60,6 +62,8 @@ export function TerminalWorkspace({
   const [listenersReady, setListenersReady] = useState(false);
   const scope = workspaceKey(cwd);
   const fontSize = useTerminalFontSize();
+  const scrollback = useTerminalScrollback();
+  const cursorBlink = useTerminalCursorBlink();
   const handles = useRef(new Map<string, TerminalHandle>());
   const pending = useRef(new Map<string, number[][]>());
   const sessionsRef = useRef<Session[]>([]);
@@ -423,6 +427,8 @@ export function TerminalWorkspace({
               active={session.id === activeId}
               visible={visible}
               fontSize={fontSize}
+              scrollback={scrollback}
+              cursorBlink={cursorBlink}
               // ConPTY can request cursor position (CSI 6n) before the spawn
               // acknowledgement. xterm must be able to answer CSI 1;1R while
               // the session is still 'starting', or PowerShell stalls.
@@ -456,6 +462,8 @@ function TerminalSurface({
   active,
   visible,
   fontSize,
+  scrollback,
+  cursorBlink,
   enabled,
   onAttach,
   onDetach,
@@ -465,6 +473,8 @@ function TerminalSurface({
   active: boolean;
   visible: boolean;
   fontSize: number;
+  scrollback: number;
+  cursorBlink: boolean;
   enabled: boolean;
   onAttach: (id: string, handle: TerminalHandle) => void;
   onDetach: (id: string) => void;
@@ -500,14 +510,14 @@ function TerminalSurface({
     if (!host.current) return;
 
     const terminal = new Terminal({
-      cursorBlink: true,
+      cursorBlink,
       convertEol: true,
       fontFamily: '"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, "Microsoft YaHei UI", monospace',
       fontSize,
       lineHeight: 1.3,
       letterSpacing: 0,
       minimumContrastRatio: 4.5,
-      scrollback: 8000,
+      scrollback,
       theme: {
         background: "#090704",
         foreground: "#ebe3d8",
@@ -581,6 +591,14 @@ function TerminalSurface({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [fontSize, active, visible, fitAndResize]);
+
+  useEffect(() => {
+    const terminal = terminalHandle.current?.terminal;
+    if (!terminal) return;
+    // Buffer/rendering options do not alter PTY geometry or take focus.
+    terminal.options.scrollback = scrollback;
+    terminal.options.cursorBlink = cursorBlink;
+  }, [scrollback, cursorBlink]);
 
   return (
     <div

@@ -3,9 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import * as tasks from '@/lib/tasks';
 import { isDesktopRuntime } from '@/lib/backend';
 import { runTaskAction, runTaskCancellation, useTaskStore, selectTask } from '@/stores/tasks';
-import type { IntegrationPreview, TaskReadiness, TaskRecord } from '@/types/tasks';
+import { useAgentPreferences } from '@/stores/agentPreferences';
+import type { IntegrationPreview, TaskDetailTab, TaskReadiness, TaskRecord } from '@/types/tasks';
 import type { WorkspaceTab } from '@/types/workbench';
 import { statusLabels, taskStatus } from './model';
+import { executionLabel } from './taskPresentation';
 import { nextTaskStep } from './workflow';
 import { TaskWorkspaceTools } from './TaskWorkspaceTools';
 import { TaskExecutionConsole } from './TaskExecutionConsole';
@@ -13,19 +15,23 @@ import { TaskReport } from './TaskReport';
 import { useTaskAttemptReport } from './useTaskAttemptReport';
 import './taskControlCenter.css';
 
-const tabs = ['概览','执行','变更与审查','证据','交付'] as const;
+const tabs = ['概览','执行','证据'] as const;
 export type OpenTaskWorkspace = (root: string, tab: WorkspaceTab, repositoryRoot?: string) => void;
 export function TaskStatusSummary({task, readiness}: {task: TaskRecord; readiness?: TaskReadiness}) {
   const status = taskStatus(task, readiness);
-  return <dl className="task-status-grid">{[['执行',status.execution],['检查',status.checks],['交付就绪',status.readiness],['人工验收',status.acceptance]].map(([label,value]) => <div key={label}><dt>{label}</dt><dd data-status={value}>{statusLabels[value] ?? value}</dd></div>)}</dl>;
+  return <dl className="task-status-grid">{[['执行',status.execution],['检查',status.checks],['交付就绪',status.readiness],['人工验收',status.acceptance]].map(([label,value]) => <div key={label}><dt>{label}</dt><dd data-status={value}>{label === '执行' ? executionLabel(task) : statusLabels[value] ?? value}</dd></div>)}</dl>;
 }
 function TaskDecisionBinding({decision}: {decision: {runId?: string | null; toolchainDigest?: string | null}}) {
   return <dl className="task-facts"><dt>绑定 Run</dt><dd>{decision.runId ?? '历史记录（未绑定 Run）'}</dd><dt>绑定工具链摘要</dt><dd>{decision.toolchainDigest ?? '历史记录（工具链未绑定）'}</dd></dl>;
 }
 export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWorkspace: OpenTaskWorkspace}) {
   const tab = useTaskStore(state => state.activeTaskId === task.id ? state.activeTaskTab : '概览');
-  const setTab = (value:typeof tabs[number]) => selectTask(task.id,value);
-  const [branch,setBranch] = useState(() => 'task/' + task.id); const [targetPath,setTargetPath] = useState(''); const [executablePath,setExecutablePath] = useState('');
+  const setTab = (value:TaskDetailTab) => selectTask(task.id,value);
+  const primaryTab = tab === '变更与审查' || tab === '交付' ? '证据' : tab;
+  const [branch,setBranch] = useState(() => 'task/' + task.id); const [targetPath,setTargetPath] = useState('');
+  const defaultExecutablePath = useAgentPreferences(state => state.codexExecutablePath);
+  const [executableOverride,setExecutableOverride] = useState<string | null>(null);
+  const executablePath = executableOverride ?? defaultExecutablePath;
   const [preparationUncertain,setPreparationUncertain] = useState(false);
   const [preparationNotice,setPreparationNotice] = useState('');
   const [note,setNote] = useState(''); const [ackIdentity,setAckIdentity] = useState('');
@@ -68,13 +74,14 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
     const link = document.createElement('a');link.href = url;link.download = `task-${task.id.replace(/[^a-z0-9_-]/gi,'_')}-passport.json`;link.click();URL.revokeObjectURL(url);
   };
   return <article className="task-surface task-detail" aria-label="任务详情">
-    <header><p className="task-muted">{task.kind === 'integration' ? '集成任务' : '实现任务'} · {task.id}</p><h2>{task.title}</h2><p className="task-muted">{task.repositoryRoot}</p><aside aria-label="任务下一步"><details className="task-next-step"><summary>下一步 · {nextTaskStep(task,readiness).label}</summary><p>{nextTaskStep(task,readiness).detail}</p><button onClick={()=>setTab(nextTaskStep(task,readiness).tab)}>查看相关操作</button></details></aside></header>
-    <TaskStatusSummary task={task} readiness={readiness}/>
+    <header><div className="task-row task-detail-identity"><span className="task-execution-badge" data-state={attempt?.state ?? 'not_started'}>{executionLabel(task)}</span><code>{task.id}</code></div><h2>{task.title}</h2><p className="task-muted">{task.repositoryRoot}</p><aside aria-label="任务下一步"><details className="task-next-step"><summary>下一步 · {nextTaskStep(task,readiness).label}</summary><p>{nextTaskStep(task,readiness).detail}</p><button onClick={()=>setTab(nextTaskStep(task,readiness).tab)}>查看相关操作</button></details></aside></header>
+    <details className="task-qualification"><summary>检查与验收状态</summary><TaskStatusSummary task={task} readiness={readiness}/></details>
     {actionError && <p role="alert" className="task-error">{actionError}</p>}
     {launchError && launchError !== actionError && <p role="alert" className="task-error">{launchError}</p>}
     {readinessError && <p className="task-error">就绪来源不可用：{readinessError}</p>}
-    <div role="tablist" aria-label="任务详情标签" className="task-tabs">{tabs.map(label => <button key={label} role="tab" id={`task-tab-${label}`} aria-selected={tab === label} aria-controls="task-detail-panel" onClick={() => setTab(label)}>{label === '证据' ? '报告' : label}</button>)}</div>
-    <section role="tabpanel" id="task-detail-panel" aria-labelledby={`task-tab-${tab}`} className="task-panel">
+    <div role="tablist" aria-label="任务详情标签" className="task-tabs">{tabs.map(label => <button key={label} role="tab" id={`task-tab-${label}`} aria-selected={primaryTab === label} aria-controls="task-detail-panel" onClick={() => setTab(label)}>{label === '证据' ? '报告' : label}</button>)}</div>
+    <section role="tabpanel" id="task-detail-panel" aria-labelledby={`task-tab-${primaryTab}`} className="task-panel">
+      {primaryTab === '证据' && <div className="task-report-actions" role="group" aria-label="报告与交付操作">{(['证据','变更与审查','交付'] as const).map(value => <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{value === '证据' ? '结果报告' : value}</button>)}</div>}
       {tab === '概览' && <>
         <h3>目标</h3><p>{task.goal}</p><p>基线：<code>{task.baseSha}</code></p><h3>允许修改的范围</h3><ul>{task.scope.map(path => <li key={path}><code>{path}</code></li>)}</ul>
         <h3>依赖任务</h3><p>{task.dependencies.join('、') || '无依赖'}</p>
@@ -91,12 +98,13 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
           <button disabled={disabled || active || !attempt || !task.workspaceRoot || task.kind === 'integration'} onClick={() => act(() => tasks.retryTask(task.id,executablePath.trim() || null))}>重试（新 Attempt）</button>
           <button disabled={!isDesktopRuntime() || !active || !!cancelling} onClick={() => {void runTaskCancellation(task.id).catch(() => { /* Store surfaces native cancellation errors. */ });}}>取消执行</button>{tool('打开终端','terminal')}</div>
         {task.kind === 'integration' && <p>集成任务请在交付标签预览并确认固定提交；不会启动实现 Agent。</p>}
+        {attempt?.failure && <p role="status" className="task-error">本次执行记录：{attempt.failure}</p>}
         <TaskExecutionConsole attempt={attempt} observation={reportObservation}/>
         <p className="task-muted">任务在原生队列中持续执行；完成总结和发现的问题会显示在报告中。</p>
-        <details className="task-secondary"><summary>重试时使用的执行程序</summary><label>可执行程序路径（可选，不含参数）<input value={executablePath} onChange={event => setExecutablePath(event.target.value)}/></label><p>默认并发 2；排队任务等待原生调度和依赖。重试会创建新的执行记录。</p></details>
-        <h3>Attempts</h3>{!task.attempts.length && <p>尚无执行记录。</p>}
+        <details className="task-secondary"><summary>重试时使用的执行程序</summary><label>可执行程序路径（可选，不含参数）<input value={executablePath} onChange={event => setExecutableOverride(event.target.value)}/></label><p>跟随执行配置中的默认程序；手动清空后使用自动检测。重试会创建新的执行记录，历史失败保留。</p></details>
+        <details className="task-attempt-history"><summary>执行记录（{task.attempts.length}）</summary>{!task.attempts.length && <p>尚无执行记录。</p>}
         <ol>{task.attempts.map(item => <li key={item.id}><strong>{item.id}</strong> · {statusLabels[item.state]} · {item.phase}<dl className="task-facts"><dt>Harness</dt><dd>{item.execution?.harness || '未知'}</dd><dt>实际 CLI</dt><dd>{item.execution?.executablePath || '未知'}</dd><dt>版本</dt><dd>{item.execution?.version || '未知'}</dd></dl><p>候选：{item.candidateSha ?? '未封存'} · {new Date(item.startedAtMs).toLocaleString()}</p>{item.failure && <p className="task-error">{item.failure}</p>}{item.id !== attempt?.id && item.evidence && <details className="task-node"><summary>历史证据 · {item.id}</summary><p>此记录为历史观察，不代表当前交付就绪。</p><TaskEvidenceContext evidence={item.evidence}/></details>}</li>)}</ol>
-        <TaskWorkspaceTools mode="run" repositoryRoot={task.repositoryRoot} workspaceRoot={task.workspaceRoot} baseSha={task.baseSha}/>
+        </details>
         <h3>结构化事件</h3><ol className="task-scroll">{events.filter(event => event.taskId === task.id).map(event => <li key={event.eventId}>{event.seq} · {event.kind} · {new Date(event.timestampMs).toLocaleString()}</li>)}</ol>
       </>}
       {tab === '变更与审查' && <>

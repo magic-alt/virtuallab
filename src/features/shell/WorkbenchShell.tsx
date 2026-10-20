@@ -44,7 +44,7 @@ import { useWorkbenchStore } from "@/stores/workbench";
 import { useAgentsHubStore } from "@/stores/agentsHub";
 import { selectTask, useTaskStore } from "@/stores/tasks";
 import { workspaceKey } from "@/lib/workspaceKey";
-import { readPreferredEditor, savePreferredEditor, type ExternalEditor } from "@/lib/externalEditor";
+import { usePreferredEditor, savePreferredEditor, type ExternalEditor } from "@/lib/externalEditor";
 import { mergeWorktreeStatus } from "@/lib/worktreeStatus";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import { NotificationCenter } from "@/features/notifications/NotificationCenter";
@@ -82,7 +82,7 @@ export function WorkbenchShell() {
     [activeRepositoryId, repositories],
   );
 
-  type AppView = "home" | "repositories" | "evidence" | "settings";
+  type AppView = "home" | "repositories" | "settings";
   // Preserve existing operators' workspace; fresh installs begin at Agents Hub.
   const [appView, setAppViewState] = useState<AppView>(() => activeRepositoryId ? "repositories" : "home");
   const navigationEpoch = useRef(0);
@@ -154,7 +154,7 @@ export function WorkbenchShell() {
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [preferredEditor, setPreferredEditor] = useState<ExternalEditor>(readPreferredEditor);
+  const preferredEditor = usePreferredEditor();
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const activePathRef = useRef<string | null>(null);
   const refreshTimer = useRef<number | undefined>(undefined);
@@ -791,7 +791,6 @@ export function WorkbenchShell() {
 
   const chooseEditor = (editor: ExternalEditor) => {
     savePreferredEditor(editor);
-    setPreferredEditor(editor);
   };
 
   const openEditor = async (path: string, repositoryPath: string) => {
@@ -1018,9 +1017,9 @@ export function WorkbenchShell() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <aside className="vl-app-navigation flex min-h-0 shrink-0 flex-col border-r">
+        <aside className="vl-app-navigation flex min-h-0 shrink-0 flex-col border-r" data-view={appView}>
           <nav aria-label="工程导航" className="flex shrink-0 flex-col gap-1 border-b p-2">
-            {([ ["home", "Agents Hub"], ["repositories", "工程仓库"], ["evidence", "报告"], ["settings", "设置"] ] as const).map(([view,label]) => (
+            {([ ["home", "Agents Hub"], ["repositories", "工程仓库"], ["settings", "设置"] ] as const).map(([view,label]) => (
               <button key={view} type="button" aria-current={appView === view ? "page" : undefined}
                 className="vl-app-route rounded-md px-3 py-2 text-left text-sm" onClick={() => setAppView(view)}>{label}</button>
             ))}
@@ -1140,9 +1139,9 @@ export function WorkbenchShell() {
             onTabChange={switchTab}
           />
           </div>
-          <div hidden={appView === "repositories"} className="min-h-0 min-w-0 flex-1 overflow-auto">
+          <div hidden={appView === "repositories"} className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <AgentsHub view={lastTaskView.current} repositories={repositories} activeRepository={activeRepository}
-              visible={appView !== "repositories"} searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace} onOpenHub={() => setAppView("home")}/>
+              visible={appView !== "repositories"} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} onOpenWorkspace={openTaskWorkspace} onOpenHub={() => setAppView("home")}/>
           </div>
 
           <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">

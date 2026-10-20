@@ -76,7 +76,7 @@ export const guidePages: GuidePage[] = [
         { type: "diagram", src: "/help/workbench-map.svg", alt: "标注 VirtualLab 顶部栏、左侧仓库栏、工作区状态头部、标签栏和主视图区的界面示意图", caption: "图 2 · 概念化的界面分区。Help → 使用文档不依赖已经导入仓库。" },
         { type: "table", columns: ["区域", "看到什么", "常见操作"], rows: [
           ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
-          ["左侧栏", "Agents Hub、工程仓库、报告、设置；仓库内的 Workspace lanes、Git branches", "管理 Agent 任务与会话，或进入仓库开发工具"],
+          ["左侧栏", "Agents Hub、工程仓库、设置；Hub 内含 Agent 任务、工作区会话、执行配置；仓库内含 Workspace lanes、Git branches", "管理 Agent 任务、会话与执行配置；在设置中调整 IDE、通知和终端偏好"],
           ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch、Pull；Git 状态自动刷新"],
           ["功能标签", "Overview / Changes / GitHub / Terminal / Run", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
@@ -87,7 +87,7 @@ export const guidePages: GuidePage[] = [
           { title: "Overview", description: "查看工作区拓扑、最近提交和本地状态。" },
           { title: "Changes + GitHub", description: "审阅代码差异，追踪 PR/Issue 上下文；推送评论需单独确认。" },
           { title: "Terminal + Run", description: "交互式 Shell 与结构化可重复构建分别管理，避免混用。" },
-          { title: "Agents Hub（全局）", description: "在 Agent 任务中创建独立工作区并查看报告；在工作区会话中管理已有线程、Provider 和恢复记录。" },
+          { title: "Agents Hub（全局）", description: "在 Agent 任务中创建独立工作区并查看每个任务的报告；工作区会话管理已有线程、Provider 和恢复记录；执行配置管理 Codex 路径与验证 Profile。" },
         ] },
         { type: "callout", tone: "note", title: "所有工作区共用这本手册", text: "从顶部 Help → 使用文档打开独立阅读界面，不属于工作区标签；关闭后回到原工作区和标签。打开文档不会切换 Git 分支、运行命令、上传代码或更改当前项目。" },
       ] },
@@ -281,7 +281,7 @@ export const guidePages: GuidePage[] = [
     sections: [
       { id: "model", title: "Agent 是适配器，不是工程状态的所有者", blocks: [
         { type: "diagram", src: "/help/agent-safety.svg", alt: "工作区连接可选 Agent、命令执行与独立硬件保护边界的示意图", caption: "图 5 · Agent 工作线与安全边界。保护确认不等于设备授权。" },
-        { type: "text", text: "Agents Hub 是统一入口。Agent 任务提供独立 Worktree、Codex 队列、重试与报告；工作区会话管理已存在目录中的线程：选择会话仓库 / 会话工作区，再选择 Provider → Describe your request → Connect & send。Task 绑定的目录回到任务执行页，普通会话不能接管任务运行时。Provider 仍需用户安装与认证，Check availability 只是本机版本探测。Role/Skills、JSON 时间线、历史及硬件保护演示位于折叠的高级设置中。" },
+        { type: "text", text: "Agents Hub 是统一入口，包含 Agent 任务、工作区会话和执行配置。Agent 任务提供独立 Worktree、Codex 队列、重试与任务内报告，没有独立的报告页面。任务列表通过 ID、时间和目标摘要区分同名任务；选中任务后查看执行或报告，历史验证记录在 Hub 中折叠保存。交付就绪仍在读取时可以继续查看任务与执行输出，未知就绪不代表已通过验证。工作区会话管理已存在目录中的线程：选择会话仓库 / 会话工作区，再选择 Provider → Describe your request → Connect & send。Task 绑定的目录回到任务执行页，普通会话不能接管任务运行时。Provider 仍需用户安装与认证，Check availability 只是本机版本探测。Role/Skills、JSON 时间线、历史及硬件保护演示位于折叠的高级设置中。" },
         { type: "table", columns: ["Harness", "连接模式", "现阶段说明"], rows: [
           ["Codex", "App-server JSON-RPC", "按工作区关联 thread / turn"],
           ["DeepSeek", "通过 Codex + DeepSeek Responses API", "需额外配置 API，沿用 Codex 通信机制"],
@@ -289,9 +289,16 @@ export const guidePages: GuidePage[] = [
           ["OpenCode", "CLI plan/read-only", "能力由安装版本决定，不假定有写权限"],
         ] },
       ] },
+      { id: "execution-configuration", title: "执行配置与应用设置", blocks: [
+        { type: "cards", items: [
+          { title: "Agents Hub → 执行配置", description: "设置默认 Codex 可执行程序、维护 Verification Profile；通过明确按钮进入 Provider 会话或工程仓库 Run 配置。新请求使用新的默认值，已接受的任务保留原来的执行输入。" },
+          { title: "设置", description: "调整首选 IDE、通知与终端偏好。切换设置不停止正在运行的任务、会话或终端，也不会自动启动命令。" },
+          { title: "任务 → 报告", description: "任务主标签为概览 / 执行 / 报告；报告内含结果报告 / 变更与审查 / 交付。读取真实完成总结和发现的问题，按需启动独立验证。执行历史和详细检查/验收状态可展开查看，当前失败保持明显显示。探索性 Run 位于次要控件中，不赋予 Task 验证或人工验收资格。" },
+        ] },
+      ] },
       { id: "configure", title: "附加一个 Agent", blocks: [
         { type: "steps", items: [
-          { title: "配置外部工具", description: "先安装并完成对应 CLI/API 环境设置；不要把密钥写入角色或项目文件。" },
+          { title: "配置外部工具", description: "先安装并完成对应 CLI/API 环境设置；默认 Codex 路径在 Agents Hub → 执行配置中维护。不要把密钥写入角色或项目文件。" },
           { title: "选择当前 Worktree 与 Provider", description: "进入 Agents Hub → 工作区会话，确认会话仓库与会话工作区；thread、角色与技能绑定这个目录。工程仓库的工具选择保持独立。" },
           { title: "Describe your request", description: "输入具体请求，点击 Connect & send 即可自动检测并关联 provider thread，向当前工作区会话发送一个 turn。" },
           { title: "Agent activity", description: "观察任务进度与输出；长任务可以 Interrupt，结束后可继续发下一轮。" },

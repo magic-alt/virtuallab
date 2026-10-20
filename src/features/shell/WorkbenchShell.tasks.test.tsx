@@ -32,7 +32,7 @@ describe('Agents Hub application navigation', () => {
     expect(workspace.isConnected).toBe(true);
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(screen.getByTestId('workspace-main')).toBe(workspace);
-    for (const name of ['报告','设置','Agents Hub']) {
+    for (const name of ['设置','Agents Hub']) {
       await user.click(screen.getByRole('button',{name}));
       expect(screen.getByTestId('workspace-main')).toBe(workspace);
       expect(workspace.isConnected).toBe(true);
@@ -48,7 +48,7 @@ describe('Agents Hub application navigation', () => {
     const pane = screen.getByTestId('terminal-pane');
     expect(pane).toHaveAttribute('aria-hidden', 'false');
 
-    for (const name of ['报告', '设置', 'Agents Hub']) {
+    for (const name of ['设置', 'Agents Hub']) {
       await user.click(screen.getByRole('button', { name }));
       // Keeping the pane mounted must not leave its PTY resize/focus observer active.
       expect(pane.isConnected).toBe(true);
@@ -59,10 +59,11 @@ describe('Agents Hub application navigation', () => {
     }
   });
 
-  it('keeps task work in Agents Hub and exposes a report destination', () => {
+  it('keeps reports inside Agents Hub instead of a separate application route', () => {
     render(<WorkbenchShell />);
     expect(screen.queryByRole('button', { name: '任务' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '证据' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '报告' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '报告' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '执行配置' })).toBeVisible();
   });
 });
