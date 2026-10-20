@@ -1,4 +1,4 @@
-import { confirmNativeAction } from "@/lib/backend";
+import { confirmNativeAction, isDesktopRuntime } from "@/lib/backend";
 import {
   agentJournalRecent, agentJournalRecover, agentJournalPurgeAll, unverifiedRecoveredTurns,
   type AgentRecoverySnapshot, type AgentJournalEntry,
@@ -11,13 +11,20 @@ import { latestCodexAnswer } from "@/lib/agentActivity";
 import { AgentApprovalBroker, type ProtectedAction } from "@/lib/agentSafety";
 import { WorkspaceAgentService } from "@/lib/workspaceAgent";
 import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions";
+import { useAgentPreferences } from "@/stores/agentPreferences";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import { BUILTIN_ROLES, buildAgentPrompt, useAgentConfiguration } from "@/stores/agentConfiguration";
 import type {
   AgentEvent, AgentHarnessCapabilities, AgentHarnessKind,
 } from "@/types/agent";
 
-interface Props { workspaceRoot: string; enabled: boolean }
+interface Props {
+  workspaceRoot: string;
+  enabled: boolean;
+  visible?: boolean;
+  disabledReason?: string;
+  validateWorkspace?: () => Promise<void>;
+}
 const HARNESS: Array<{ id: AgentHarnessKind; name: string; detail: string }> = [
   { id: "codex", name: "Codex", detail: "App-server JSON-RPC" },
   { id: "deepseek", name: "DeepSeek", detail: "Codex + DeepSeek Responses API" },
@@ -40,11 +47,6 @@ function describe(event: AgentEvent): string {
 const timeLabel = (time: number) => new Date(time).toLocaleTimeString();
 const emptyCapabilities: AgentHarnessCapabilities | null = null;
 const EMPTY_EVENTS: AgentEvent[] = [];
-const CODEX_PATH_KEY = "virtuallab-codex-executable-v1";
-function storedCodexPath(): string {
-  try { return window.localStorage.getItem(CODEX_PATH_KEY) ?? ""; }
-  catch { return ""; }
-}
 function isCodexHarness(kind: AgentHarnessKind): boolean {
   return kind === "codex" || kind === "deepseek";
 }
@@ -57,12 +59,13 @@ function eventTitle(event: AgentEvent): string {
   return event.method ?? event.eventType.replace(/^agent\./, "");
 }
 
-export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
+export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disabledReason, validateWorkspace }: Props) {
   const key = agentWorkspaceKey(workspaceRoot);
   const binding = useAgentSessionStore((s) => s.bindings[key]);
   const setBinding = useAgentSessionStore((s) => s.setBinding);
   const events = useAgentTimeline((s) => s.entries[key] ?? EMPTY_EVENTS);
   const turn = useAgentTimeline((s) => s.activeTurns[key] ?? null);
+  const session = useAgentTimeline((s) => s.sessionStates[key]);
   const setActiveTurn = useAgentTimeline((s) => s.setActiveTurn);
   const clearTimeline = useAgentTimeline((s) => s.clear);
   const config = useAgentConfiguration();
@@ -72,7 +75,8 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const skills = config.skills.filter((v) => selection.skillIds.includes(v.id));
   const [harness, setHarness] = useState<AgentHarnessKind>(binding?.harness ?? "codex");
   const [capabilities, setCapabilities] = useState<AgentHarnessCapabilities | null>(emptyCapabilities);
-  const [codexPath, setCodexPath] = useState(storedCodexPath);
+  const codexPath = useAgentPreferences((s) => s.codexExecutablePath);
+  const setCodexPath = useAgentPreferences((s) => s.setCodexExecutablePath);
   const [attached, setAttached] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
@@ -90,84 +94,114 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   const [journalBusy, setJournalBusy] = useState(false);
   const [journalRevision, setJournalRevision] = useState(0);
   const broker = useRef(new AgentApprovalBroker());
+  const alive = useRef(true);
+  const requesting = useRef(false);
+  const context = useRef({ key, enabled, visible });
+  context.current = { key, enabled, visible };
+  const interactive = enabled && visible;
   const adapter = useMemo(() => getHarnessAdapter(harness), [harness]);
   const latestAnswer = useMemo(() => latestCodexAnswer(events), [events]);
 
   useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+
+  useEffect(() => {
     setHarness(useAgentSessionStore.getState().bindings[agentWorkspaceKey(workspaceRoot)]?.harness ?? "codex");
-    setAttached(false); setCapabilities(null); setError("");
+    setAttached(false); setCapabilities(null); setError(""); setJournal([]); setRecovery(null);
   }, [workspaceRoot]);
+
+  useEffect(() => {
+    if (session?.stopped) setAttached(false);
+  }, [session]);
 
   // Hydrate native metadata separately from live, unredacted session events.
   // Cancel an old response if the operator switches workspaces during read.
   useEffect(() => {
-    if (!enabled) { setJournal([]); setRecovery(null); setJournalError(""); return; }
+    if (!enabled || !visible) { setJournalBusy(false); return; }
     let cancelled = false;
     setJournalBusy(true);
     setJournalError("");
     void agentJournalRecover(workspaceRoot)
       .then(async (status) => {
+        if (cancelled) return;
         const rows = await agentJournalRecent(workspaceRoot);
         if (!cancelled) { setRecovery(status); setJournal(rows); }
       })
       .catch((cause) => { if (!cancelled) setJournalError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (!cancelled) setJournalBusy(false); });
     return () => { cancelled = true; };
-  }, [workspaceRoot, enabled, journalRevision]);
+  }, [workspaceRoot, enabled, visible, journalRevision]);
 
   const unresolved = unverifiedRecoveredTurns(recovery);
   const nativeRuntimeRegistered = recovery?.nativeSessionRegistered ?? false;
 
+  function assertActiveContext() {
+    if (!alive.current || context.current.key !== key || !context.current.enabled || !context.current.visible) {
+      throw new Error("Return to this workspace session before continuing the request.");
+    }
+  }
   async function run(task: () => Promise<void>) {
+    if (requesting.current || !interactive) return;
+    requesting.current = true;
     setBusy(true); setError("");
     try { await task(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
+    catch (cause) { if (alive.current && context.current.key === key) setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { requesting.current = false; if (alive.current && context.current.key === key) setBusy(false); }
   }
   const check = () => run(async () => {
-    setCapabilities(await adapter.capabilities(isCodexHarness(harness) ? codexPath || undefined : undefined));
+    const status = await adapter.capabilities(isCodexHarness(harness) ? codexPath.trim() || undefined : undefined);
+    assertActiveContext();
+    setCapabilities(status);
   });
-  // First task can connect and start in one explicit click. Use the binary
+  // The first message can connect and start a turn in one explicit click. Use the binary
   // returned by the capability probe so check and app-server cannot diverge.
   async function ensureAttached() {
+    assertActiveContext();
+    await validateWorkspace?.();
+    assertActiveContext();
     const current = useAgentSessionStore.getState().bindings[key];
     if (current && current.harness !== harness) {
       throw new Error("This workspace remembers another provider. Stop and forget that thread before switching.");
     }
     if (attached && current) return current;
-    const status = await adapter.capabilities(isCodexHarness(harness) ? codexPath || undefined : undefined);
+    const status = await adapter.capabilities(isCodexHarness(harness) ? codexPath.trim() || undefined : undefined);
+    assertActiveContext();
     setCapabilities(status);
     if (!status.available) throw new Error(status.detail);
     const result = await new WorkspaceAgentService(adapter).attach(
-      workspaceRoot, isCodexHarness(harness) ? status.executablePath ?? codexPath : undefined,
+      workspaceRoot, isCodexHarness(harness) ? status.executablePath ?? codexPath.trim() : undefined,
     );
     setBinding(result);
-    setAttached(true);
+    if (alive.current && context.current.key === key) setAttached(true);
     return result;
   }
   const attach = () => run(async () => { await ensureAttached(); });
   const send = () => run(async () => {
     if (!prompt.trim() || turn) return;
+    const message = prompt;
     const current = await ensureAttached();
-    const input = buildAgentPrompt(prompt, role, skills);
+    assertActiveContext();
+    if (useAgentTimeline.getState().activeTurns[key]) throw new Error("A turn is already running in this workspace.");
+    const input = buildAgentPrompt(message, role, skills);
     const sessionRevision = useAgentTimeline.getState().sessionStates[key]?.revision ?? 0;
     const result = await adapter.startTurn({
       workspaceRoot, threadId: current.threadId, text: input,
     });
     setActiveTurn(workspaceRoot, result.turnId, result.threadId, sessionRevision);
-    setPrompt("");
+    if (alive.current && context.current.key === key) setPrompt((draft) => draft === message ? "" : draft);
   });
   const chooseCodexPath = () => run(async () => {
     if (attached || turn || nativeRuntimeRegistered) throw new Error("Stop the attached runtime before changing the Codex executable.");
     const path = await open({ directory: false, multiple: false, title: "Choose codex executable or launcher" });
+    assertActiveContext();
     if (typeof path !== "string") return;
-    window.localStorage.setItem(CODEX_PATH_KEY, path);
     setCodexPath(path);
     setCapabilities(null);
   });
   const resetCodexPath = () => {
-    if (attached || turn || nativeRuntimeRegistered) return;
-    window.localStorage.removeItem(CODEX_PATH_KEY);
+    if (!interactive || attached || turn || nativeRuntimeRegistered) return;
     setCodexPath("");
     setCapabilities(null);
   };
@@ -181,8 +215,9 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     if (!turn || !prompt.trim() || !capabilities?.features.steering) return;
     const current = useAgentSessionStore.getState().bindings[key];
     if (!current) return;
-    await adapter.steerTurn({ workspaceRoot, threadId: current.threadId, turnId: turn, text: prompt.trim() });
-    setPrompt("");
+    const message = prompt;
+    await adapter.steerTurn({ workspaceRoot, threadId: current.threadId, turnId: turn, text: message.trim() });
+    if (alive.current && context.current.key === key) setPrompt((draft) => draft === message ? "" : draft);
   });
   const stop = () => run(async () => {
     // Tabs unmount this pane. The native runtime can still be alive when
@@ -192,8 +227,20 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
     setJournalRevision((value) => value + 1);
   });
   const forget = () => run(async () => {
+    const expected = useAgentSessionStore.getState().bindings[key];
+    if (!expected) throw new Error("The saved thread is no longer available.");
+    const assertOriginalBinding = () => {
+      const current = useAgentSessionStore.getState().bindings[key];
+      if (!current || current.harness !== expected.harness || current.threadId !== expected.threadId
+        || current.createdAtMs !== expected.createdAtMs) {
+        throw new Error("The saved thread changed. Review the current session before forgetting it.");
+      }
+    };
     if (!await confirmNativeAction("Forget the saved thread association for this workspace? This cannot be undone.")) return;
-    await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
+    assertActiveContext();
+    assertOriginalBinding();
+    await getHarnessAdapter(expected.harness).stopSession(workspaceRoot);
+    assertOriginalBinding();
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
     setAttached(false); setActiveTurn(workspaceRoot, null); setRecovery(null);
     setJournalRevision((value) => value + 1);
@@ -221,6 +268,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   };
   const requestApproval = async () => {
     try {
+      assertActiveContext();
       const stamp = Date.now();
       const id = "approval-" + stamp;
       broker.current.request({
@@ -233,6 +281,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         setApprovalMessage("Human decision recorded: denied. No operation executed.");
         return;
       }
+      assertActiveContext();
       broker.current.decide(id, "approved-by-human", true);
       void broker.current.authorize(id)
         .then(() => setApprovalMessage("External provider returned an enforced lease."))
@@ -243,10 +292,10 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
   return (
     <div className="mx-auto flex min-w-0 max-w-[1040px] flex-col gap-4 text-sm" data-testid="agent-workspace">
       <section className="min-w-0 rounded-xl border border-orange-400/20 bg-black/25 p-4 sm:p-5">
-        <h2 className="text-base font-semibold text-white">Agents · workspace task</h2>
+        <h2 className="text-base font-semibold text-white">Workspace agent session</h2>
         <p className="mt-1 text-xs leading-5 text-stone-400">
-          Run one coding agent in the selected worktree. Choose a provider, describe a task and click Run task.
-          On the first run VirtualLab checks the CLI and attaches/resumes its workspace thread automatically.
+          Send a message to a coding agent in the selected worktree. Choose a provider and describe your request.
+          Connect &amp; send checks the CLI, attaches or resumes the workspace thread, and starts a turn.
         </p>
 
         <div className="mt-4 grid min-w-0 gap-2 border-t border-white/10 pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -257,7 +306,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
               {HARNESS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
-          <button type="button" onClick={() => void check()} disabled={!enabled || busy}
+          <button type="button" onClick={() => void check()} disabled={!interactive || busy}
             className="rounded border border-white/20 px-3 py-2 text-xs">Check availability</button>
         </div>
         {capabilities && (
@@ -274,7 +323,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           </div>
         )}
         {unresolved.length > 0 && <p role="status" className="mt-2 text-xs text-amber-300">
-          {unresolved.length} earlier task(s) have unverified completion after restart. Review history before relying on their results.
+          {unresolved.length} earlier turn(s) have unverified completion after restart. Review history before relying on their results.
         </p>}
         {binding && <p className="mt-2 break-all text-xs text-stone-500">
           Saved thread: {binding.harness} · {binding.threadId}
@@ -282,14 +331,16 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         {binding && binding.harness !== harness && <p className="mt-2 text-xs text-amber-300">
           A thread from {binding.harness} is saved here. Stop and forget it before using {harness}.
         </p>}
-        {!enabled && <p className="mt-2 text-xs text-amber-300">Native desktop runtime required; this is a UI preview.</p>}
+        {!enabled && <p className="mt-2 text-xs text-amber-300">{disabledReason ?? (isDesktopRuntime()
+          ? "This workspace session is temporarily unavailable."
+          : "Native desktop runtime required; this is a UI preview.")}</p>}
         {error && <p role="alert" className="mt-2 flex min-w-0 items-start gap-2 break-words text-xs text-rose-300">
           <AlertTriangle size={14} className="shrink-0"/>{error}
         </p>}
 
         <p className="mt-1 text-xs text-stone-500">{HARNESS.find((entry) => entry.id === harness)?.detail}</p>
         <label className="mt-5 block text-xs text-stone-300">
-          <span className="font-semibold text-orange-300">2 · Describe the task</span>
+          <span className="font-semibold text-orange-300">2 · Describe your request</span>
           <span className="ml-2 text-stone-500">Role: {role.name}</span>
           <textarea aria-label="Agent message" value={prompt} onChange={(e) => setPrompt(e.target.value)}
             placeholder="Example: Review the current worktree for a bug, propose a fix and explain which files changed."
@@ -297,34 +348,34 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         </label>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void send()}
-            disabled={!enabled || busy || !prompt.trim() || !!turn || !!(binding && binding.harness !== harness)}
+            disabled={!interactive || busy || !prompt.trim() || !!turn || !!(binding && binding.harness !== harness)}
             className="flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-xs font-semibold text-black">
-            <Play size={14}/>{attached ? "Send next task" : "Connect & run task"}
+            <Play size={14}/>{attached ? "Send message" : "Connect & send"}
           </button>
           <button type="button" onClick={() => void attach()}
-            disabled={!enabled || busy || attached || !!(binding && binding.harness !== harness)}
+            disabled={!interactive || busy || attached || !!(binding && binding.harness !== harness)}
             className="rounded border border-white/20 px-3 py-2 text-xs">Attach / resume</button>
           {turn && capabilities?.features.steering && (
             <button type="button" onClick={() => void steer()}
-              disabled={!enabled || busy || !prompt.trim()}
+              disabled={!interactive || busy || !prompt.trim()}
               className="rounded border border-white/20 px-3 py-2 text-xs">
-              Steer running task
+              Steer running turn
             </button>
           )}
           {turn && (
-            <button type="button" onClick={() => void interrupt()} disabled={!enabled || busy}
+            <button type="button" onClick={() => void interrupt()} disabled={!interactive || busy}
               className="flex items-center gap-2 rounded border border-rose-400/30 px-3 py-2 text-xs text-rose-300">
-              <CircleStop size={14}/>Interrupt task
+              <CircleStop size={14}/>Interrupt turn
             </button>
           )}
-          <button type="button" onClick={() => void stop()} disabled={!enabled || busy || (!attached && !binding && !nativeRuntimeRegistered)}
+          <button type="button" onClick={() => void stop()} disabled={!interactive || busy || (!attached && !binding && !nativeRuntimeRegistered)}
             className="rounded border border-white/20 px-3 py-2 text-xs">Stop runtime</button>
           {binding && <button type="button" onClick={() => void forget()}
-            disabled={!enabled || busy} className="text-xs text-stone-400 underline">Forget saved thread</button>}
+            disabled={!interactive || busy} className="text-xs text-stone-400 underline">Forget saved thread</button>}
         </div>
         <p className="mt-2 text-xs text-stone-400" role="status">
-          {busy ? "Processing request…" : turn ? "3 · Task running; activity appears below." :
-            attached ? "Ready for another task in this workspace." : "Ready to connect when you run a task."}
+          {busy ? "Processing request…" : turn ? "3 · Turn running; activity appears below." :
+            attached ? "Ready for another message in this workspace." : "Ready to connect when you send a message."}
         </p>
         <p className="mt-1 text-xs text-stone-500">
           Codex/DeepSeek can write within the selected workspace; Claude Code/OpenCode are launched in plan mode.
@@ -353,7 +404,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           </div>
         )}
         <div role="log" aria-label="Agent event timeline" className="mt-3 max-h-80 min-w-0 space-y-2 overflow-y-auto text-xs">
-          {!events.length && <p className="text-stone-500">Run a task to see progress and responses here.</p>}
+          {!events.length && <p className="text-stone-500">Send a message to see progress and responses here.</p>}
           {events.filter((event) => event.method !== "item/agentMessage/delta").slice(-12).map((event, idx) => (
             <div key={event.timestampMs + ":" + idx} className="min-w-0 rounded border border-white/5 bg-stone-950/60 p-3">
               <div className="font-medium text-orange-300">{timeLabel(event.timestampMs)} · {eventTitle(event)}</div>
@@ -421,12 +472,12 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
           <div className="break-all font-mono text-[11px]">Configured Codex executable: {codexPath || "Automatic (desktop PATH)"}</div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => void chooseCodexPath()}
-              disabled={!enabled || busy || attached || !!turn || nativeRuntimeRegistered || !isCodexHarness(harness)}
+              disabled={!interactive || busy || attached || !!turn || nativeRuntimeRegistered || !isCodexHarness(harness)}
               className="flex items-center gap-2 rounded border border-white/20 px-3 py-2">
               <FolderOpen size={14}/>Choose Codex executable
             </button>
             <button type="button" onClick={resetCodexPath}
-              disabled={!enabled || busy || attached || !!turn || nativeRuntimeRegistered || !codexPath}
+              disabled={!interactive || busy || attached || !!turn || nativeRuntimeRegistered || !codexPath}
               className="rounded border border-white/20 px-3 py-2">Use automatic PATH</button>
           </div>
           <p>Windows PowerShell: run <code className="text-stone-200">Get-Command codex -All</code> or
@@ -459,12 +510,13 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
         <div className="flex items-center justify-between gap-2">
           <h3 className="font-semibold">Recovered lifecycle metadata</h3>
           <div className="flex flex-wrap gap-3">
-            <button type="button" disabled={!enabled || journalBusy}
+            <button type="button" disabled={!interactive || journalBusy}
               onClick={() => setJournalRevision((value) => value + 1)}
               className="shrink-0 text-xs text-stone-400 underline">Refresh history</button>
-            <button type="button" disabled={!enabled || journalBusy}
+            <button type="button" disabled={!interactive || journalBusy}
               onClick={() => void run(async () => {
                 if (!await confirmNativeAction("Delete ALL retained Agent lifecycle metadata for every workspace? This does not stop agents or delete provider threads. This cannot be undone.")) return;
+                assertActiveContext();
                 await agentJournalPurgeAll();
                 setRecovery(null);
                 setJournal([]);
@@ -506,7 +558,7 @@ export function AgentWorkspace({ workspaceRoot, enabled }: Props) {
             className="rounded border border-white/15 bg-stone-900 p-2 text-xs">
             {(["motion", "power", "flash", "release"] as const).map((item) => <option key={item}>{item}</option>)}
           </select>
-          <button type="button" disabled={!enabled || !resourceId.trim()} onClick={requestApproval}
+          <button type="button" disabled={!interactive || !resourceId.trim()} onClick={requestApproval}
             className="rounded border border-amber-400/30 px-3 py-2 text-xs">Request human acknowledgement</button>
         </div>
         {approvalMessage && <p role="status" className="mt-2 text-xs text-amber-300">{approvalMessage}</p>}

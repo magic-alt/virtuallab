@@ -1,7 +1,8 @@
 import { cleanupMergedAfterConfirmation, type CleanupOutcome } from "@/lib/gitCleanup";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BuildIdentity } from "./BuildIdentity";
-import { TaskControlCenter, useTaskObserver } from "@/features/tasks/TaskControlCenter";
+import { AgentsHub } from "@/features/agents/AgentsHub";
+import { useTaskObserver } from "@/features/tasks/useTaskObserver";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Command,
@@ -40,6 +41,8 @@ import {
   watchStop,
 } from "@/lib/backend";
 import { useWorkbenchStore } from "@/stores/workbench";
+import { useAgentsHubStore } from "@/stores/agentsHub";
+import { selectTask, useTaskStore } from "@/stores/tasks";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { readPreferredEditor, savePreferredEditor, type ExternalEditor } from "@/lib/externalEditor";
 import { mergeWorktreeStatus } from "@/lib/worktreeStatus";
@@ -50,6 +53,7 @@ import type { AgentEvent } from "@/types/agent";
 import { selectedReviewBase, suggestedReviewBranch } from "@/lib/reviewLoop";
 import type {
   LocalChangesAction,
+  RepositoryRecord,
   RepositorySnapshot,
   ReviewWorkspaceRequest,
   WorkbenchEvent,
@@ -79,17 +83,46 @@ export function WorkbenchShell() {
   );
 
   type AppView = "home" | "repositories" | "evidence" | "settings";
-  // Preserve existing operators' workspace; fresh installs begin at the control center.
-  const [appView, setAppView] = useState<AppView>(() => activeRepositoryId ? "repositories" : "home");
+  // Preserve existing operators' workspace; fresh installs begin at Agents Hub.
+  const [appView, setAppViewState] = useState<AppView>(() => activeRepositoryId ? "repositories" : "home");
+  const navigationEpoch = useRef(0);
+  const setAppView = useCallback((view: AppView) => {
+    navigationEpoch.current += 1;
+    setAppViewState(view);
+  }, []);
   const lastTaskView = useRef<Exclude<AppView, "repositories">>("home");
   if (appView !== "repositories") lastTaskView.current = appView;
   useTaskObserver(repositories);
 
+  useEffect(() => {
+    // Inventory lookups only complete the navigation that requested them.
+    // Hub/task selections can change independently of shell route buttons.
+    const stopHub = useAgentsHubStore.subscribe((next, previous) => {
+      if (next.section !== previous.section || next.sessionTarget !== previous.sessionTarget) navigationEpoch.current += 1;
+    });
+    const stopTasks = useTaskStore.subscribe((next, previous) => {
+      if (next.navigationRevision !== previous.navigationRevision) navigationEpoch.current += 1;
+    });
+    const stopWorkbench = useWorkbenchStore.subscribe((next, previous) => {
+      const selected = next.workspaceStates[next.activeRepositoryId ?? ""];
+      const prior = previous.workspaceStates[previous.activeRepositoryId ?? ""];
+      if (next.activeRepositoryId !== previous.activeRepositoryId ||
+          selected?.activeWorktreePath !== prior?.activeWorktreePath || selected?.activeTab !== prior?.activeTab) {
+        navigationEpoch.current += 1;
+      }
+    });
+    return () => {
+      navigationEpoch.current += 1;
+      stopHub(); stopTasks(); stopWorkbench();
+    };
+  }, []);
+
   const appendAgentEvent = useAgentTimeline((s) => s.append);
   const [snapshot, setSnapshot] = useState<RepositorySnapshot>(PREVIEW_SNAPSHOT);
   const [tab, setTab] = useState<WorkspaceTab>("overview");
-  const viewed = useRef({ path: snapshot.root, tab, visible: appView === "repositories" });
-  viewed.current = { path: snapshot.root, tab, visible: appView === "repositories" };
+  const [guideOpen, setGuideOpen] = useState(false);
+  const viewed = useRef({ appView, guideOpen });
+  viewed.current = { appView, guideOpen };
   useEffect(() => {
     if (!isDesktopRuntime()) return;
     let cancelled = false;
@@ -97,14 +130,18 @@ export function WorkbenchShell() {
     void listen<AgentEvent>("agent://event", ({ payload }) => {
       appendAgentEvent(payload);
       const notice = noticeForAgentEvent(payload);
-      if (notice) publishTaskNotice(notice,
-        document.hasFocus() && viewed.current.visible && viewed.current.tab === "agents" &&
-        workspaceKey(viewed.current.path) === workspaceKey(notice.workspaceRoot));
+      if (notice) {
+        const hub = useAgentsHubStore.getState();
+        const owner = knownWorkspaceOwner(notice.workspaceRoot);
+        publishTaskNotice({ ...notice, repositoryId: owner?.id ?? null },
+          document.hasFocus() && !viewed.current.guideOpen && viewed.current.appView === "home" &&
+          hub.section === "sessions" && hub.visibleSessionRoot !== null &&
+          workspaceKey(hub.visibleSessionRoot) === workspaceKey(notice.workspaceRoot));
+      }
     }).then((stop) => { if (cancelled) stop(); else unlisten = stop; })
       .catch(() => undefined);
     return () => { cancelled = true; unlisten?.(); };
   }, [appendAgentEvent]);
-  const [guideOpen, setGuideOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [gitBusy, setGitBusy] = useState(false);
   const [cleanupReport, setCleanupReport] = useState<(CleanupOutcome & { repositoryId: string }) | null>(null);
@@ -771,6 +808,7 @@ export function WorkbenchShell() {
   };
 
   const selectRepository = (id: string) => {
+    navigationEpoch.current += 1;
     if (id === activeRepositoryId) return;
     latestSnapshotRequestRef.current = null;
     activePathRef.current = null;
@@ -781,6 +819,7 @@ export function WorkbenchShell() {
 
   const switchTab = (nextTab: WorkspaceTab) => {
     if (activeRepository && !workspaceReady) return;
+    navigationEpoch.current += 1;
     setTab(nextTab);
     if (!activeRepository) return;
     saveWorkspaceState({
@@ -791,8 +830,90 @@ export function WorkbenchShell() {
     });
   };
 
+  function knownWorkspaceOwner(root: string, repositoryId?: string | null): RepositoryRecord | null {
+    const state = useWorkbenchStore.getState();
+    const key = workspaceKey(root);
+    const tasks = useTaskStore.getState().tasks;
+    const repositories = state.repositories.filter((repository) => !repositoryId || repository.id === repositoryId);
+    // A linked worktree can itself be imported as another repository row.
+    // Keep its managed Task's original owner ahead of that navigation alias.
+    const taskOwner = repositories.find((repository) => tasks.some((task) =>
+      workspaceKey(task.repositoryRoot) === workspaceKey(repository.path) &&
+      task.workspaceRoot && workspaceKey(task.workspaceRoot) === key));
+    if (taskOwner) return taskOwner;
+    return repositories.find((repository) => {
+      const ownerKey = workspaceKey(repository.path);
+      if (key === ownerKey) return true;
+      // Every inspected linked worktree contains its repository's inventory.
+      // The primary root need not have been visited or cached separately.
+      return [...snapshotCacheRef.current.values()].some((known) =>
+        known.worktrees.some((tree) => workspaceKey(tree.path) === ownerKey && !tree.missing) &&
+        known.worktrees.some((tree) => workspaceKey(tree.path) === key && !tree.missing));
+    }) ?? null;
+  }
+
+  function openHubWorkspace(root: string, repositoryRoot: string, identity?: Pick<TaskNotice, "threadId" | "turnId">) {
+    const owner = useWorkbenchStore.getState().repositories.find((repository) =>
+      workspaceKey(repository.path) === workspaceKey(repositoryRoot));
+    if (!owner) return;
+    const state = useTaskStore.getState();
+    const registeredRoots = new Set(useWorkbenchStore.getState().repositories.map((repository) => workspaceKey(repository.path)));
+    const task = state.tasks.filter((candidate) =>
+      candidate.workspaceRoot && workspaceKey(candidate.workspaceRoot) === workspaceKey(root) &&
+      registeredRoots.has(workspaceKey(candidate.repositoryRoot)) &&
+      state.roots.some((path) => workspaceKey(path) === workspaceKey(candidate.repositoryRoot)) &&
+      ((!identity?.threadId && !identity?.turnId) || candidate.attempts.some((attempt) =>
+        attempt.execution && (!identity.threadId || attempt.execution.threadId === identity.threadId) &&
+        (!identity.turnId || attempt.execution.turnId === identity.turnId))))
+      .sort((a, b) => b.updatedAtMs - a.updatedAtMs)[0];
+    if (task) {
+      useAgentsHubStore.getState().showTasks();
+      selectTask(task.id, "执行");
+    } else {
+      useAgentsHubStore.getState().showSession({ repositoryRoot: owner.path, workspaceRoot: root });
+    }
+    setAppView("home");
+  }
+
+  const navigateToAgentNotice = async (notice: TaskNotice) => {
+    const request = ++navigationEpoch.current;
+    const known = knownWorkspaceOwner(notice.workspaceRoot, notice.repositoryId);
+    if (known) {
+      openHubWorkspace(notice.workspaceRoot, known.path, notice);
+      return;
+    }
+    if (!isDesktopRuntime()) return;
+    const state = useWorkbenchStore.getState();
+    const key = workspaceKey(notice.workspaceRoot);
+    const candidates = state.repositories.filter((repository) => !notice.repositoryId || repository.id === notice.repositoryId)
+      .sort((a, b) => Number(workspaceKey(state.workspaceStates[b.id]?.activeWorktreePath ?? "") === key)
+        - Number(workspaceKey(state.workspaceStates[a.id]?.activeWorktreePath ?? "") === key));
+    // Persisted selections are ownership hints, never authorization for an
+    // arbitrary directory. Unknown targets require current registered inventory.
+    const inventories = await Promise.allSettled(candidates.map((repository) => inspectRepository(repository.path)));
+    if (navigationEpoch.current !== request) return;
+    for (let index = 0; index < inventories.length; index += 1) {
+      const result = inventories[index];
+      if (result.status !== "fulfilled") continue;
+      const candidate = candidates[index];
+      const owner = useWorkbenchStore.getState().repositories.find((repository) =>
+        repository.id === candidate.id && workspaceKey(repository.path) === workspaceKey(candidate.path));
+      if (!owner) continue;
+      const known = result.value;
+      if (!known.worktrees.some((tree) => workspaceKey(tree.path) === workspaceKey(owner.path) && !tree.missing)) continue;
+      snapshotCacheRef.current.set(workspaceKey(known.root), known);
+      if (known.worktrees.some((tree) => workspaceKey(tree.path) === key && !tree.missing)) {
+        openHubWorkspace(notice.workspaceRoot, owner.path, notice);
+        return;
+      }
+    }
+  };
+
   const navigateToNotice = (notice: TaskNotice) => {
-    setAppView("repositories");
+    if (notice.source === "agent") {
+      void navigateToAgentNotice(notice);
+      return;
+    }
     const pathKey = workspaceKey(notice.workspaceRoot);
     const state = useWorkbenchStore.getState();
     const repository = (notice.repositoryId
@@ -807,7 +928,8 @@ export function WorkbenchShell() {
           (tree) => workspaceKey(tree.path) === pathKey))
       .sort((a, b) => workspaceKey(b.path).length - workspaceKey(a.path).length)[0];
     if (!repository) return; // Workspace was removed; never reopen an unrelated path.
-    const destination: WorkspaceTab = notice.source === "terminal" ? "terminal" : "agents";
+    setAppView("repositories");
+    const destination: WorkspaceTab = "terminal";
     saveWorkspaceState({
       repositoryId: repository.id,
       activeWorktreePath: notice.workspaceRoot,
@@ -897,8 +1019,8 @@ export function WorkbenchShell() {
 
       <div className="flex min-h-0 flex-1">
         <aside className="vl-app-navigation flex min-h-0 shrink-0 flex-col border-r">
-          <nav aria-label="工程控制中心导航" className="flex shrink-0 flex-col gap-1 border-b p-2">
-            {([ ["home", "控制中心"], ["repositories", "工程仓库"], ["evidence", "报告"], ["settings", "设置"] ] as const).map(([view,label]) => (
+          <nav aria-label="工程导航" className="flex shrink-0 flex-col gap-1 border-b p-2">
+            {([ ["home", "Agents Hub"], ["repositories", "工程仓库"], ["evidence", "报告"], ["settings", "设置"] ] as const).map(([view,label]) => (
               <button key={view} type="button" aria-current={appView === view ? "page" : undefined}
                 className="vl-app-route rounded-md px-3 py-2 text-left text-sm" onClick={() => setAppView(view)}>{label}</button>
             ))}
@@ -926,6 +1048,7 @@ export function WorkbenchShell() {
           onNewWorkspace={() => { setReviewIntent(null); setWorkspaceDialog(true); }}
           onSelectWorkspace={(path) => {
             if (!activeRepository || !workspaceReady || gitMutationInFlightRef.current || loading) return;
+            navigationEpoch.current += 1;
             const repositoryId = activeRepository.id;
             setError(null);
             void loadSnapshot(path)
@@ -988,6 +1111,14 @@ export function WorkbenchShell() {
             }}
           />
 
+          <div className="flex shrink-0 justify-end border-b px-4 py-2 sm:px-6">
+            <button type="button" disabled={!workspaceReady || loading}
+              className="rounded-md px-3 py-1.5 text-xs text-orange-200 hover:bg-orange-400/10 disabled:opacity-40"
+              onClick={() => { if (activeRepository && workspaceReady) openHubWorkspace(snapshot.root, activeRepository.path); }}>
+              在 Agents Hub 中管理
+            </button>
+          </div>
+
           <WorkspaceContent
             snapshot={visibleSnapshot}
             visible={appView === "repositories"}
@@ -1010,8 +1141,8 @@ export function WorkbenchShell() {
           />
           </div>
           <div hidden={appView === "repositories"} className="min-h-0 min-w-0 flex-1 overflow-auto">
-            <TaskControlCenter view={lastTaskView.current} repositories={repositories} activeRepository={activeRepository}
-              visible={appView !== "repositories"} searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace} onOpenControlCenter={() => setAppView("home")}/>
+            <AgentsHub view={lastTaskView.current} repositories={repositories} activeRepository={activeRepository}
+              visible={appView !== "repositories"} searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace} onOpenHub={() => setAppView("home")}/>
           </div>
 
           <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">

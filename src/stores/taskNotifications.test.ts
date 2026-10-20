@@ -15,7 +15,7 @@ describe("task notification inbox", () => {
       turnId: "turn-1", threadId: "thread-1", payload: { turn: { status: "completed" },
         lastAssistantMessage: "private secret" }, timestampMs: 4 };
     const notice = noticeForAgentEvent(event);
-    expect(notice).not.toBeNull();
+    expect(notice).toEqual(expect.objectContaining({ threadId: "thread-1", turnId: "turn-1" }));
     expect(publishTaskNotice(notice!, false)).toBe(true);
     expect(publishTaskNotice(notice!, false)).toBe(false);
     await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));

@@ -99,7 +99,7 @@ describe("WorkspaceContent navigation", () => {
     expect(screen.getByTestId("terminal-mock")).toBeInTheDocument();
   });
 
-  it("wires every workspace tab", async () => {
+  it("keeps repository tooling in five tabs after Agents moves to the Hub", async () => {
     const user = userEvent.setup();
     const onTabChange = vi.fn();
     render(
@@ -114,7 +114,8 @@ describe("WorkspaceContent navigation", () => {
 
     expect(screen.queryByRole("button", { name: "Checks" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
-    for (const tab of ["Overview", "Changes", "GitHub", "Agents", "Terminal", "Run"]) {
+    expect(screen.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
+    for (const tab of ["Overview", "Changes", "GitHub", "Terminal", "Run"]) {
       await user.click(screen.getByRole("button", { name: new RegExp(tab, "i") }));
     }
 
@@ -122,7 +123,6 @@ describe("WorkspaceContent navigation", () => {
       "overview",
       "changes",
       "github",
-      "agents",
       "terminal",
       "run",
     ]);

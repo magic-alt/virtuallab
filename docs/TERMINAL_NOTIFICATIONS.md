@@ -9,7 +9,7 @@ VirtualLab offers **non-blocking** desktop alerts for long-running agent work. T
 3. Start your task and work on another page or application. OSC 9 notifications create an OS toast only when that terminal is not already foreground and focused.
 4. Open the **bell** in the top bar to find a completion or attention notice. Selecting it restores the registered workspace and correct terminal pane. Switch off **Desktop alerts** to mute OS notifications while retaining in-app entries.
 
-The **Agents** tab uses structured `turn/completed` events directly, including the CLI exit outcome. The workbench does not treat `agent.process_exited` as turn success.
+The **Agents Hub → 工作区会话** surface uses structured `turn/completed` events directly, including the CLI exit outcome. The workbench does not treat `agent.process_exited` as turn success.
 
 ## Signal semantics
 
@@ -36,3 +36,5 @@ The parser is incremental and caps OSC control sequences. The original PTY bytes
 - Agent structured `turn/completed` / failed turn should create one notice; process-exited should not be called success.
 
 Linux requires a desktop notification service. On Windows/macOS, allow notifications for VirtualLab in OS settings. System toast click-through routing is OS-dependent; selecting the notification **in the application bell inbox** is the supported deep-link path. Runtime provider/browser integration tests do not replace manual visual desktop acceptance.
+
+Agent inbox entries open the matching managed Task when its execution identity matches, or the registered workspace session in Agents Hub. Terminal entries continue opening the original repository Terminal. Merely viewing or navigating a notice does not attach a provider or start work. Toast suppression requires the focused, actually visible matching session; a hidden Hub pane is not considered viewed.

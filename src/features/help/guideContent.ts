@@ -76,9 +76,9 @@ export const guidePages: GuidePage[] = [
         { type: "diagram", src: "/help/workbench-map.svg", alt: "标注 VirtualLab 顶部栏、左侧仓库栏、工作区状态头部、标签栏和主视图区的界面示意图", caption: "图 2 · 概念化的界面分区。Help → 使用文档不依赖已经导入仓库。" },
         { type: "table", columns: ["区域", "看到什么", "常见操作"], rows: [
           ["顶部菜单栏", "VirtualLab、Help → 使用文档、搜索框、Native/Web preview", "从应用菜单打开离线手册，不切换工作区"],
-          ["左侧栏", "Local repositories、Workspace lanes、Git branches", "导入项目、切换 worktree / 分支"],
+          ["左侧栏", "Agents Hub、工程仓库、报告、设置；仓库内的 Workspace lanes、Git branches", "管理 Agent 任务与会话，或进入仓库开发工具"],
           ["工作区头部", "仓库、当前分支、远端、HEAD、洁净状态", "Open in IDE、Fetch、Pull；Git 状态自动刷新"],
-          ["功能标签", "Overview / Changes / GitHub / Agents / Terminal / Run", "在同一工作区切换任务（不包含文档入口）"],
+          ["功能标签", "Overview / Changes / GitHub / Terminal / Run", "在同一工作区切换任务（不包含文档入口）"],
           ["底部状态栏", "本地执行边界、应用版本与构建 Git 提交", "点击版本查看提交号、分支、编译时间和修改标记，确认当前程序来源"],
         ] },
       ] },
@@ -87,7 +87,7 @@ export const guidePages: GuidePage[] = [
           { title: "Overview", description: "查看工作区拓扑、最近提交和本地状态。" },
           { title: "Changes + GitHub", description: "审阅代码差异，追踪 PR/Issue 上下文；推送评论需单独确认。" },
           { title: "Terminal + Run", description: "交互式 Shell 与结构化可重复构建分别管理，避免混用。" },
-          { title: "Agents", description: "按需附加 Coding Agent，在所选工作区运行任务。" },
+          { title: "Agents Hub（全局）", description: "在 Agent 任务中创建独立工作区并查看报告；在工作区会话中管理已有线程、Provider 和恢复记录。" },
         ] },
         { type: "callout", tone: "note", title: "所有工作区共用这本手册", text: "从顶部 Help → 使用文档打开独立阅读界面，不属于工作区标签；关闭后回到原工作区和标签。打开文档不会切换 Git 分支、运行命令、上传代码或更改当前项目。" },
       ] },
@@ -229,7 +229,7 @@ export const guidePages: GuidePage[] = [
           { title: "收到原生系统通知", description: "Codex 本轮完成或需要操作时，未在前台查看原终端的情况下会收到系统通知。不弹确认框，不切换当前页面。" },
           { title: "点击顶部铃铛返回任务", description: "选择通知条目，回到来源仓库、Worktree 和终端会话；Desktop alerts 可关闭系统提示，但不影响应用内通知。" },
         ] },
-        { type: "callout", tone: "warning", title: "响铃不代表任务成功", text: "手动输入 codex 或运行其他 TUI 时，普通 BEL 响铃只产生「需要关注」提醒；只有已启用 OSC 9 的 Codex 提供明确的本轮完成信号。Agents 标签采用结构化 turn 结束事件。静默、终端退出、Git 状态变化均不当作 Agent 成功完成。若系统通知权限被禁用，应用内铃铛仍可显示任务提醒。通知不会发送你的代码、Prompt 或终端日志。" },
+        { type: "callout", tone: "warning", title: "响铃不代表任务成功", text: "手动输入 codex 或运行其他 TUI 时，普通 BEL 响铃只产生「需要关注」提醒；只有已启用 OSC 9 的 Codex 提供明确的本轮完成信号。Agents Hub 的工作区会话采用结构化 turn 结束事件。静默、终端退出、Git 状态变化均不当作 Agent 成功完成。若系统通知权限被禁用，应用内铃铛仍可显示任务提醒。通知不会发送你的代码、Prompt 或终端日志。" },
       ] },
       { id: "overview", title: "Overview 与完整 Git 历史", blocks: [
         { type: "text", text: "Overview 显示工作树是否洁净、活动分支、Worktree 数量，以及 Recent activity 中最近 6 条提交。它用于快速确认工作上下文，不会自动修改仓库。需要更早记录、作者或分支图时，在 Terminal 执行 git log --oneline --graph --decorate，或使用外部编辑器的 Git 历史功能。" },
@@ -275,13 +275,13 @@ export const guidePages: GuidePage[] = [
     ],
   },
   {
-    id: "agents", category: "扩展与参考", icon: "agents", title: "Coding Agents",
+    id: "agents", category: "扩展与参考", icon: "agents", title: "Agents Hub",
     subtitle: "按需接入 Codex、DeepSeek、Claude Code、OpenCode；将审查权留在工作区。",
     duration: "约 7 分钟",
     sections: [
       { id: "model", title: "Agent 是适配器，不是工程状态的所有者", blocks: [
         { type: "diagram", src: "/help/agent-safety.svg", alt: "工作区连接可选 Agent、命令执行与独立硬件保护边界的示意图", caption: "图 5 · Agent 工作线与安全边界。保护确认不等于设备授权。" },
-        { type: "text", text: "Agents 页现在以工作区任务为主：选择 Provider → Describe the task → Connect & run task，首次执行自动检测、Attach/resume 并启动 turn，结果在 Agent activity 中显示。Provider 仍需用户安装与认证，Check availability 只是本机版本探测。Role/Skills、JSON 时间线、历史及硬件保护演示位于折叠的高级设置中。" },
+        { type: "text", text: "Agents Hub 是统一入口。Agent 任务提供独立 Worktree、Codex 队列、重试与报告；工作区会话管理已存在目录中的线程：选择会话仓库 / 会话工作区，再选择 Provider → Describe your request → Connect & send。Task 绑定的目录回到任务执行页，普通会话不能接管任务运行时。Provider 仍需用户安装与认证，Check availability 只是本机版本探测。Role/Skills、JSON 时间线、历史及硬件保护演示位于折叠的高级设置中。" },
         { type: "table", columns: ["Harness", "连接模式", "现阶段说明"], rows: [
           ["Codex", "App-server JSON-RPC", "按工作区关联 thread / turn"],
           ["DeepSeek", "通过 Codex + DeepSeek Responses API", "需额外配置 API，沿用 Codex 通信机制"],
@@ -292,8 +292,8 @@ export const guidePages: GuidePage[] = [
       { id: "configure", title: "附加一个 Agent", blocks: [
         { type: "steps", items: [
           { title: "配置外部工具", description: "先安装并完成对应 CLI/API 环境设置；不要把密钥写入角色或项目文件。" },
-          { title: "选择当前 Worktree 与 Provider", description: "先确认顶部选中正确的工作区，Agents 的任务、thread、角色均绑定这个目录。" },
-          { title: "Describe the task", description: "输入具体任务，点击 Connect & run task 即可自动检测并关联 provider thread，不必先点 Attach。" },
+          { title: "选择当前 Worktree 与 Provider", description: "进入 Agents Hub → 工作区会话，确认会话仓库与会话工作区；thread、角色与技能绑定这个目录。工程仓库的工具选择保持独立。" },
+          { title: "Describe your request", description: "输入具体请求，点击 Connect & send 即可自动检测并关联 provider thread，向当前工作区会话发送一个 turn。" },
           { title: "Agent activity", description: "观察任务进度与输出；长任务可以 Interrupt，结束后可继续发下一轮。" },
           { title: "高级设置", description: "需要定制角色或技能时展开 Role & optional skills；Codex 版本与终端不同时在 CLI diagnostics 选择新版本的可执行文件。Stop 保留 thread，Forget 删除保存的关联。" },
         ] },

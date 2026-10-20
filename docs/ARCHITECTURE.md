@@ -1,6 +1,6 @@
 # VirtualLab architecture
 
-VirtualLab is a **local-first AI Engineering Control Plane**, with the product promise **Verified Engineering Work**. Workspace remains the durable owner of repository context and execution resources; the planned user-facing workflow is organized around Tasks and Verified Results. An AI chat session never owns repository state. See [product strategy](PRODUCT_STRATEGY.md) and [delivery Roadmap](ROADMAP.md).
+VirtualLab is a **local-first AI Engineering Control Plane**, with the product promise **Verified Engineering Work**. Workspace remains the durable owner of repository context and execution resources; the user-facing workflow is organized in Agents Hub around Tasks, workspace sessions and independently verified results. An AI chat session never owns repository state. See [product strategy](PRODUCT_STRATEGY.md) and [delivery Roadmap](ROADMAP.md).
 
 ## Architecture principles
 
@@ -60,12 +60,12 @@ The cleanup plan binds the repository, selected workspace, main ref/OID, live or
 Bundled Help/Guide content is an application service, not a workspace tab or
 execution context. The GUI menu bar offers **Help → 使用文档** even without an
 active repository; it opens an overlay reader without changing the selected
-repository, worktree, tab, or persisted workspace state. Workspace navigation exposes only Overview, Changes, GitHub, Agents, Terminal
-and Run. Overview retains recent commits; local readiness duplicates have no
+repository, worktree, tab, or persisted workspace state. Workspace navigation exposes only Overview, Changes, GitHub, Terminal and Run.
+Agent tasks and direct workspace sessions are presented in the global Agents Hub. Overview retains recent commits; local readiness duplicates have no
 separate page. Run results and GitHub CI remain independent. Persisted state
-schema v7 accepts only current workspace tab values; invalid values normalize
+schema v8 accepts only current workspace tab values; retired `agents` and invalid values normalize
 to `overview` while retaining repository/worktree selection, and migration
-writes the validated state back to storage. There are no legacy page aliases.
+writes the validated state back to storage. The old `TaskControlCenter` component export is a compatibility facade for `AgentsHub`, not another page.
 
 ## Background agent and terminal notification boundary
 
@@ -88,12 +88,64 @@ they neither steal focus nor block work. Native notification errors fall back
 to the in-app inbox. Routing to an inbox item only navigates to a registered
 repository/worktree and never creates or starts work.
 
-The repository host stays mounted while the operator visits Control Center, Reports,
-Settings or Home. Its application visibility is passed to retained terminal
+The repository host stays mounted while the operator visits Agents Hub, Reports
+or Settings. Its application visibility is passed to retained terminal
 panes so hidden panes stop visible-only resize/focus behavior without losing
-their sessions. Agent notification suppression also requires the repository
-view itself to be visible, in addition to the matching workspace, Agents tab
-and focused document.
+their sessions. Agent notification suppression requires the matching Hub session panel to be
+actually visible and the document focused; hidden sections and the Help overlay
+do not suppress a toast. Agent notices retain thread/turn identity and resolve
+the owning managed Task or validated workspace session. Terminal notice routing
+continues to use its original workspace and terminal ID.
+
+## Agents Hub and execution ownership
+
+`src/features/agents/AgentsHub.tsx` is the single global Agent management surface.
+It composes the existing Task components and `AgentSessionHub`; no Agent page is
+mounted inside repository tools. `src/stores/agentsHub.ts` contains transient
+navigation/visibility only. The application-level Task and Agent observers stay
+in the shell. The old `TaskControlCenter` export delegates to this same component.
+
+The default **Agent 任务** section retains native Task/Attempt/report storage,
+queueing, isolated worktree preparation, Codex execution and separate
+verification/review/acceptance. **工作区会话** retains the four existing manual
+harnesses, saved threads, roles/skills, live events and redacted recovery journal.
+A session binding or turn-completed event never becomes a Task or proves its
+verification. Automatic Tasks remain Codex-only; their two-slot/32-entry queue
+limit does not describe manual session capacity.
+
+Manual session targets carry repository and workspace roots. Read-only Git
+inspection supplies registered primary/linked worktrees, including external
+sibling directories. Persisted bindings annotate that inventory without
+conferring filesystem authority. Missing/removed/unconfirmed workspaces and
+unavailable Task sources cannot enable manual controls. A Task-bound workspace
+links to Task execution rather than mounting the manual controller. Keyed session
+panels retain drafts while navigation hides them; hidden panels suspend
+visibility-dependent reads and never gain process ownership from being mounted.
+
+Native `AgentRuntime` distinguishes Task ownership from ordinary Workspace
+ownership. Incoming IPC cannot set the internal fresh-session authority. Public
+attach/resume, turn start/steer/interrupt and unbound stop reject a Task runtime.
+The Task coordinator uses its internal start path and existing exact-thread
+cleanup, keeping cancellation state persistence, process cleanup, writer leases
+and replacement-runtime protections intact. These guards also cover stale UI
+requests; hiding a button is not the authority boundary. No new frontend native
+command or arbitrary-shell API is added.
+
+`useAgentPreferences` reuses the existing raw Codex executable storage key and
+updates mounted consumers. New Task inputs follow the shared default until the
+operator explicitly overrides it. Accepted/uncertain launch requests freeze their
+selected path and durable request ID, so a later global preference change cannot
+silently launch a different retry. Existing provider runtimes keep their original
+executable until explicitly stopped and reattached.
+
+Manual sessions retain their native writer reservation while attached, even when
+idle. Moving to another page does not release this reservation; the matching Hub
+session exposes Stop runtime. Git/Run operations can therefore still report a
+busy workspace until that owner stops. Interactive Terminal leases retain their
+existing, separate coexistence/removal semantics.
+
+See [consolidation audit](AGENTS_HUB_AUDIT_2026-10-20.md) and
+[Agents Hub guide](TASK_FIRST_CONTROL_CENTER.md).
 
 ## External workspace editor boundary
 
@@ -156,7 +208,7 @@ React / TypeScript UI
   ├─ features/sidebar
   ├─ features/workspace
   ├─ Monaco review + GitHub panel
-  ├─ Agents panel: roles, opt-in skills, live timeline, safety requests
+  ├─ Agents Hub: managed Tasks + workspace sessions, roles, skills and recovery
   ├─ stores / typed adapters
   └─ typed backend client
           │ Tauri invoke/events

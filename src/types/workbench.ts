@@ -175,7 +175,6 @@ export type WorkspaceTab =
   | "overview"
   | "changes"
   | "github"
-  | "agents"
   | "terminal"
   | "run";
 

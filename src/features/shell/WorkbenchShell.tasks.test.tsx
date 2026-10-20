@@ -12,14 +12,14 @@ vi.mock('@/lib/backend', async (importOriginal) => ({
 }));
 import { WorkbenchShell } from './WorkbenchShell';
 
-describe('Task-first application navigation', () => {
+describe('Agents Hub application navigation', () => {
   beforeEach(() => {
     useWorkbenchStore.setState({ repositories: [], activeRepositoryId: null, workspaceStates: {} });
   });
-  it('opens a fresh installation at the control center without starting native work', () => {
+  it('opens a fresh installation at Agents Hub without starting native work', () => {
     render(<WorkbenchShell />);
-    expect(screen.getByRole('navigation', { name: '工程控制中心导航' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '控制中心' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('navigation', { name: '工程导航' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agents Hub' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('button', { name: '工程仓库' })).not.toHaveAttribute('aria-current');
   });
   it('keeps the workspace host mounted across application navigation', async () => {
@@ -27,12 +27,12 @@ describe('Task-first application navigation', () => {
     const workspace = screen.getByTestId('workspace-main');
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(workspace).toBeVisible();
-    await user.click(screen.getByRole('button', { name: '控制中心' }));
+    await user.click(screen.getByRole('button', { name: 'Agents Hub' }));
     expect(workspace).not.toBeVisible();
     expect(workspace.isConnected).toBe(true);
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(screen.getByTestId('workspace-main')).toBe(workspace);
-    for (const name of ['报告','设置','控制中心']) {
+    for (const name of ['报告','设置','Agents Hub']) {
       await user.click(screen.getByRole('button',{name}));
       expect(screen.getByTestId('workspace-main')).toBe(workspace);
       expect(workspace.isConnected).toBe(true);
@@ -48,7 +48,7 @@ describe('Task-first application navigation', () => {
     const pane = screen.getByTestId('terminal-pane');
     expect(pane).toHaveAttribute('aria-hidden', 'false');
 
-    for (const name of ['报告', '设置', '控制中心']) {
+    for (const name of ['报告', '设置', 'Agents Hub']) {
       await user.click(screen.getByRole('button', { name }));
       // Keeping the pane mounted must not leave its PTY resize/focus observer active.
       expect(pane.isConnected).toBe(true);
@@ -59,7 +59,7 @@ describe('Task-first application navigation', () => {
     }
   });
 
-  it('keeps task work in the control center and exposes a report destination', () => {
+  it('keeps task work in Agents Hub and exposes a report destination', () => {
     render(<WorkbenchShell />);
     expect(screen.queryByRole('button', { name: '任务' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '证据' })).not.toBeInTheDocument();

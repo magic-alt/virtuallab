@@ -1,10 +1,33 @@
-# Task-first Engineering Control Center
+# Agents Hub: Tasks and workspace sessions
 
 Source implementation added 2026-10-17. This document describes available local software surfaces, not a release qualification or authenticated-provider acceptance record.
 
+## One Hub, two execution contexts
+
+| Hub section | Use it for | Execution and records |
+| --- | --- | --- |
+| Agent 任务 | A goal that needs an isolated worktree, queue, retries and reports | Native Codex Task/Attempt lifecycle; durable output, independent verification and acceptance |
+| 工作区会话 | An existing workspace thread, provider configuration, roles/skills and recovery | Explicit direct attach/resume; four existing harnesses; bounded live output and redacted lifecycle metadata |
+
+Select **会话仓库** and **会话工作区** to manage an existing workspace. The list is
+built from registered repository/worktree inspection, including sibling paths
+outside the repository directory. A saved thread alone does not authorize a path.
+Task-bound workspaces link back to their Task; ordinary session commands cannot
+adopt or control a native Task runtime. Cancelling a Task retains its durable state
+transition and exact-thread cleanup.
+
+Hub and repository navigation retain drafts and Terminal sessions. Agent notices
+navigate to the owning Task/session; Terminal notices retain the original terminal
+ID. Workspace persistence v8 maps a retired `agents` tab to `overview`, preserving
+its repository/worktree. Session and Task storage formats remain compatible.
+
+The default Codex executable is shared between Hub settings, manual sessions and
+new Tasks. A Task-specific edit overrides that default; accepted launch requests
+retain their original executable selection.
+
 ## Navigation and ownership
 
-The application navigation provides 控制中心, 工程仓库, 报告 and 设置. The task list is part of 控制中心. A new installation opens the control center; an existing selected repository keeps its workspace view during migration. 工程仓库 retains the six existing workspace tools. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
+The application navigation provides Agents Hub, 工程仓库, 报告 and 设置. The task list is part of Agents Hub. A new installation opens Agents Hub; an existing selected repository keeps its workspace view during migration. 工程仓库 retains Overview, Changes, GitHub, Terminal and Run. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
 
 Tasks belong to a selected repository and reference explicitly created registered Git worktrees. A task never owns repository state through an Agent session. The footer build identity still identifies the running application independently of task/repository selection.
 
@@ -12,8 +35,8 @@ Agents, Run/build processes and verification share an exclusive workspace writer
 
 ## Local workflow
 
-1. Add/select a local repository, open **控制中心**, and enter a concrete goal in **工作任务**, such as “修复 git 提交错误，检查原因、完成修复和测试，并总结发现的问题”. Choose **开始任务** (or Ctrl/⌘+Enter). The composer displays the current branch/HEAD, rechecks it, and submits one native launch operation. That action accepts the task, creates its independent worktree, and starts Codex. The execution panel opens automatically; there is no separate prepare/start sequence on this default path.
-2. Optional settings can narrow the default repository scope (`.`), select a frozen verification Profile, override the Codex executable, and permit local auto-commit. The executable defaults to the path configured in Agents, or automatic native discovery. Without auto-commit, validated changes stay in the worktree. Without a Profile, successful Codex execution completes but delivery remains **unverified**, with its report preserved. Repository scope still excludes Git metadata and environment-secret files; it is not an OS sandbox.
+1. Add/select a local repository, open **Agents Hub**, and enter a concrete goal in **工作任务**, such as “修复 git 提交错误，检查原因、完成修复和测试，并总结发现的问题”. Choose **开始任务** (or Ctrl/⌘+Enter). The composer displays the current branch/HEAD, rechecks it, and submits one native launch operation. That action accepts the task, creates its independent worktree, and starts Codex. The execution panel opens automatically; there is no separate prepare/start sequence on this default path.
+2. Optional settings can narrow the default repository scope (`.`), select a frozen verification Profile, override the Codex executable, and permit local auto-commit. The executable defaults to the path configured in Agents Hub, or automatic native discovery. Without auto-commit, validated changes stay in the worktree. Without a Profile, successful Codex execution completes but delivery remains **unverified**, with its report preserved. Repository scope still excludes Git metadata and environment-secret files; it is not an OS sandbox.
 3. The native coordinator has two global execution slots and a queue of at most 32 tasks. The execution console shows the real supervised Codex app-server's messages, commands and file activity; it does not start another interactive writer. Task text is sent through the existing structured turn API. Cancellation waits for observed process cleanup. Retry creates a new Attempt. Duplicate launch requests reuse a durable request receipt. A lost response can be retried without accepting another task, including after the original repository HEAD moves.
 4. The native verifier runs the accepted structured software gates against committed, clean controlled inputs. Failed/unsupported/missing required gates prevent readiness. Optional limitations remain warnings. Ordinary Run output is exploratory and does not grant task readiness.
 5. For integration, prepare a dedicated worktree from the accepted base. Wait for fresh prerequisite checks and candidates, preview their exact source commits and target HEAD, then confirm through the native dialog. The preview expires after five minutes and is consumed once. No remote fetch/checkout, push or PR merge occurs.
@@ -38,7 +61,7 @@ Setup errors remain readable after restart even if no Attempt was created. Their
 recovery action can reconcile an existing worktree; an old error alone does not
 prevent corrected explicit creation when Native has no retained preparation intent.
 
-AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. The quick composer **does not invoke an AI planner** or synthesize a dependency DAG: it freezes the user's words as the implementation Agent's goal, with a bounded title derived locally. This provides low-friction Vibe Coding task creation without fabricating an AI capability, execution or verification. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through workspace Agents; the task coordinator's first implementation uses Codex only.
+AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. The quick composer **does not invoke an AI planner** or synthesize a dependency DAG: it freezes the user's words as the implementation Agent's goal, with a bounded title derived locally. This provides low-friction Vibe Coding task creation without fabricating an AI capability, execution or verification. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through Agents Hub → 工作区会话; the task coordinator's first implementation uses Codex only.
 
 ## Task-driven surfaces
 

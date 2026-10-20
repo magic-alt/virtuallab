@@ -102,6 +102,33 @@ describe("workbench persisted store", () => {
     expect(saved.state.workspaceStates["repo-1"].activeTab).toBe("overview");
   });
 
+  it.each([7, 8])("restores a legacy Agents selection from schema %s as Overview without changing its workspace", async (version) => {
+    const savedWorkspace = {
+      repositoryId: "repo-1", activeWorktreePath: "D:\\工作区\\linked sibling\\",
+      activeTab: "agents", updatedAt: 456,
+    };
+    window.localStorage.setItem("virtuallab-workbench-v2", JSON.stringify({
+      state: {
+        repositories: [{ id: "repo-1", name: "example", path: "D:/Work/example", lastOpenedAt: 1 }],
+        activeRepositoryId: "repo-1", profiles: [], reviewStates: {},
+        workspaceStates: { "repo-1": savedWorkspace },
+      },
+      version,
+    }));
+
+    await useWorkbenchStore.persist.rehydrate();
+
+    expect(useWorkbenchStore.getState().workspaceStates["repo-1"]).toEqual({
+      ...savedWorkspace, activeTab: "overview",
+    });
+    expect(useWorkbenchStore.getState().activeRepositoryId).toBe("repo-1");
+    if (version === 7) {
+      const saved = JSON.parse(window.localStorage.getItem("virtuallab-workbench-v2")!);
+      expect(saved.version).toBe(8);
+      expect(saved.state.workspaceStates["repo-1"]).toEqual({ ...savedWorkspace, activeTab: "overview" });
+    }
+  });
+
   it("does not merge case-distinct Unix review draft workspaces", () => {
     const store = useWorkbenchStore.getState();
     for (const root of ["/tmp/Servo", "/tmp/servo"]) {

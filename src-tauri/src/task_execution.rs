@@ -722,6 +722,8 @@ impl Drop for ProviderStopObserver {
 }
 
 fn stop_bound_provider(app: &AppHandle, root: &str, thread: &str) -> bool {
+    // Native confirms the exact task stop while holding its lifecycle lock. A
+    // later workspace attachment must not turn that completed stop into a retry.
     crate::agent::agent_session_stop_bound(
         app.clone(),
         app.state::<AgentManager>(),
@@ -729,7 +731,6 @@ fn stop_bound_provider(app: &AppHandle, root: &str, thread: &str) -> bool {
         thread.into(),
     )
     .is_ok()
-        && app.state::<AgentManager>().owns_workspace(root) == Ok(false)
 }
 
 #[derive(Deserialize)]
@@ -1753,7 +1754,7 @@ async fn run_provider(
         {
             return Err("Task cancellation requested".into());
         }
-        let turn = crate::agent::agent_turn_start(
+        let turn = crate::agent::task_agent_turn_start(
             app.clone(),
             app.state::<AgentManager>(),
             AgentTurnStartRequest {
