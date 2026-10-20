@@ -10,6 +10,8 @@ export type TaskNotice = {
   repositoryId?: string | null;
   source: "terminal" | "agent";
   terminalId?: string;
+  threadId?: string | null;
+  turnId?: string | null;
   title: string;
   detail: string;
   severity: "complete" | "attention" | "failed";
@@ -116,8 +118,10 @@ export function noticeForAgentEvent(event: AgentEvent): Omit<TaskNotice, "create
     id: "agent:" + workspaceKey(event.workspaceRoot) + ":" + (event.threadId ?? "") + ":" + turnId,
     workspaceRoot: event.workspaceRoot,
     source: "agent",
+    threadId: event.threadId ?? null,
+    turnId,
     title: failed ? name + " task failed" : name + " task completed",
-    detail: failed ? "Agent turn ended unsuccessfully. Open Agents to review." : "Agent turn completed. Open Agents to review.",
+    detail: failed ? "Agent turn ended unsuccessfully. Open Agents Hub to review." : "Agent turn completed. Open Agents Hub to review.",
     severity: failed ? "failed" : "complete",
   };
 }

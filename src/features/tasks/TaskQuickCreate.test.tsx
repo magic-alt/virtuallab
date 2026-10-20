@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }));
 import { TaskQuickCreate } from './TaskQuickCreate';
 import { selectTask, useTaskStore } from '@/stores/tasks';
 import { useTaskProfileStore } from '@/stores/taskProfiles';
+import { useAgentPreferences } from '@/stores/agentPreferences';
 import { taskFixture } from './fixtures';
 import type { RepositoryRecord } from '@/types/workbench';
 
@@ -25,6 +26,7 @@ const opening = () => ({
 
 beforeEach(() => {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {value:{}, configurable:true});
+  useAgentPreferences.getState().setCodexExecutablePath('');
   native.invoke.mockReset();
   native.invoke.mockImplementation(async (command, args) => {
     if (command === 'inspect_repository') return snapshot(args.path, args.path === b.path ? headB : headA);
@@ -38,6 +40,43 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window,'__TAURI_INTERNALS__'); });
 
 describe('natural-language task creation', () => {
+  it('keeps an uncertain launch executable and receipt when the shared default changes', async () => {
+    useAgentPreferences.getState().setCodexExecutablePath('/tools/original-codex');
+    const original = native.invoke.getMockImplementation()!;
+    const requests: unknown[] = [];
+    native.invoke.mockImplementation(async (command, args) => {
+      if (command === 'task_launch') {
+        requests.push(structuredClone(args.request));
+        if (requests.length === 1) throw new Error('launch reply lost');
+      }
+      return original(command, args);
+    });
+    render(<TaskQuickCreate {...opening()}/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), '保留任务执行身份');
+    await userEvent.click(screen.getByRole('button', {name: '开始任务'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('launch reply lost');
+    await act(async () => useAgentPreferences.getState().setCodexExecutablePath('/tools/changed-codex'));
+    expect(screen.getByLabelText('Codex 可执行程序路径（可选）')).toHaveValue('/tools/original-codex');
+    await userEvent.click(screen.getByRole('button', {name: '开始任务'}));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toEqual(requests[0]);
+  });
+
+  it('follows shared executable changes until an explicit task override is entered', async () => {
+    render(<TaskQuickCreate {...opening()}/>);
+    await screen.findByText(headA.slice(0, 12));
+    const input = screen.getByLabelText('Codex 可执行程序路径（可选）');
+    await act(async () => useAgentPreferences.getState().setCodexExecutablePath('/tools/new-codex'));
+    expect(input).toHaveValue('/tools/new-codex');
+    fireEvent.change(input, { target: { value: '/tools/task-codex' } });
+    await act(async () => useAgentPreferences.getState().setCodexExecutablePath('/tools/later-codex'));
+    expect(input).toHaveValue('/tools/task-codex');
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), '检查任务执行程序');
+    await userEvent.click(screen.getByRole('button', {name: '开始任务'}));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith('task_launch', {request: expect.objectContaining({executablePath: '/tools/task-codex'})}));
+  });
+
   it('launches the exact natural-language goal through one native operation and opens its execution', async () => {
     const props=opening();
     render(<TaskQuickCreate {...props}/>);
@@ -268,14 +307,14 @@ describe('natural-language task creation', () => {
   });
 
   it('uses the configured Codex executable as a structured path', async () => {
-    window.localStorage.setItem('virtuallab-codex-executable-v1','C:/Tools/Codex 中文/codex.cmd');
+    useAgentPreferences.getState().setCodexExecutablePath('C:/Tools/Codex 中文/codex.cmd');
     try {
       render(<TaskQuickCreate {...opening()} inline/>);
       await screen.findByText(headA.slice(0,12));
       await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'),'修复配置');
       await userEvent.click(screen.getByRole('button',{name:'开始任务'}));
       await waitFor(()=>expect(native.invoke).toHaveBeenCalledWith('task_launch',{request:expect.objectContaining({executablePath:'C:/Tools/Codex 中文/codex.cmd'})}));
-    } finally {window.localStorage.removeItem('virtuallab-codex-executable-v1');}
+    } finally {useAgentPreferences.getState().setCodexExecutablePath('');}
   });
 
   it('does not launch if the repository is removed during the final HEAD inspection', async () => {

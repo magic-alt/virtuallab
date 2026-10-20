@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { launchTask, taskLaunchFailure } from '@/lib/tasks';
 import { inspectRepository, isDesktopRuntime } from '@/lib/backend';
 import { workspaceKey } from '@/lib/workspaceKey';
+import { useAgentPreferences } from '@/stores/agentPreferences';
 import { refreshTaskProfiles, useTaskProfileStore } from '@/stores/taskProfiles';
 import { retainLaunchedTask, runTaskAction, useTaskStore } from '@/stores/tasks';
 import type { RepositoryRecord, RepositorySnapshot } from '@/types/workbench';
@@ -25,11 +26,6 @@ const suggestions = [
   '检查相关代码，修复问题并完成构建验证',
 ];
 
-function storedCodexPath():string {
-  try {return window.localStorage.getItem('virtuallab-codex-executable-v1') ?? '';}
-  catch {return '';}
-}
-
 export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdvanced, inline=false, active=true, onLaunched }: Props) {
   const [root, setRoot] = useState(activeRepository?.path ?? repositories[0]?.path ?? '');
   const [description, setDescription] = useState('');
@@ -37,7 +33,9 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   const [profileId, setProfileId] = useState('');
   const [profile, setProfile] = useState<TaskVerificationProfile | null>(null);
   const [autoCommit, setAutoCommit] = useState(false);
-  const [executablePath,setExecutablePath] = useState(storedCodexPath);
+  const defaultExecutablePath = useAgentPreferences(state => state.codexExecutablePath);
+  const [executableOverride, setExecutableOverride] = useState<string | null>(null);
+  const executablePath = executableOverride ?? defaultExecutablePath;
   const [snapshot, setSnapshot] = useState<RepositorySnapshot | null>(null);
   const [reading, setReading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -133,6 +131,8 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
       }
       const launchRequest=recovery ?? {requestId:crypto.randomUUID(),plan:request,executablePath:selectedPath};
       submission.current={intentKey,request:launchRequest};
+      // A changed shared default cannot change an uncertain launch's retry identity.
+      setExecutableOverride(selectedPath ?? '');
       // A transport failure retains this token and the prompt. Native returns
       // the same accepted task even if the repository HEAD moved meanwhile.
       const result=await runTaskAction(actionKey,()=>launchTask(launchRequest));
@@ -147,6 +147,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         if (select) onLaunched?.(result.task);
         if (inline) {
           setDescription('');
+          setExecutableOverride(null);
           setError(result.launchError ? `任务已保留，请在下方继续处理：${result.launchError}` : '');
         } else if (current.current.active) onClose();
       }
@@ -230,8 +231,9 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
           </label>
           {library.error && <p role="status">Profile 库不可用：{library.error}。仍可创建未验证任务。</p>}
           <label>Codex 可执行程序路径（可选）
-            <input value={executablePath} onChange={event=>setExecutablePath(event.target.value)} placeholder="自动检测本机 Codex；也可指定完整路径"/>
+            <input value={executablePath} onChange={event=>setExecutableOverride(event.target.value)} placeholder="自动检测本机 Codex；也可指定完整路径"/>
           </label>
+          {executableOverride !== null && <button type="button" onClick={() => setExecutableOverride(null)}>使用 Hub 默认路径</button>}
           <label className="task-checkbox"><input type="checkbox" checked={autoCommit} onChange={event => setAutoCommit(event.target.checked)}/>
             完成后创建本地提交（不推送）</label>
           {inline && <>{preview}<div className="task-row task-quick-advanced-action">{advancedButton}</div></>}

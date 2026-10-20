@@ -89,7 +89,7 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
       {tab === '执行' && <>
         <div className="task-row"><button disabled={disabled || active || !!attempt || !task.workspaceRoot || task.kind === 'integration'} onClick={() => act(() => tasks.startTask(task.id,executablePath.trim() || null))}>开始执行</button>
           <button disabled={disabled || active || !attempt || !task.workspaceRoot || task.kind === 'integration'} onClick={() => act(() => tasks.retryTask(task.id,executablePath.trim() || null))}>重试（新 Attempt）</button>
-          <button disabled={!isDesktopRuntime() || !active || !!cancelling} onClick={() => {void runTaskCancellation(task.id).catch(() => { /* Store surfaces native cancellation errors. */ });}}>取消执行</button>{tool('打开 Agents','agents')}{tool('打开终端','terminal')}</div>
+          <button disabled={!isDesktopRuntime() || !active || !!cancelling} onClick={() => {void runTaskCancellation(task.id).catch(() => { /* Store surfaces native cancellation errors. */ });}}>取消执行</button>{tool('打开终端','terminal')}</div>
         {task.kind === 'integration' && <p>集成任务请在交付标签预览并确认固定提交；不会启动实现 Agent。</p>}
         <TaskExecutionConsole attempt={attempt} observation={reportObservation}/>
         <p className="task-muted">任务在原生队列中持续执行；完成总结和发现的问题会显示在报告中。</p>

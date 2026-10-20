@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Activity,
-  Bot,
   CheckCircle2,
   CircleDot,
   FileCode2,
@@ -14,7 +13,6 @@ import {
   Workflow,
 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
-import { AgentWorkspace } from "@/features/agents/AgentWorkspace";
 import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
@@ -60,7 +58,6 @@ const tabs: Array<{
     counter: (snapshot) => snapshot.dirtyCount || null,
   },
   { id: "github", label: "GitHub", icon: <GitPullRequest size={14} /> },
-  { id: "agents", label: "Agents", icon: <Bot size={14} /> },
   { id: "terminal", label: "Terminal", icon: <TerminalSquare size={14} /> },
   { id: "run", label: "Run", icon: <PlayCircle size={14} /> },
 ];
@@ -158,9 +155,6 @@ export function WorkspaceContent({
               onRefreshForRereview={onRefreshForRereview}
             />
           </div>
-        )}
-        {tab === "agents" && (
-          <AgentWorkspace key={workspaceKey(snapshot.root)} workspaceRoot={snapshot.root} enabled={!isPreview && isDesktopRuntime()} />
         )}
         <WorkspaceTerminals
           cwd={snapshot.root}
@@ -294,7 +288,7 @@ function Overview({
           <CapabilityCard
             icon={<CircleDot size={16} />}
             title="Agent harness"
-            description="Codex, DeepSeek, Claude Code and OpenCode adapters are available from Agents when configured on this host."
+            description="Codex, DeepSeek, Claude Code and OpenCode adapters are available from Agents Hub when configured on this host."
             state="available"
           />
         </div>

@@ -5,6 +5,7 @@ import { AgentWorkspace } from "./AgentWorkspace";
 import { useAgentConfiguration } from "@/stores/agentConfiguration";
 import { useAgentSessionStore } from "@/stores/agentSessions";
 import { useAgentTimeline } from "@/stores/agentTimeline";
+import { useAgentPreferences } from "@/stores/agentPreferences";
 
 describe("AgentWorkspace desktop control surface", () => {
   beforeEach(() => {
@@ -12,6 +13,7 @@ describe("AgentWorkspace desktop control surface", () => {
     useAgentConfiguration.setState({ roles: [], skills: [], selections: {} });
     useAgentSessionStore.setState({ bindings: {} });
     useAgentTimeline.setState(useAgentTimeline.getInitialState(), true);
+    useAgentPreferences.setState({ codexExecutablePath: "" });
   });
   afterEach(() => vi.unstubAllGlobals());
   it("offers four harnesses and does not launch native commands in preview", () => {
@@ -21,6 +23,40 @@ describe("AgentWorkspace desktop control surface", () => {
     expect(screen.getByRole("button", { name: /Attach \/ resume/i })).toBeDisabled();
     expect(screen.getByRole("log", { name: /Agent event timeline/i })).toHaveClass("max-h-80", "overflow-y-auto");
     expect(screen.getByText(/Default decision: DENY/)).toBeInTheDocument();
+  });
+  it("pauses journal reads while a retained session panel is hidden", async () => {
+    const invoke = vi.fn(async (command: string) => command === "agent_journal_recover"
+      ? { workspaceId: "test", nativeSessionRegistered: false, retainedEvents: 0, turns: [] }
+      : []);
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    const page = render(<AgentWorkspace workspaceRoot="/hidden-session" enabled visible={false} />);
+    await act(async () => undefined);
+    expect(invoke).not.toHaveBeenCalled();
+    page.rerender(<AgentWorkspace workspaceRoot="/hidden-session" enabled visible />);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_journal_recent", { workspaceRoot: "/hidden-session", limit: 100 }, undefined));
+    page.rerender(<AgentWorkspace workspaceRoot="/hidden-session" enabled visible={false} />);
+    expect(invoke.mock.calls.some(([command]) => command === "agent_session_stop")).toBe(false);
+  });
+  it("does not attach after an availability response returns to a hidden panel", async () => {
+    let resolve!: (value: unknown) => void;
+    const availability = new Promise(result => { resolve = result; });
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "agent_journal_recover") return { workspaceId: "test", nativeSessionRegistered: false, retainedEvents: 0, turns: [] };
+      if (command === "agent_journal_recent") return [];
+      if (command === "agent_harness_capabilities") return availability;
+      if (command === "agent_session_start") return { workspaceRoot: "/pending-session", harness: "codex", threadId: "thread", createdAtMs: 1, updatedAtMs: 1 };
+      if (command === "agent_turn_start") return { threadId: "thread", turnId: "turn" };
+      throw new Error("Unexpected native command: " + command);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    const page = render(<AgentWorkspace workspaceRoot="/pending-session" enabled visible />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Agent message" }), "Keep this draft");
+    await userEvent.click(screen.getByRole("button", { name: "Connect & send" }));
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "agent_harness_capabilities")).toBe(true));
+    page.rerender(<AgentWorkspace workspaceRoot="/pending-session" enabled visible={false} />);
+    await act(async () => resolve({ harness: "codex", available: true, detail: "Available", executablePath: "/bin/codex", features: {} }));
+    expect(invoke.mock.calls.some(([command]) => command === "agent_session_start")).toBe(false);
+    expect(screen.getByRole("textbox", { name: "Agent message" })).toHaveValue("Keep this draft");
   });
   it("saves a generic custom role and opt-in skill", async () => {
     const user = userEvent.setup();
@@ -39,7 +75,7 @@ describe("AgentWorkspace desktop control surface", () => {
   it("connects, pins the inspected Codex launcher, and runs on one click", async () => {
     const user = userEvent.setup();
     const selected = "C:/Users/test/AppData/Roaming/npm/codex.cmd";
-    window.localStorage.setItem("virtuallab-codex-executable-v1", selected);
+    useAgentPreferences.getState().setCodexExecutablePath(selected);
     const invoke = vi.fn(async (command: string, args?: Record<string, any>) => {
       if (command === "agent_journal_recover") return {
         workspaceId: "test", nativeSessionRegistered: false, retainedEvents: 0, turns: [],
@@ -60,7 +96,7 @@ describe("AgentWorkspace desktop control surface", () => {
     vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
     render(<AgentWorkspace workspaceRoot="C:/work/demo" enabled />);
     await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review the current branch");
-    await user.click(screen.getByRole("button", { name: /Connect & run task/i }));
+    await user.click(screen.getByRole("button", { name: /Connect & send/i }));
     await waitFor(() => expect(invoke.mock.calls.some((call) => call[0] === "agent_turn_start")).toBe(true));
     expect(invoke).toHaveBeenCalledWith("agent_harness_capabilities", {
       harness: "codex", executablePath: selected,
@@ -68,7 +104,7 @@ describe("AgentWorkspace desktop control surface", () => {
     expect(invoke).toHaveBeenCalledWith("agent_session_start", {
       request: expect.objectContaining({ executablePath: selected, threadId: null }),
     }, undefined);
-    expect(screen.getByText(/Task running; activity appears below/)).toBeInTheDocument();
+    expect(screen.getByText(/Turn running; activity appears below/)).toBeInTheDocument();
   });
 
   it("stops a saved workspace runtime after the Agents pane is remounted", async () => {
@@ -96,6 +132,45 @@ describe("AgentWorkspace desktop control surface", () => {
     ));
   });
 
+  it("makes resume available when a retained panel observes its native runtime stop", async () => {
+    const root = "/retained-stop";
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "agent_journal_recover") return { workspaceId: "test", nativeSessionRegistered: false, retainedEvents: 0, turns: [] };
+      if (command === "agent_journal_recent") return [];
+      if (command === "agent_harness_capabilities") return { harness: "codex", available: true, executablePath: "/tools/codex", detail: "Available", features: {} };
+      if (command === "agent_session_start") return { workspaceRoot: root, harness: "codex", threadId: "thread", createdAtMs: 1, updatedAtMs: 1 };
+      throw new Error("Unexpected native command: " + command);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    render(<AgentWorkspace workspaceRoot={root} enabled/>);
+    await userEvent.click(screen.getByRole("button", { name: "Attach / resume" }));
+    await screen.findByText("Ready for another message in this workspace.");
+    act(() => useAgentTimeline.getState().append({ workspaceRoot: root, threadId: "thread", eventType: "agent.session_stopped", timestampMs: 1 }));
+    expect(screen.getByRole("button", { name: "Attach / resume" })).toBeEnabled();
+  });
+
+  it("does not stop or forget a replacement binding after a delayed confirmation", async () => {
+    const root = "/replacement-session";
+    useAgentSessionStore.getState().setBinding({ workspaceRoot: root, harness: "codex", threadId: "original", createdAtMs: 1, updatedAtMs: 1 });
+    let approve!: (value: string) => void;
+    const confirmation = new Promise<string>(resolve => { approve = resolve; });
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "agent_journal_recover") return { workspaceId: "test", nativeSessionRegistered: true, retainedEvents: 0, turns: [] };
+      if (command === "agent_journal_recent") return [];
+      if (command === "plugin:dialog|message") return confirmation;
+      if (command === "agent_session_stop") return;
+      throw new Error("Unexpected native command: " + command);
+    });
+    vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+    render(<AgentWorkspace workspaceRoot={root} enabled/>);
+    await userEvent.click(screen.getByRole("button", { name: "Forget saved thread" }));
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "plugin:dialog|message")).toBe(true));
+    act(() => useAgentSessionStore.getState().setBinding({ workspaceRoot: root, harness: "codex", threadId: "replacement", createdAtMs: 2, updatedAtMs: 2 }));
+    await act(async () => approve("Confirm"));
+    expect(invoke.mock.calls.some(([command]) => command === "agent_session_stop")).toBe(false);
+    expect(useAgentSessionStore.getState().bindings[root]?.threadId).toBe("replacement");
+  });
+
   it.each(["completed", "stopped and resumed"])("does not revive a turn %s before its start acknowledgement arrives", async (outcome) => {
     const root = "C:/work/demo";
     let acknowledge!: (value: { threadId: string; turnId: string }) => void;
@@ -119,7 +194,7 @@ describe("AgentWorkspace desktop control surface", () => {
     const user = userEvent.setup();
     render(<AgentWorkspace workspaceRoot={root} enabled />);
     await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review this worktree");
-    await user.click(screen.getByRole("button", { name: /Connect & run task/i }));
+    await user.click(screen.getByRole("button", { name: /Connect & send/i }));
     await waitFor(() => expect(invoke.mock.calls.some((call) => call[0] === "agent_turn_start")).toBe(true));
     act(() => {
       if (outcome === "completed") {
@@ -137,7 +212,7 @@ describe("AgentWorkspace desktop control surface", () => {
 
     expect(useAgentTimeline.getState().activeTurns["c:/work/demo"]).toBeUndefined();
     await user.type(screen.getByRole("textbox", { name: "Agent message" }), "Review another change");
-    expect(screen.getByRole("button", { name: "Send next task" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
   });
 
 

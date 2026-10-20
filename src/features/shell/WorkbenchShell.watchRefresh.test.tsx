@@ -130,9 +130,9 @@ describe("workbench quiet filesystem refresh", () => {
     });
   });
 
-  it("notifies for Agent completion when its retained workspace is hidden by the task view", async () => {
+  it("notifies for Agent completion while repository tools or the Hub task section are visible", async () => {
     useWorkbenchStore.setState({ workspaceStates: {
-      "repo-1": { repositoryId: "repo-1", activeWorktreePath: primary, activeTab: "agents", updatedAt: 1 },
+      "repo-1": { repositoryId: "repo-1", activeWorktreePath: primary, activeTab: "changes", updatedAt: 1 },
     } });
     useTaskNotifications.setState({ notices: [], desktopEnabled: true, desktopError: null });
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -147,13 +147,14 @@ describe("workbench quiet filesystem refresh", () => {
       act(() => callback({ payload }));
     };
 
-    complete("visible-turn");
-    expect(harness.desktopNotify).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "控制中心" }));
+    complete("repository-turn");
+    await waitFor(() => expect(harness.desktopNotify).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Agents Hub" }));
     complete("hidden-turn");
     await waitFor(() => expect(harness.desktopNotify).toHaveBeenCalledWith(
-      "Agent task completed", "Agent turn completed. Open Agents to review.",
+      "Agent task completed", "Agent turn completed. Open Agents Hub to review.",
     ));
+    expect(harness.desktopNotify).toHaveBeenCalledTimes(2);
     expect(useTaskNotifications.getState().notices).toHaveLength(2);
   });
 

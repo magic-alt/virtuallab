@@ -102,7 +102,7 @@ function isWorkspaceReviewState(value: unknown): value is WorkspaceReviewState {
 }
 
 const validWorkspaceTabs: readonly WorkspaceTab[] = [
-  "overview", "changes", "github", "agents", "terminal", "run",
+  "overview", "changes", "github", "terminal", "run",
 ];
 
 function normalizeWorkspaceTab(value: string): WorkspaceTab {
@@ -121,7 +121,8 @@ function sanitizeWorkspaceStates(value: unknown) {
       .filter(([id, item]) => isWorkspaceState(item) && item.repositoryId === id)
       .map(([id, item]) => {
         const state = item as WorkspacePersistedState;
-        // Persist only current workspace tabs; invalid values use Overview.
+        // Agents moved to the application Hub. Retired tabs use Overview
+        // without changing the operator's selected repository or worktree.
         return [id, { ...state, activeTab: normalizeWorkspaceTab(state.activeTab) }];
       }),
   ) as Record<string, WorkspacePersistedState>;
@@ -345,7 +346,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
     {
       name: "virtuallab-workbench-v2",
       storage: createJSONStorage(() => window.localStorage),
-      version: 7,
+      version: 8,
       migrate: (persistedState) => {
         const saved = persistedState as Partial<WorkbenchState>;
         return {

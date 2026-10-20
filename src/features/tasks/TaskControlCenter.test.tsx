@@ -96,7 +96,7 @@ describe('task control center user flows',()=>{
     expect(within(screen.getByRole('article',{name:'任务详情'})).getByText('未运行')).toBeInTheDocument();
     page.rerender(<Harness view="evidence" onOpenWorkspace={onOpen}/>);
     expect(screen.getByRole('heading',{name:'修复解析器'})).toBeInTheDocument();
-    for(const [tab,label,target] of [['概览','打开工作区','overview'],['执行','打开 Agents','agents'],['变更与审查','打开变更','changes'],['报告','打开 Run','run'],['交付','打开 GitHub','github']] as const){
+    for(const [tab,label,target] of [['概览','打开工作区','overview'],['执行','打开终端','terminal'],['变更与审查','打开变更','changes'],['报告','打开 Run','run'],['交付','打开 GitHub','github']] as const){
       await userEvent.click(screen.getByRole('tab',{name:tab}));await userEvent.click(screen.getByRole('button',{name:label}));
       expect(onOpen).toHaveBeenLastCalledWith('/work/task-1',target,'/repo');
     }
@@ -336,8 +336,9 @@ it('retains detail tab and filters across views while Profile failure leaves wor
  const original=native.invoke.getMockImplementation()!;native.invoke.mockImplementation((command,args)=>command==='task_profile_list'?Promise.reject(new Error('corrupt Profile store')):original(command,args));
  const open=vi.fn();const page=render(<Harness onOpenWorkspace={open}/>);await openTask();await userEvent.click(screen.getByRole('tab',{name:'执行'}));
  await userEvent.type(screen.getByLabelText('搜索任务'),'Unicode');page.rerender(<Harness view="settings" onOpenWorkspace={open}/>);expect(await screen.findByText('corrupt Profile store')).toBeVisible();
- expect(screen.getByRole('button',{name:'打开 Provider / Agents 配置'})).toBeEnabled();page.rerender(<Harness view="tasks" onOpenWorkspace={open}/>);
+ expect(screen.getByRole('button',{name:'管理 Provider 与会话'})).toBeEnabled();page.rerender(<Harness view="tasks" onOpenWorkspace={open}/>);
  expect(screen.getByLabelText('搜索任务')).toHaveValue('Unicode');expect(screen.getByRole('tab',{name:'执行'})).toHaveAttribute('aria-selected','true');
- await userEvent.click(screen.getByRole('button',{name:'打开 Agents'}));expect(open).toHaveBeenCalledWith('/work/task-1','agents','/repo');
+ expect(screen.queryByRole('button',{name:'打开 Agents'})).not.toBeInTheDocument();
+ await userEvent.click(screen.getByRole('button',{name:'打开终端'}));expect(open).toHaveBeenCalledWith('/work/task-1','terminal','/repo');
  expect(native.invoke.mock.calls.some(([c])=>['task_start','task_prepare_workspace','task_verify','task_review','task_accept_result'].includes(c))).toBe(false);
 });
