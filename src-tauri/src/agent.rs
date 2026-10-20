@@ -64,7 +64,9 @@ pub struct AgentSessionStartRequest {
     pub(crate) harness: String,
     pub(crate) thread_id: Option<String>,
     pub(crate) executable_path: Option<String>,
-    #[serde(default)]
+    // This authority is set only by the native task controller. Public IPC
+    // cannot turn an ordinary workspace attachment into a task-owned runtime.
+    #[serde(skip)]
     pub(crate) require_fresh: bool,
 }
 
@@ -247,10 +249,17 @@ impl CodexProcess {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AgentRuntimeOwner {
+    Workspace,
+    Task,
+}
+
 struct AgentRuntime {
     process: Arc<CodexProcess>,
     binding: AgentSessionBinding,
     executable_path: String,
+    owner: AgentRuntimeOwner,
 }
 
 #[derive(Clone, Default)]
@@ -381,6 +390,9 @@ impl AgentManager {
         if require_fresh && existing.is_some() {
             return Err("Task execution requires a fresh agent session; stop the attached runtime first.".into());
         }
+        if existing.as_ref().is_some_and(|runtime| runtime.owner == AgentRuntimeOwner::Task) {
+            return Err("This agent runtime belongs to a task; use the task's execution controls.".into());
+        }
         Ok(existing)
     }
 
@@ -398,6 +410,12 @@ impl AgentManager {
     fn stop_runtime(&self, root: &str, expected_thread_id: Option<&str>) -> Result<Option<AgentSessionBinding>, String> {
         let runtime = self.runtimes.lock().map_err(lock_error)?.get(&workspace_key(root)).cloned();
         if let Some(runtime) = runtime {
+            if runtime.owner == AgentRuntimeOwner::Task && expected_thread_id.is_none() {
+                return Err("This agent runtime belongs to a task; cancel the task and wait for observed completion.".into());
+            }
+            if runtime.owner == AgentRuntimeOwner::Workspace && expected_thread_id.is_some() {
+                return Err("Task execution cannot stop an ordinary workspace agent session.".into());
+            }
             if expected_thread_id.is_some_and(|expected| expected != runtime.binding.thread_id) {
                 return Err("Agent thread binding changed; refusing to stop a replacement runtime.".into());
             }
@@ -417,9 +435,11 @@ impl AgentManager {
         Ok(rx)
     }
     pub(crate) fn subscribe_reports(&self, root: &str) -> Result<ReportSubscription, String> { self.reports.subscribe(root) }
+    /// A saved provider thread can be resumed by a later workspace session;
+    /// only the task-owned runtime is evidence that this task is still running.
     pub(crate) fn is_running_bound(&self, root: &str, thread: &str) -> Result<bool, String> {
         let runtime = self.runtimes.lock().map_err(lock_error)?.get(&workspace_key(root)).cloned();
-        match runtime { Some(runtime) if runtime.binding.thread_id == thread => runtime.process.is_running(), _ => Ok(false) }
+        match runtime { Some(runtime) if runtime.owner == AgentRuntimeOwner::Task && runtime.binding.thread_id == thread => runtime.process.is_running(), _ => Ok(false) }
     }
     /// Conservative gate for worktree removal: a registered runtime must be
     /// explicitly stopped before its worktree can be deleted.
@@ -692,6 +712,7 @@ fn start_session(
             process,
             binding: binding.clone(),
             executable_path: selected_executable,
+            owner: if request.require_fresh { AgentRuntimeOwner::Task } else { AgentRuntimeOwner::Workspace },
         }),
     );
     crate::agent_journal::emit_agent_event(&app, Some(&request.harness),
@@ -706,12 +727,31 @@ pub async fn agent_turn_start(
     state: State<'_, AgentManager>,
     request: AgentTurnStartRequest,
 ) -> Result<AgentTurnStartResult, String> {
+    start_turn(app, state, request, AgentRuntimeOwner::Workspace).await
+}
+
+/// Only the task controller can start a turn on its freshly created runtime.
+/// This function is deliberately not exposed as a Tauri command.
+pub(crate) async fn task_agent_turn_start(
+    app: AppHandle,
+    state: State<'_, AgentManager>,
+    request: AgentTurnStartRequest,
+) -> Result<AgentTurnStartResult, String> {
+    start_turn(app, state, request, AgentRuntimeOwner::Task).await
+}
+
+async fn start_turn(
+    app: AppHandle,
+    state: State<'_, AgentManager>,
+    request: AgentTurnStartRequest,
+    owner: AgentRuntimeOwner,
+) -> Result<AgentTurnStartResult, String> {
     let manager = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         if request.text.trim().is_empty() {
             return Err("Agent turn text must not be empty".into());
         }
-        let runtime = runtime(&manager, &request.workspace_root, &request.thread_id)?;
+        let runtime = runtime_for_owner(&manager, &request.workspace_root, &request.thread_id, owner)?;
         let result = runtime.process.request(
             "turn/start",
             json!({
@@ -790,6 +830,8 @@ pub fn agent_session_stop(
     stop_session(app, state, workspace_root, None)
 }
 
+/// Private task cleanup. Success confirms the bound task process was stopped
+/// (or absent) under the lifecycle lock; later attachments cannot undo that stop.
 pub(crate) fn agent_session_stop_bound(
     app: AppHandle,
     state: State<'_, AgentManager>,
@@ -821,6 +863,15 @@ fn runtime(
     root: &str,
     thread_id: &str,
 ) -> Result<Arc<AgentRuntime>, String> {
+    runtime_for_owner(manager, root, thread_id, AgentRuntimeOwner::Workspace)
+}
+
+fn runtime_for_owner(
+    manager: &AgentManager,
+    root: &str,
+    thread_id: &str,
+    owner: AgentRuntimeOwner,
+) -> Result<Arc<AgentRuntime>, String> {
     let runtime = manager
         .runtimes
         .lock()
@@ -828,6 +879,12 @@ fn runtime(
         .get(&workspace_key(root))
         .cloned()
         .ok_or_else(|| "No active agent session is attached to this workspace".to_string())?;
+    if runtime.owner != owner {
+        return Err(match runtime.owner {
+            AgentRuntimeOwner::Task => "This agent runtime belongs to a task; use the task's execution controls.",
+            AgentRuntimeOwner::Workspace => "Task execution cannot control an ordinary workspace agent session.",
+        }.into());
+    }
     if runtime.binding.thread_id != thread_id {
         return Err("Requested thread does not match the workspace binding".into());
     }
@@ -1360,9 +1417,23 @@ mod tests {
     }
 
     fn runtime_fixture(label: &str) -> (std::path::PathBuf, WorkspaceLifecycle, AgentManager, Arc<AgentRuntime>) {
+        owned_runtime_fixture(label, AgentRuntimeOwner::Workspace)
+    }
+
+    fn task_runtime_fixture(label: &str) -> (std::path::PathBuf, WorkspaceLifecycle, AgentManager, Arc<AgentRuntime>) {
+        owned_runtime_fixture(label, AgentRuntimeOwner::Task)
+    }
+
+    fn owned_runtime_fixture(label: &str, owner: AgentRuntimeOwner) -> (std::path::PathBuf, WorkspaceLifecycle, AgentManager, Arc<AgentRuntime>) {
         let root = std::env::temp_dir().join(format!("virtuallab-agent-{label}-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&root).unwrap();
         let lifecycle = WorkspaceLifecycle::default();
+        let manager = AgentManager::default();
+        let runtime = insert_runtime_fixture(&root, &lifecycle, &manager, owner);
+        (root, lifecycle, manager, runtime)
+    }
+
+    fn insert_runtime_fixture(root: &std::path::Path, lifecycle: &WorkspaceLifecycle, manager: &AgentManager, owner: AgentRuntimeOwner) -> Arc<AgentRuntime> {
         let claim = lifecycle.reserve(root.to_str().unwrap(), "agent").unwrap();
         let mut command = crate::execution::process_command("node");
         command.args(["-e", "setInterval(()=>{},1000)"]).stdin(Stdio::piped());
@@ -1372,12 +1443,11 @@ mod tests {
             stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
             child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), next_id: AtomicU64::new(1),
         });
-        let runtime = Arc::new(AgentRuntime { process, executable_path: "codex".into(),
+        let runtime = Arc::new(AgentRuntime { process, executable_path: "codex".into(), owner,
             binding: AgentSessionBinding { workspace_root: root.to_string_lossy().into_owned(), harness: "codex".into(),
                 thread_id: "current-thread".into(), created_at_ms: now_ms(), updated_at_ms: now_ms() } });
-        let manager = AgentManager::default();
         manager.runtimes.lock().unwrap().insert(workspace_key(root.to_str().unwrap()), runtime.clone());
-        (root, lifecycle, manager, runtime)
+        runtime
     }
 
     // Real app-server fixture: complete native initialization/thread RPCs, then
@@ -1449,6 +1519,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
                 process,
                 binding,
                 executable_path: "node fixture".into(),
+                owner: AgentRuntimeOwner::Task,
             });
             let manager = AgentManager::default();
             manager
@@ -1533,7 +1604,6 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
             move || {
                 let _lifecycle = manager.lifecycle.lock().unwrap();
                 manager.stop_runtime(&root, Some(&thread_id)).is_ok()
-                    && manager.owns_workspace(&root) == Ok(false)
             },
             Duration::from_secs(30),
         )
@@ -1602,11 +1672,57 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
     }
 
     #[test]
-    fn legacy_session_start_defaults_to_allowing_reattach() {
+    fn task_runtime_authority_cannot_be_requested_through_public_json() {
         let request: AgentSessionStartRequest = serde_json::from_value(json!({"workspaceRoot":"/workspace", "harness":"codex"})).unwrap();
         assert!(!request.require_fresh);
         let request: AgentSessionStartRequest = serde_json::from_value(json!({"workspaceRoot":"/workspace", "harness":"codex", "requireFresh":true})).unwrap();
-        assert!(request.require_fresh);
+        assert!(!request.require_fresh, "only the native task controller may request task runtime ownership");
+    }
+
+    #[test]
+    fn task_runtime_rejects_workspace_reattach_without_releasing_ownership() {
+        let (root, lifecycle, manager, runtime) = task_runtime_fixture("task-reattach");
+        let _serialized = manager.lifecycle.lock().unwrap();
+        let path = root.to_str().unwrap();
+        let rejected = manager.existing_for_start(path, false).is_err();
+        let retained = runtime.process.is_running().unwrap() && lifecycle.begin_removal(path).is_err();
+        manager.stop_runtime(path, Some("current-thread")).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(rejected, "workspace attach must not adopt the task controller's runtime");
+        assert!(retained, "rejected attach must preserve the task process and workspace claim");
+    }
+
+    #[test]
+    fn task_runtime_rejects_workspace_turn_controls_without_signalling() {
+        let (root, lifecycle, manager, task_runtime) = task_runtime_fixture("task-control");
+        let _serialized = manager.lifecycle.lock().unwrap();
+        let path = root.to_str().unwrap();
+        // Public start, steer and interrupt all require workspace ownership.
+        let rejected = runtime(&manager, path, "current-thread").is_err();
+        let task_access = runtime_for_owner(&manager, path, "current-thread", AgentRuntimeOwner::Task)
+            .is_ok_and(|runtime| Arc::ptr_eq(&runtime, &task_runtime));
+        let mismatched_task_thread = runtime_for_owner(&manager, path, "previous-thread", AgentRuntimeOwner::Task).is_err();
+        let retained = task_runtime.process.is_running().unwrap() && lifecycle.begin_removal(path).is_err();
+        manager.stop_runtime(path, Some("current-thread")).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(rejected, "knowing the task thread must not grant workspace turn control");
+        assert!(task_access && mismatched_task_thread, "the native task path must preserve the exact thread check");
+        assert!(retained, "rejected turn control must leave the task process and claim intact");
+    }
+
+    #[test]
+    fn task_runtime_rejects_workspace_stop_and_keeps_exact_bound_cancellation() {
+        let (root, lifecycle, manager, runtime) = task_runtime_fixture("task-stop");
+        let _serialized = manager.lifecycle.lock().unwrap();
+        let path = root.to_str().unwrap();
+        let rejected = manager.stop_runtime(path, None).is_err();
+        let retained = runtime.process.is_running().unwrap() && lifecycle.begin_removal(path).is_err();
+        let stopped = manager.stop_runtime(path, Some("current-thread")).unwrap();
+        let released = !runtime.process.is_running().unwrap() && lifecycle.reserve(path, "candidate sealing").is_ok();
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(rejected, "workspace stop must not bypass task cancellation persistence");
+        assert!(retained, "rejected stop must preserve task ownership");
+        assert!(stopped.is_some() && released, "the task controller's exact stop must still release the observed process and claim");
     }
 
     #[test]
@@ -1616,6 +1732,8 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         let path = root.to_str().unwrap();
         assert!(manager.existing_for_start(path, true).is_err());
         assert!(manager.existing_for_start(path, false).unwrap().is_some());
+        assert!(super::runtime(&manager, path, "current-thread").is_ok());
+        assert!(runtime_for_owner(&manager, path, "current-thread", AgentRuntimeOwner::Task).is_err());
         assert!(runtime.process.is_running().unwrap());
         assert!(lifecycle.begin_removal(path).is_err());
         manager.stop_runtime(path, None).unwrap();
@@ -1624,7 +1742,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
 
     #[test]
     fn bound_stop_rejects_changed_thread_without_signalling_the_current_process() {
-        let (root, lifecycle, manager, runtime) = runtime_fixture("bound-mismatch");
+        let (root, lifecycle, manager, runtime) = task_runtime_fixture("bound-mismatch");
         let _serialized = manager.lifecycle.lock().unwrap();
         let path = root.to_str().unwrap();
         assert!(manager.stop_runtime(path, Some("previous-thread")).is_err());
@@ -1637,7 +1755,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
 
     #[test]
     fn bound_stop_removes_exact_runtime_and_absent_runtime_is_successful() {
-        let (root, lifecycle, manager, runtime) = runtime_fixture("bound-match");
+        let (root, lifecycle, manager, runtime) = task_runtime_fixture("bound-match");
         let _serialized = manager.lifecycle.lock().unwrap();
         let path = root.to_str().unwrap();
         assert_eq!(manager.stop_runtime(path, Some("current-thread")).unwrap().unwrap().thread_id, "current-thread");
@@ -1646,6 +1764,44 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         assert!(manager.stop_runtime(path, Some("current-thread")).unwrap().is_none());
         assert!(manager.existing_for_start(path, true).unwrap().is_none());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn task_bound_stop_does_not_take_over_same_thread_workspace_replacement() {
+        let (root, lifecycle, manager, task_runtime) = task_runtime_fixture("stop-replacement");
+        let path = root.to_str().unwrap();
+        let task_was_running = manager.is_running_bound(path, "current-thread").unwrap();
+        let stopped = {
+            let _serialized = manager.lifecycle.lock().unwrap();
+            manager.stop_runtime(path, Some("current-thread")).unwrap()
+        };
+        // A manual resume can acquire this root as soon as the confirmed task
+        // stop returns, including resuming the same provider thread identity.
+        let replacement = {
+            let _serialized = manager.lifecycle.lock().unwrap();
+            insert_runtime_fixture(&root, &lifecycle, &manager, AgentRuntimeOwner::Workspace)
+        };
+        let replacement_reported_as_task = manager.is_running_bound(path, "current-thread").unwrap();
+        let stale_stop = {
+            let _serialized = manager.lifecycle.lock().unwrap();
+            manager.stop_runtime(path, Some("current-thread"))
+        };
+        let task_stopped = stopped.is_some() && !task_runtime.process.is_running().unwrap();
+        let replacement_retained = replacement.process.is_running().unwrap()
+            && lifecycle.begin_removal(path).is_err()
+            && manager.runtimes.lock().unwrap().get(&workspace_key(path))
+                .is_some_and(|runtime| Arc::ptr_eq(runtime, &replacement));
+        // Clean up before assertions even when a stale stop incorrectly killed
+        // the replacement, so the failing regression leaves no process/claim.
+        {
+            let _serialized = manager.lifecycle.lock().unwrap();
+            manager.stop_runtime(path, None).unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(task_was_running && task_stopped, "task liveness and the original bound stop must observe their own process");
+        assert!(!replacement_reported_as_task, "task liveness must not adopt a workspace-owned replacement with the same thread ID");
+        assert!(stale_stop.is_err(), "task cleanup must reject a workspace-owned replacement even with the same thread ID");
+        assert!(replacement_retained, "stale task cleanup must preserve the replacement process, runtime and workspace claim");
     }
 
     #[test]
