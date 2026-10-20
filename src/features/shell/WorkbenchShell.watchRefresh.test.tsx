@@ -149,7 +149,7 @@ describe("workbench quiet filesystem refresh", () => {
 
     complete("visible-turn");
     expect(harness.desktopNotify).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "任务" }));
+    await user.click(screen.getByRole("button", { name: "控制中心" }));
     complete("hidden-turn");
     await waitFor(() => expect(harness.desktopNotify).toHaveBeenCalledWith(
       "Agent task completed", "Agent turn completed. Open Agents to review.",
