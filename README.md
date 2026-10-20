@@ -6,6 +6,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 ## Features
 
+- **Prompt-to-report control center** — describe a task and choose **开始任务** to create an isolated worktree, start the installed Codex, follow its live output, and read the persisted result and problems. Task lists are part of the control center; **报告** includes execution results even without a verification Profile. Failed setup preserves the task for recovery, and repeated launch requests do not create duplicate worktrees.
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
 - **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; preview untracked text files and expand untracked directories without staging; save local line comments and track review state.
@@ -16,7 +17,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 - **Verification infrastructure** — run supported process gates and record workspace-local evidence with Git revision metadata and SHA-256 artifact hashes.
 - **Offline illustrated Guide** — open **Help → 使用文档** from the application menu bar (not a workspace tab), search Chinese how-to articles, see bundled diagrams, follow end-to-end npm/Qt/Keil/GitHub examples, and copy commands without a web connection or repository.
 
-Local repository inspection and review work without GitHub authentication or an agent provider. GitHub and agent features require their respective CLI tools, configuration, and credentials. The agent timeline is session-local; persistent searchable history is not provided. Hardware execution is not available through a bundled provider.
+Local repository inspection and review work without GitHub authentication or an agent provider. GitHub and agent features require their respective CLI tools, configuration, and credentials. The general agent timeline is session-local; control-center tasks additionally retain bounded execution reports in local application data. Hardware execution is not available through a bundled provider.
 
 ## Requirements
 
@@ -63,6 +64,16 @@ The preview uses representative data. Native folder selection, Git operations, t
 ## Using VirtualLab
 
 **New to VirtualLab?** Choose **Help → 使用文档** from the app menu bar. The in-app help center works before any repository is imported and includes searchable workflow tutorials, local diagrams and executable examples. The companion [Chinese user guide](docs/USER_GUIDE.md) is also available on GitHub.
+
+For automatic task execution, add a local repository, return to **控制中心**, enter
+the work in **工作任务**, and choose **开始任务**. VirtualLab prepares the task worktree
+at the displayed HEAD and launches Codex with your goal. The execution panel follows
+the same supervised process and opens the report when the task finishes. Without
+local auto-commit, edits remain in the task worktree; without a verification Profile,
+execution completion is explicitly unverified. See the [control center guide](docs/TASK_FIRST_CONTROL_CENTER.md)
+for optional verification, report history, recovery, and manual review.
+
+Direct workspace tools remain available:
 
 1. Select **Add Repository** and choose a local Git repository.
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
