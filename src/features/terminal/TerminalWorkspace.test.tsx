@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
-import { setTerminalFontSize } from "./terminalAppearance";
+import { setTerminalFontSize, setTerminalScrollback, setTerminalCursorBlink } from "./terminalAppearance";
 import { useTaskNotifications } from "@/stores/taskNotifications";
 import { MONITORED_CODEX_COMMAND } from "@/lib/terminalAlerts";
 
@@ -26,7 +26,7 @@ const events = vi.hoisted(() => ({
 
 const xterm = vi.hoisted(() => ({
   instances: [] as Array<{
-    options: { fontSize: number };
+    options: { fontSize: number; scrollback: number; cursorBlink: boolean };
     write: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
@@ -56,7 +56,7 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
-    options: { fontSize: number };
+    options: { fontSize: number; scrollback: number; cursorBlink: boolean };
     cols = 120;
     rows = 32;
     write = vi.fn();
@@ -69,8 +69,8 @@ vi.mock("@xterm/xterm", () => ({
       this.onInput = callback;
       return { dispose: vi.fn() };
     }
-    constructor(options: { fontSize: number }) {
-      this.options = { fontSize: options.fontSize };
+    constructor(options: { fontSize: number; scrollback: number; cursorBlink: boolean }) {
+      this.options = { fontSize: options.fontSize, scrollback: options.scrollback, cursorBlink: options.cursorBlink };
       xterm.instances.push(this);
     }
   },
@@ -97,6 +97,26 @@ async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("TerminalWorkspace native PTY lifecycle", () => {
+  it('updates scrollback and cursor preferences on hidden buffers without restarting or focusing PTYs', async () => {
+    const user = userEvent.setup();
+    const view = render(<TerminalWorkspace cwd="D:/workspace" enabled/>);
+    await startTerminal(user);
+    const terminal = xterm.instances[0];
+    expect(terminal.options).toMatchObject({scrollback:8000,cursorBlink:true});
+    view.rerender(<TerminalWorkspace cwd="D:/workspace" enabled visible={false}/>);
+    const resizes = backend.terminalResize.mock.calls.length;
+    const focuses = terminal.focus.mock.calls.length;
+    act(() => {setTerminalScrollback(32000);setTerminalCursorBlink(false);});
+    await waitFor(() => expect(terminal.options).toMatchObject({scrollback:32000,cursorBlink:false}));
+    expect(backend.terminalSpawn).toHaveBeenCalledTimes(1);
+    expect(backend.terminalStop).not.toHaveBeenCalled();
+    expect(backend.terminalResize).toHaveBeenCalledTimes(resizes);
+    expect(terminal.focus).toHaveBeenCalledTimes(focuses);
+    expect(terminal.dispose).not.toHaveBeenCalled();
+    view.rerender(<TerminalWorkspace cwd="D:/workspace" enabled/>);
+    await user.click(screen.getByRole('button',{name:/new terminal/i}));
+    await waitFor(() => expect(xterm.instances[1]?.options).toMatchObject({scrollback:32000,cursorBlink:false}));
+  });
   it("launches monitored Codex with scoped CLI flags and alerts on completed turns in a hidden terminal", async () => {
     const user = userEvent.setup();
     render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} repositoryId="repo-owner" />);

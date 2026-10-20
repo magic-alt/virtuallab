@@ -1,0 +1,19 @@
+.settings-view {width:100%;max-width:1000px;min-width:0;height:100%;margin:0 auto;padding:clamp(18px,3vw,36px);overflow-y:auto;color:#e4e8ed;font:14px/1.6 system-ui,sans-serif;}
+.settings-view h1 {margin:0;font-size:26px;font-weight:650;}
+.settings-view h2 {margin:0 0 8px;font-size:19px;font-weight:650;}
+.settings-view h3,.settings-view label {margin:0;font-size:14px;font-weight:600;}
+.settings-view p {margin:6px 0;color:#b3bcc8;overflow-wrap:anywhere;}
+.settings-view section {margin:20px 0;padding:22px;border:1px solid #39414b;border-radius:10px;background:#191c22;}
+.settings-view .settings-row {display:flex;justify-content:space-between;align-items:center;gap:24px;padding:18px 0;border-bottom:1px solid #303740;}
+.settings-view .settings-row:last-child {border-bottom:0;padding-bottom:0;}
+.settings-view .settings-row>div {max-width:620px;min-width:0;}
+.settings-view .settings-row p {font-size:12px;}
+.settings-view :is(button,select) {font:inherit;flex-shrink:0;border:1px solid #46515e;border-radius:7px;padding:8px 12px;color:#e4e8ed;background:#242b34;}
+.settings-view select {width:160px;max-width:100%;}
+.settings-view button {cursor:pointer;}
+.settings-view button:hover {border-color:#e7a35a;}
+.settings-view :is(button,select):focus-visible {outline:2px solid #e7a35a;outline-offset:3px;}
+.settings-view .settings-switch {min-width:86px;}
+.settings-view .settings-switch[aria-checked=true] {background:#5a3e26;border-color:#b88655;}
+.settings-view .settings-error {color:#f0c48a;}
+@media(max-width:620px) {.settings-view section {padding:16px;}.settings-view .settings-row {align-items:flex-start;flex-direction:column;gap:10px;}}

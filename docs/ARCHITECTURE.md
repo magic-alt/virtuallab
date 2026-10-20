@@ -88,8 +88,8 @@ they neither steal focus nor block work. Native notification errors fall back
 to the in-app inbox. Routing to an inbox item only navigates to a registered
 repository/worktree and never creates or starts work.
 
-The repository host stays mounted while the operator visits Agents Hub, Reports
-or Settings. Its application visibility is passed to retained terminal
+The repository host stays mounted while the operator visits Agents Hub or
+Settings. Its application visibility is passed to retained terminal
 panes so hidden panes stop visible-only resize/focus behavior without losing
 their sessions. Agent notification suppression requires the matching Hub session panel to be
 actually visible and the document focused; hidden sections and the Help overlay
@@ -105,10 +105,24 @@ mounted inside repository tools. `src/stores/agentsHub.ts` contains transient
 navigation/visibility only. The application-level Task and Agent observers stay
 in the shell. The old `TaskControlCenter` export delegates to this same component.
 
+Application navigation has three destinations: **Agents Hub**, **工程仓库** and
+**设置**. The Hub contains **Agent 任务**, **工作区会话** and **执行配置**;
+reports belong to individual Tasks rather than a separate application page.
+Global Settings owns practical IDE, notification and terminal preferences.
+Execution configuration owns the shared Codex executable and Verification Profile
+library, with explicit actions to open Provider sessions or repository Run
+configuration. Configuration navigation itself never starts a process.
+
 The default **Agent 任务** section retains native Task/Attempt/report storage,
 queueing, isolated worktree preparation, Codex execution and separate
-verification/review/acceptance. **工作区会话** retains the four existing manual
-harnesses, saved threads, roles/skills, live events and redacted recovery journal.
+verification/review/acceptance. Compact rows show task identity, time and goal
+context so repeated titles remain distinguishable; the selected detail owns the
+full execution/check/readiness/acceptance summary. Execution observation is
+independent of delivery-readiness loading: a slow readiness source cannot prevent
+listing/selecting Tasks or reading current execution output. Unknown readiness
+continues to block actions that require qualified native readiness.
+**工作区会话** retains the four existing manual harnesses, saved threads,
+roles/skills, live events and redacted recovery journal.
 A session binding or turn-completed event never becomes a Task or proves its
 verification. Automatic Tasks remain Codex-only; their two-slot/32-entry queue
 limit does not describe manual session capacity.
@@ -208,7 +222,7 @@ React / TypeScript UI
   ├─ features/sidebar
   ├─ features/workspace
   ├─ Monaco review + GitHub panel
-  ├─ Agents Hub: managed Tasks + workspace sessions, roles, skills and recovery
+  ├─ Agents Hub: managed Tasks/reports + workspace sessions + execution configuration
   ├─ stores / typed adapters
   └─ typed backend client
           │ Tauri invoke/events
@@ -318,11 +332,19 @@ retains ownership until cleanup finishes. Prepared work without a pending attemp
 does not keep an indefinite lease. These are process-local lifecycle guarantees,
 not protection against external filesystem or Git commands.
 
-The task list is integrated into the control center. The old `evidence` route and
-`证据` detail key remain internal aliases with the visible label **报告**. A mounted
-composer retains its draft across navigation but only inspects its baseline/Profile
-library while visible. The persistent shell observer catches up active task states
-every five seconds if events are lost. Completion follows only the selected active
+The task list is integrated into the Hub with a bounded independently scrolling
+collection and a full-width detail layout. The old `evidence` view is a compatibility
+alias into Hub Tasks and their report; it does not create a standalone Reports
+page. The `tasks` view alias and all existing detail keys remain valid, including
+`证据` with the visible label **报告**. Task detail exposes three primary tabs:
+**概览 / 执行 / 报告**. Report contains secondary **结果报告 / 变更与审查 / 交付**
+controls; existing internal review/delivery keys resolve into that report surface.
+Attempt history and check/acceptance detail are collapsed while current failures
+remain prominent. Native verification remains in the Task's report, while the
+exploratory legacy Run context appears only once under secondary report controls. The collapsed Hub history retains failed and superseded
+verification Runs. A mounted composer retains its draft across navigation but
+only inspects its baseline/Profile library while visible. The persistent shell
+observer catches up active task states every five seconds if events are lost. Completion follows only the selected active
 attempt on its Execution tab; explicit navigation and workspace hosts remain intact.
 Failed implementation guidance prioritizes the current failure over later delivery
 blockers such as an absent Profile. A previous implementation report can accompany

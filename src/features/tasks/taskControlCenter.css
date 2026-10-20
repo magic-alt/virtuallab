@@ -53,3 +53,57 @@
   .task-console-viewport { padding-inline:12px; }
   .task-report-summary { padding-inline:12px; }
 }
+
+/* Hub fills its route; task identity and current work take priority over history. */
+.task-center.agents-hub { width:100%; max-width:none; margin:0; padding:24px; box-sizing:border-box; }
+.agents-hub .task-control-layout { grid-template-columns:minmax(260px,330px) minmax(0,1fr); gap:20px; }
+.agents-hub-tabs { margin:16px 0; }
+.task-center .task-primary-action { border-color:#bd874c; background:#654426; color:#fff1df; }
+.task-center .task-collection-heading { justify-content:space-between; align-items:center; margin-bottom:12px; }
+.task-center .task-collection-heading h2 { margin:0; font-size:16px; }
+.task-collection-heading > span { color:var(--task-muted); font-size:12px; }
+.task-activity-filters { display:flex; flex-wrap:wrap; gap:4px; }
+.task-center .task-activity-filters button { font-size:12px; padding:5px 8px; background:transparent; }
+.task-center .task-activity-filters button[aria-pressed=true] { background:#e7a35a18; border-color:#b38553; color:#f1c99e; }
+.agents-hub .task-collection { padding:16px; }
+.agents-hub .task-collection .task-list { max-height:calc(100dvh - 380px); min-height:120px; padding-right:4px; }
+.agents-hub .task-collection .task-list-item { border:1px solid #39414b; border-radius:8px; padding:12px; }
+.agents-hub .task-collection .task-list-item[data-selected=true] { border-color:#bc854b; background:#e7a35a0b; box-shadow:inset 3px 0 #e7a35a; }
+.task-list-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px 10px; color:var(--task-muted); font-size:11px; min-width:0; }
+.task-list-meta > span, .task-list-meta code { overflow-wrap:anywhere; }
+.task-list-meta + .task-list-meta { margin-top:5px; }
+.task-center .task-list-item .task-title-button { font-size:14px; line-height:1.5; color:#eee8df; margin-top:6px; overflow-wrap:anywhere; }
+.task-center .task-list-item .task-goal-preview { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; color:#aab4c1; font-size:12px; line-height:1.5; margin:6px 0 10px; }
+.task-execution-badge { display:inline-flex; align-items:center; border-radius:5px; padding:2px 7px; color:#b7c1ce; background:#ffffff0a; font-size:11px; font-weight:600; }
+.task-execution-badge[data-state=running],.task-execution-badge[data-state=queued] { color:#8fc9f4; background:#3a90ce1b; }
+.task-execution-badge[data-state=failed],.task-execution-badge[data-state=interrupted] { color:#f3aaa0; background:#ce64591a; }
+.task-execution-badge[data-state=succeeded] { color:#aad7b7; background:#5398651b; }
+.task-execution-badge[data-state=stopping] { color:#e8bb79; background:#c791471b; }
+.task-selected-label { color:#edbb86; font-size:10px; }
+.task-center .task-list-failure { font-size:12px; line-height:1.5; color:#edaaa3; margin:9px 0 0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.task-detail-identity { justify-content:space-between; margin-bottom:10px; }
+.task-detail-identity code { font-size:11px; color:var(--task-muted); overflow-wrap:anywhere; }
+.task-center .task-qualification { border-top:1px solid #ffffff0b; margin:12px 0; padding-top:8px; }
+.task-center .task-qualification summary { color:var(--task-muted); font-size:12px; }
+.task-report-actions { display:flex; flex-wrap:wrap; gap:6px; padding:0 0 14px; }
+.task-center .task-report-actions button { font-size:12px; }
+.task-center .task-report-actions button[aria-pressed=true] { color:#f1c99e; border-color:#916d46; }
+.task-attempt-history { margin:16px 0 0; border-top:1px solid var(--task-border); padding-top:10px; }
+.task-center .task-attempt-history > summary { font-size:12px; }
+.task-selection-notice { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:10px 14px; margin-top:16px; font-size:12px; border:1px solid #66513b; border-radius:8px; color:#e2bc91; }
+.task-center .task-selection-notice button { font-size:11px; padding:4px 8px; }
+.agent-execution-settings { max-width:1040px; }
+@media(max-width:1050px) {
+  .task-center.agents-hub { padding:18px; }
+  .agents-hub .task-control-layout { grid-template-columns:minmax(240px,280px) minmax(0,1fr); gap:14px; }
+}
+@media(max-width:900px) {
+  .agents-hub .task-control-layout { grid-template-columns:minmax(0,1fr); gap:0; }
+  .agents-hub .task-collection .task-list { max-height:300px; }
+  .task-center .task-collection .task-filters > label:not(.task-checkbox) { flex:1 1 150px; }
+}
+@media(max-width:600px) {
+  .task-center.agents-hub { padding:12px; }
+  .task-center .task-center-heading h1 { font-size:22px; }
+  .task-center .task-center-heading > div > p { font-size:12px; }
+}

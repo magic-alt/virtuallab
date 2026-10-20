@@ -6,8 +6,8 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 ## Features
 
-- **Unified Agents Hub** — one place for isolated Codex tasks, durable execution reports and existing-workspace agent sessions. Repository tabs stay focused on Overview, Changes, GitHub, Terminal and Run. Task-owned agents are controlled through their Task; saved sessions retain provider, role, skill and recovery controls.
-- **Prompt-to-report control center** — describe a task and choose **开始任务** to create an isolated worktree, start the installed Codex, follow its live output, and read the persisted result and problems. Task lists are part of the control center; **报告** includes execution results even without a verification Profile. Failed setup preserves the task for recovery, and repeated launch requests do not create duplicate worktrees.
+- **Unified Agents Hub** — one place for isolated Codex tasks, durable execution reports, existing-workspace agent sessions and execution configuration. The application navigation is **Agents Hub / 工程仓库 / 设置**; Hub sections are **Agent 任务 / 工作区会话 / 执行配置**. Repository tabs stay focused on Overview, Changes, GitHub, Terminal and Run. Task-owned agents are controlled through their Task; saved sessions retain provider, role, skill and recovery controls.
+- **Prompt-to-report control center** — describe a task and choose **开始任务** to create an isolated worktree, start the installed Codex, follow its live output, and read the persisted result and problems. Compact task rows distinguish repeated titles by task identity, time and goal. Each task owns its **报告**, including execution results without a verification Profile; there is no separate Reports page. Failed setup preserves the task for recovery, and repeated launch requests do not create duplicate worktrees.
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
 - **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; preview untracked text files and expand untracked directories without staging; save local line comments and track review state.
@@ -73,6 +73,19 @@ the same supervised process and opens the report when the task finishes. Without
 local auto-commit, edits remain in the task worktree; without a verification Profile,
 execution completion is explicitly unverified. See the [control center guide](docs/TASK_FIRST_CONTROL_CENTER.md)
 for optional verification, report history, recovery, and manual review.
+
+Use **Agents Hub → 执行配置** for the shared Codex executable and Verification
+Profile library, with explicit links to Provider sessions and repository Run
+configuration. Changes affect new requests; accepted tasks keep their frozen
+execution inputs. Use global **设置** for the preferred IDE, notification and
+terminal preferences. Opening configuration or selecting a task does not start work.
+
+The task list shows task identity and update time alongside the goal, so tasks
+with the same title can be distinguished. Select a task to follow execution or
+read its report; older verification Runs remain available in the Hub's collapsed
+history. Execution state and output remain usable while delivery readiness is
+still loading. A completed Agent turn alone does not establish verification,
+review or human acceptance.
 
 Direct workspace tools remain available:
 

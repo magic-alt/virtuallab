@@ -27,6 +27,8 @@ export function useTaskAttemptReport(taskId: string, attempt?: TaskAttempt): Tas
     let requestSequence = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let unlisten: (() => void) | undefined;
+    let reading = false;
+    let readAgain = false;
     const inactive = async () => undefined;
     refreshRef.current = inactive;
     if (!attemptId) {
@@ -37,9 +39,17 @@ export function useTaskAttemptReport(taskId: string, attempt?: TaskAttempt): Tas
       setSnapshot({ ...empty(key), error: '执行报告需要桌面运行时。' });
       return;
     }
+    const active = ['queued', 'running', 'stopping'].includes(attempt?.state ?? '');
     setSnapshot(previous => previous.key === key ? { ...previous, loading: true, error: null, observerError: null } : empty(key, true));
+    const schedule = () => {
+      if (!disposed && timer === undefined) timer = setTimeout(() => { timer = undefined; void read(); }, 80);
+    };
     const read = async () => {
       if (disposed) return;
+      // Notifications and catch-up polling share one reader. An event arriving
+      // during native I/O requests a follow-up without starving that snapshot.
+      if (reading) { readAgain = true; return; }
+      reading = true;
       const sequence = ++requestSequence;
       if (timer !== undefined) { clearTimeout(timer); timer = undefined; }
       setSnapshot(previous => ({ ...(previous.key === key ? previous : empty(key)), loading: true, error: null }));
@@ -55,24 +65,34 @@ export function useTaskAttemptReport(taskId: string, attempt?: TaskAttempt): Tas
         if (!disposed && sequence === requestSequence) {
           setSnapshot(previous => ({ ...previous, key, loading: false, error: errorText(error) }));
         }
+      } finally {
+        reading = false;
+        if (readAgain) { readAgain = false; schedule(); }
       }
     };
     refreshRef.current = read;
     void read();
     void subscribeTaskReportEvents(event => {
       if (disposed || event.taskId !== taskId || event.attemptId !== attemptId) return;
-      ++requestSequence;
-      if (timer === undefined) timer = setTimeout(() => { timer = undefined; void read(); }, 80);
+      schedule();
     }).then(stop => {
       if (disposed) stop();
       else { unlisten = stop; void read(); }
     }).catch(error => {
-      if (!disposed) setSnapshot(previous => ({ ...previous, observerError: `实时输出暂不可用：${errorText(error)}。可手动刷新。` }));
+      if (!disposed) setSnapshot(previous => ({ ...previous, observerError: `实时输出暂不可用：${errorText(error)}。${active ? '正在定时同步执行输出。' : '可手动刷新。'}` }));
     });
+    const catchUp = () => { void read(); };
+    const visible = () => { if (document.visibilityState === 'visible') catchUp(); };
+    const pollTimer = active ? setInterval(catchUp, 5000) : undefined;
+    window.addEventListener('focus', catchUp);
+    document.addEventListener('visibilitychange', visible);
     return () => {
       disposed = true;
       ++requestSequence;
       if (timer !== undefined) clearTimeout(timer);
+      if (pollTimer !== undefined) clearInterval(pollTimer);
+      window.removeEventListener('focus', catchUp);
+      document.removeEventListener('visibilitychange', visible);
       unlisten?.();
       if (refreshRef.current === read) refreshRef.current = inactive;
     };

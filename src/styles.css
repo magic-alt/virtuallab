@@ -322,18 +322,19 @@ select.field option {
 /* Hiding application routes must not unmount the workspace-owned PTY host. */
 .vl-workspace-host:not([hidden]) { display: flex; }
 [hidden] { display: none !important; }
-.vl-app-navigation { width: clamp(220px,20vw,286px); border-color: var(--vl-border); background: var(--vl-surface); }
+.vl-app-navigation { width: 176px; border-color: var(--vl-border); background: var(--vl-surface); }
+.vl-app-navigation[data-view="repositories"] { width: clamp(220px,20vw,286px); }
 .vl-app-navigation .vl-sidebar { width: 100%; height: 100%; border-right: 0; }
 .vl-app-route { color: var(--vl-muted); }
 .vl-app-route:hover { background: var(--vl-raised); color: var(--vl-text); }
 .vl-app-route[aria-current="page"] { background: #f59a4517; color: #f8b16e; box-shadow: inset 3px 0 var(--vl-accent); }
 @media (max-width: 1023px) {
   .vl-app-navigation { width: 124px; }
-  .vl-app-navigation:has(.vl-app-route[aria-current="page"]:nth-child(3)) { width: 220px; }
+  .vl-app-navigation[data-view="repositories"] { width: 220px; }
   .vl-app-route { padding-inline: 8px; }
 }
 @media (max-width: 700px) {
   .vl-app-navigation { width: 92px; }
-  .vl-app-navigation:has(.vl-app-route[aria-current="page"]:nth-child(3)) { width: 176px; }
+  .vl-app-navigation[data-view="repositories"] { width: 176px; }
   .vl-app-navigation .vl-sidebar { min-width: 0; }
 }

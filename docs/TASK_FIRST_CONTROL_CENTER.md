@@ -1,13 +1,14 @@
-# Agents Hub: Tasks and workspace sessions
+# Agents Hub: Tasks, workspace sessions and execution configuration
 
 Source implementation added 2026-10-17. This document describes available local software surfaces, not a release qualification or authenticated-provider acceptance record.
 
-## One Hub, two execution contexts
+## One Hub, two execution contexts and shared configuration
 
 | Hub section | Use it for | Execution and records |
 | --- | --- | --- |
 | Agent 任务 | A goal that needs an isolated worktree, queue, retries and reports | Native Codex Task/Attempt lifecycle; durable output, independent verification and acceptance |
 | 工作区会话 | An existing workspace thread, provider configuration, roles/skills and recovery | Explicit direct attach/resume; four existing harnesses; bounded live output and redacted lifecycle metadata |
+| 执行配置 | The shared Codex executable, Verification Profile library and explicit Provider/Run configuration actions | Configuration for new requests; accepted Task execution inputs and Profiles stay frozen |
 
 Select **会话仓库** and **会话工作区** to manage an existing workspace. The list is
 built from registered repository/worktree inspection, including sibling paths
@@ -21,13 +22,13 @@ navigate to the owning Task/session; Terminal notices retain the original termin
 ID. Workspace persistence v8 maps a retired `agents` tab to `overview`, preserving
 its repository/worktree. Session and Task storage formats remain compatible.
 
-The default Codex executable is shared between Hub settings, manual sessions and
+The default Codex executable is shared between Hub execution configuration, manual sessions and
 new Tasks. A Task-specific edit overrides that default; accepted launch requests
 retain their original executable selection.
 
 ## Navigation and ownership
 
-The application navigation provides Agents Hub, 工程仓库, 报告 and 设置. The task list is part of Agents Hub. A new installation opens Agents Hub; an existing selected repository keeps its workspace view during migration. 工程仓库 retains Overview, Changes, GitHub, Terminal and Run. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
+The application navigation provides Agents Hub, 工程仓库 and 设置. The Hub contains Agent 任务, 工作区会话 and 执行配置. Task lists, per-task reports and collapsed historical verification records are part of Agents Hub; there is no standalone Reports page. Global Settings provides IDE, notification and terminal preferences. A new installation opens Agents Hub; an existing selected repository keeps its workspace view during migration. 工程仓库 retains Overview, Changes, GitHub, Terminal and Run. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
 
 Tasks belong to a selected repository and reference explicitly created registered Git worktrees. A task never owns repository state through an Agent session. The footer build identity still identifies the running application independently of task/repository selection.
 
@@ -65,7 +66,7 @@ AI plan suggestions and machine Reviewer are currently unavailable: the implemen
 
 ## Task-driven surfaces
 
-Settings includes an independent reusable Profile library, even before the first
+Agents Hub → 执行配置 includes an independent reusable Profile library, even before the first
 task exists. Choose 新建 Profile, edit its name/ID and structured gates/arguments,
 then save. Paths/toolchain lists use one entry per line. Advanced JSON and bounded
 JSON import/export preserve the supported configuration. A save conflict leaves
@@ -91,15 +92,29 @@ controls. Selection, detail tab and task filters survive Workspace round trips;
 removing the repository invalidates its selection. Navigation never creates or
 starts work, and retained terminals continue to belong to Workspace.
 
-The **报告** page lists task results, including tasks that have no verification
-Profile or Run. A task report leads with Codex's recorded response and observed
+Compact Task rows show identity, time and goal context to distinguish repeated
+titles. Status, repository and search filters do not start or stop work. Task
+execution state and output remain available while delivery readiness is loading;
+unknown readiness cannot qualify review or acceptance. The selected detail keeps
+the full execution/check/readiness/acceptance distinctions.
+
+Task detail has three primary tabs: **概览 / 执行 / 报告**. Within **报告**,
+secondary **结果报告 / 变更与审查 / 交付** controls organize the recorded result,
+review and acceptance; existing internal detail keys retain their navigation
+meaning. Attempt history and detailed check/acceptance status are collapsed,
+while current failures remain visible.
+
+Each Task's **报告** tab includes its result, even without a verification Profile
+or Run. Independent verification remains there; exploratory legacy Run controls
+appear once under secondary report controls. A task report leads with Codex's
+recorded response and observed
 problems, then independent verification and current readiness. The prompt requests
 clear completion, discovered-problem, verification and unresolved-item sections;
 missing provider output is shown as missing, never synthesized into success.
 After an independent verification-only Attempt, the report may also display the
 last implementation summary with its source Attempt labeled. A new implementation
 retry does not inherit an earlier implementation report.
-Historical verification Runs retain their checks, digests and artifact metadata;
+The Hub's collapsed history retains verification Runs, checks, digests and artifact metadata;
 superseded records remain historical even if HEAD matches.
 
 The shell continues monitoring tasks while another workspace/page is visible.
