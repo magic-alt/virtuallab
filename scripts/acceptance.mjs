@@ -5,6 +5,9 @@ import { runDoctor } from "./doctor.mjs";
 
 const args = new Set(process.argv.slice(2));
 const launch = args.has("--launch");
+// Only the macOS core CI job uses this flag. Separate required jobs run the
+// excluded real-Git fixture modules, so no test is omitted from the CI gate.
+const nativeCoreShard = args.has("--native-core");
 
 function resolveNpmCli() {
   const candidates = [
@@ -61,7 +64,13 @@ try {
   runStep(
     "Rust native tests",
     "cargo",
-    ["test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--", "--nocapture"],
+    [
+      "test", "--locked", "--manifest-path", "src-tauri/Cargo.toml", "--", "--nocapture",
+      ...(nativeCoreShard ? [
+        "--skip", "task_inputs::tests::",
+        "--skip", "task_execution::review_tests::",
+      ] : []),
+    ],
     doctor.env,
   );
 } catch (error) {
@@ -69,7 +78,9 @@ try {
   process.exit(1);
 }
 
-console.log("\nAutomated checks passed.");
+console.log(nativeCoreShard
+  ? "\nCore acceptance checks passed. The macOS Git-input and provider-review shards must also pass."
+  : "\nAutomated checks passed.");
 console.log("\nDesktop acceptance checklist:");
 console.log("[ ] Control center: enter a task and choose 开始任务 once; its unique worktree, installed Codex process, unchanged goal and live execution console appear automatically. No Profile/auto-commit still permits truthful completed implementation, with edits retained and verification unclaimed.");
 console.log("[ ] Queued task ownership: occupy both execution slots, launch a third clean sibling worktree at main, then confirm Clean merged. Its worktree and branch survive with a kept/busy result; releasing a slot starts it in that same workspace. Cancellation releases protection only after durable queued cancellation or observed running-process cleanup.");

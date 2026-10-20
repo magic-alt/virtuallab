@@ -113,7 +113,7 @@ jobs:
         # Includes a cold native compile plus real Git/process/toolchain fixtures.
         # The expanded native suite exceeded the previous 10-minute total budget.
         timeout-minutes: 20
-        run: npm run acceptance:local
+        run: npm run acceptance:local -- --native-core
         env:
           # Monaco's production bundle can exceed Node's ~2 GiB default heap
           # on the arm64 macOS runner while Vite transforms worker/language
@@ -141,9 +141,39 @@ jobs:
           swift scripts/validate-macos-icon.swift "$APP/Contents/Resources/$ICON_NAME"
 
 
+  # Keep the existing macOS desktop check name (and all full-suite coverage).
+  # Real-Git source qualification and provider review are the slowest modules on
+  # macOS: execute them on independent runners rather than lengthen deadlines.
+  macos-native-fixtures:
+    name: macOS native fixtures (${{ matrix.shard }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: git-inputs
+            filter: task_inputs::tests::
+          - shard: provider-review
+            filter: task_execution::review_tests::
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - name: Build frontend assets required by Tauri native tests
+        run: npm run build
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Run native fixture shard
+        timeout-minutes: 20
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml "${{ matrix.filter }}" -- --nocapture
+
   release-gate:
     name: Required quality gate
-    needs: [frontend, linux-native, windows-native, macos-native]
+    needs: [frontend, linux-native, windows-native, macos-native, macos-native-fixtures]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -154,13 +184,16 @@ jobs:
           LINUX: ${{ needs.linux-native.result }}
           WINDOWS: ${{ needs.windows-native.result }}
           MACOS: ${{ needs.macos-native.result }}
+          MACOS_FIXTURES: ${{ needs.macos-native-fixtures.result }}
         run: |
           echo "Frontend: $FRONTEND"
           echo "Linux: $LINUX"
           echo "Windows: $WINDOWS"
           echo "macOS: $MACOS"
+          echo "macOS fixtures: $MACOS_FIXTURES"
           test "$FRONTEND" = success
           test "$LINUX" = success
           test "$WINDOWS" = success
           test "$MACOS" = success
+          test "$MACOS_FIXTURES" = success
 
