@@ -8,7 +8,7 @@ mod store;
 #[path = "tasks/validation.rs"]
 mod validation;
 pub(crate) use model::*;
-pub(crate) use store::{new_id, now_ms, TaskManager};
+pub(crate) use store::{new_id, now_ms, TaskLaunchRejection, TaskManager};
 
 use tauri::{AppHandle, Emitter, State};
 
@@ -25,6 +25,10 @@ pub(crate) fn task_get(
     task_id: String,
 ) -> Result<TaskRecord, String> {
     manager.get(&task_id)
+}
+#[tauri::command]
+pub(crate) fn task_launch_error(manager: State<'_, TaskManager>, task_id: String) -> Result<Option<String>, String> {
+    manager.launch_error(&task_id)
 }
 #[tauri::command]
 pub(crate) fn task_events(

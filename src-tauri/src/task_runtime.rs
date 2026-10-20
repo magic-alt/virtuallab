@@ -1048,6 +1048,19 @@ pub(crate) async fn verify_task_internal(
         .lock()
         .map_err(|_| "Input watch lock poisoned")?
         .insert(task_id.clone(), watch);
+    if app.state::<crate::task_reports::TaskReports>().read(&manager.storage_dir(), &task_id, &attempt_id)?.is_some() {
+        crate::task_reports::update(&app, &task_id, &attempt_id, |report| {
+            report.entry("status", &format!("Native formal verification: {}", evidence.status), false);
+            for check in &evidence.checks {
+                let gate = check["gateId"].as_str().unwrap_or("unknown gate");
+                let status = check["status"].as_str().unwrap_or("unknown");
+                let detail = check["detail"].as_str().unwrap_or("");
+                let message = format!("{gate}: {status}{}{}", if detail.is_empty() { "" } else { " — " }, detail);
+                report.entry("status", &message, false);
+                if matches!(status, "fail" | "warn" | "blocked" | "not_run" | "cancelled") { report.problem("verification", &message); }
+            }
+        })?;
+    }
     let updated = manager.update(&task_id, |record| {
         let attempt = record.attempts.last_mut().ok_or("Attempt missing")?;
         if attempt.id != attempt_id || attempt.state == "stopping" {

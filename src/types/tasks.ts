@@ -34,6 +34,21 @@ export interface TaskReadiness {
 }
 export interface TaskDraft {key: string; title: string; goal: string; scope: string[]; kind: TaskKind; dependencyKeys: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean}
 export interface TaskPlanRequest {repositoryRoot: string; expectedHeadSha: string; tasks: TaskDraft[]}
+export interface TaskLaunchRequest {requestId: string; plan: TaskPlanRequest; executablePath: string | null}
+export interface TaskLaunchResult {task: TaskRecord; launchError: string | null}
+export interface TaskLaunchFailure {requestId: string; acceptance: 'rejected' | 'unknown'; message: string}
+export interface TaskReportEntry {
+  sequence: number; timestampMs: number;
+  kind: 'assistant' | 'command' | 'fileChange' | 'status' | 'problem';
+  text: string;
+}
+export interface TaskReportProblem {source: 'native' | 'provider' | 'verification'; message: string}
+export interface TaskAttemptReport {
+  schemaVersion: 1; taskId: string; attemptId: string; status: TaskAttemptState;
+  summary: string | null; entries: TaskReportEntry[]; problems: TaskReportProblem[];
+  truncated: boolean; updatedAtMs: number;
+}
+export interface TaskReportEvent {taskId: string; attemptId: string; sequence: number}
 export interface TaskEvent {schemaVersion: 1; eventId: string; seq: number; taskId: string; attemptId: string | null; kind: string; timestampMs: number}
 export interface IntegrationPreview {planId: string; taskId: string; repositoryRoot: string; workspaceRoot: string; targetHeadSha: string; sourceCommits: string[]; expiresAtMs: number}
 export interface TaskWorkspaceRequest {taskId: string; branch: string; targetPath: string | null}

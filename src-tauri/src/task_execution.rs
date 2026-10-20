@@ -706,6 +706,53 @@ pub(crate) struct StartRequest {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TaskLaunchRequest {
+    request_id: String,
+    plan: crate::tasks::TaskPlanRequest,
+    executable_path: Option<String>,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskLaunchResult {
+    task: TaskRecord,
+    launch_error: Option<String>,
+}
+
+/// One explicit user action owns acceptance, preparation and queue admission.
+/// Once accepted, every failure returns the retained task; uncertain Git work is
+/// never deleted, retried or replayed by repeating an IPC request.
+#[tauri::command]
+pub(crate) async fn task_launch(app: AppHandle, request: TaskLaunchRequest) -> Result<TaskLaunchResult, crate::tasks::TaskLaunchRejection> {
+    let manager = app.state::<TaskManager>().inner().clone();
+    let _activity = app.state::<WorkspaceLifecycle>().begin_repository_activity(&request.plan.repository_root)
+        .map_err(|error| crate::tasks::TaskLaunchRejection::unknown(&request.request_id, error))?;
+    let accept_manager = manager.clone();
+    let request_id = request.request_id.clone();
+    let executable = request.executable_path.clone();
+    let accepted = tauri::async_runtime::spawn_blocking(move || accept_manager.accept_launch(&request_id, request.plan, executable.as_deref()))
+        .await.map_err(|_| crate::tasks::TaskLaunchRejection::unknown(&request.request_id, "Native task acceptance worker failed; the request may already be saved"))??;
+    if !accepted.created { return Ok(TaskLaunchResult { task: accepted.task, launch_error: accepted.launch_error }); }
+    publish(&app, &manager);
+    let task_id = accepted.task.id.clone();
+    let outcome = async {
+        task_prepare_workspace(app.clone(), PrepareWorkspaceRequest { task_id: task_id.clone(), branch: format!("task/{task_id}"), target_path: None }).await?;
+        task_start(app.clone(), StartRequest { task_id: task_id.clone(), executable_path: request.executable_path })
+    }.await;
+    let mut launch_error = outcome.err().map(|error| crate::task_reports::bounded_text(&error, 4096).0);
+    if let Err(error) = manager.finish_launch(&request.request_id, launch_error.clone()) {
+        launch_error = Some(crate::task_reports::bounded_text(&format!("{}Launch outcome could not be saved: {error}. Inspect the retained task; do not recreate it.", launch_error.as_ref().map(|error| format!("{error}\n")).unwrap_or_default()), 4096).0);
+    }
+    let task = match manager.get(&task_id) {
+        Ok(task) => task,
+        Err(error) => {
+            launch_error = Some(crate::task_reports::bounded_text(&format!("Retained task {task_id} could not be refreshed: {error}"), 4096).0);
+            accepted.task
+        }
+    };
+    Ok(TaskLaunchResult { task, launch_error })
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct CancelRequest {
     pub(crate) task_id: String,
 }
@@ -1317,6 +1364,7 @@ fn enqueue(app: &AppHandle, request: StartRequest, retry: bool) -> Result<TaskRe
             executable_path: request.executable_path,
         },
         || {
+            app.state::<crate::task_reports::TaskReports>().initialize(&manager.storage_dir(), &task.id, &attempt_id)?;
             manager.update(&task.id, |record| {
                 if record.revision != task.revision {
                     return Err("Task changed before enqueue".into());
@@ -1383,6 +1431,9 @@ pub(crate) fn task_cancel(app: AppHandle, request: CancelRequest) -> Result<Task
     if let Some(run_id) = execution.verification_run(&request.task_id) {
         let _ =
             crate::verification::verification_cancel(app.state::<VerificationManager>(), run_id);
+    }
+    if let Some(attempt) = updated.attempts.last() {
+        let _ = crate::task_reports::update(&app, &updated.id, &attempt.id, |report| report.finish(&attempt.state, attempt.failure.as_deref()));
     }
     drop(operation);
     execution.pump(app);
@@ -1494,8 +1545,18 @@ fn validate_scope(
 }
 
 fn goal(task: &TaskRecord, sources: &[String]) -> String {
-    format!("Implement the approved task in this worktree.\nTitle: {}\nGoal: {}\nApproved file scope: {}\nFixed prerequisite candidate commits (read-only context): {}\n\nStay within that scope, but never read or edit Git metadata (.git) or environment-secret files (.env and .env.*); the root scope is not permission to access secrets. Do not commit, stage, reset, clean, checkout, merge, rebase or otherwise change Git history/index. Native seals approved local changes after you stop. Do not fetch, pull, push, mutate remotes, open or merge PRs, perform destructive operations, publish, release, flash firmware, enable motors or power stages, or perform physical/hardware operations. Do not use or resume another workspace's agent thread. Work only in the current worktree. Report completion honestly; provider completion does not establish verification or delivery readiness.",
+    format!("Implement the approved task in this worktree.\nTitle: {}\nGoal: {}\nApproved file scope: {}\nFixed prerequisite candidate commits (read-only context): {}\n\nStay within that scope, but never read or edit Git metadata (.git) or environment-secret files (.env and .env.*); the root scope is not permission to access secrets. Do not commit, stage, reset, clean, checkout, merge, rebase or otherwise change Git history/index. Native inspects your retained changes after you stop and seals a local candidate only when the task authorizes it. Do not fetch, pull, push, mutate remotes, open or merge PRs, perform destructive operations, publish, release, flash firmware, enable motors or power stages, or perform physical/hardware operations. Do not use or resume another workspace's agent thread. Work only in the current worktree. Report completion honestly; provider completion does not establish verification or delivery readiness.\n\nWrite the final response with these sections: 完成结果 / 发现的问题 / 验证结果 / 未解决事项. Describe actual changes, observed problems, commands you ran and their outcomes, and any remaining work. If no problem was found, say so; do not invent findings. Distinguish your own checks from native formal verification. Never claim a check ran, passed, or was accepted without observing it.",
         task.title, task.goal, task.scope.join(", "), sources.join(", "))
+}
+
+fn drain_provider_report(app: &AppHandle, queued: &Queued, expected: (&str, &str, &str), reports: &crate::agent::ReportSubscription) -> Result<(), String> {
+    let events: Vec<_> = reports.receiver.try_iter().take(64).collect();
+    let truncated = reports.take_truncated();
+    if events.is_empty() && !truncated { return Ok(()); }
+    crate::task_reports::update(app, &queued.task_id, &queued.attempt_id, |report| {
+        for event in events { report.observe(expected, &event); }
+        report.truncated |= truncated;
+    })
 }
 
 async fn run_provider(
@@ -1527,7 +1588,7 @@ async fn run_provider(
     let capabilities =
         serde_json::to_value(capabilities).map_err(|_| "Cannot encode native CLI observation")?;
     if capabilities["available"] != true || capabilities["harness"] != "codex" {
-        return Err("Selected Codex CLI is unavailable".into());
+        return Err(format!("Selected Codex CLI is unavailable: {}", capabilities["detail"].as_str().unwrap_or("Native version probe did not succeed")));
     }
     let executable_path = capabilities["executablePath"].as_str()
         .filter(|path|Path::new(path).is_absolute())
@@ -1553,7 +1614,8 @@ async fn run_provider(
         return Err("Task execution is stopping".into());
     }
     // Subscribe BEFORE session/turn startup: very short turns must not be missed.
-    let completions = agents.subscribe_completions()?;
+    let completions = agents.subscribe_completions(root)?;
+    let reports = agents.subscribe_reports(root)?;
     let binding = crate::agent::agent_session_start(
         app.clone(),
         app.state::<AgentManager>(),
@@ -1569,7 +1631,7 @@ async fn run_provider(
     .await;
     let binding = match binding {
         Ok(binding) => binding,
-        Err(_) => {
+        Err(error) => {
             let observe_app = app.clone();
             let observe_root = root.to_string();
             // Startup can fail after spawning a process. With no trusted binding
@@ -1591,9 +1653,7 @@ async fn run_provider(
             })
             .await
             .map_err(|_| "Provider startup shutdown observer failed")?;
-            return Err(
-                "Fresh provider startup failed; workspace retained for reconciliation".into(),
-            );
+            return Err(format!("Fresh provider startup failed; workspace retained for reconciliation: {error}"));
         }
     };
     let root = root.to_string();
@@ -1657,20 +1717,17 @@ async fn run_provider(
         let observe_thread = thread.clone();
         let task_id = task.id.clone();
         let turn_id = turn.turn_id;
+        let observe_queued = queued.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let deadline = Instant::now() + TURN_TIMEOUT;
             loop {
+                let expected = (observe_root.as_str(), observe_thread.as_str(), turn_id.as_str());
+                drain_provider_report(&observe_app, &observe_queued, expected, &reports)?;
                 if observe_app
                     .state::<TaskExecution>()
                     .cancellation_requested(&task_id)?
                 {
                     return Err("Task cancellation requested".into());
-                }
-                if !agents.owns_workspace(&observe_root)? {
-                    return Err(
-                        "Provider exited or lost workspace ownership before observed completion"
-                            .into(),
-                    );
                 }
                 if Instant::now() >= deadline {
                     return Err("Provider turn exceeded the 30 minute bound".into());
@@ -1682,14 +1739,27 @@ async fn run_provider(
                             (&event.workspace_root, &event.thread_id, &event.turn_id),
                             &event.status,
                         ) {
+                            // The stdout producer queues activity before completion.
+                            // Drain again so a rapid final answer cannot lag the task.
+                            drain_provider_report(&observe_app, &observe_queued, expected, &reports)?;
+                            crate::task_reports::update(&observe_app, &observe_queued.task_id, &observe_queued.attempt_id, |report| {
+                                if let Some(answer) = &event.final_output { report.set_summary(answer); }
+                                report.truncated |= event.output_truncated;
+                                if let Some(error) = &event.error { report.problem("provider", error); }
+                                report.entry("status", &format!("Codex turn: {}; observing native provider shutdown", event.status), false);
+                            })?;
                             return if success {
                                 Ok(())
                             } else {
-                                Err("Provider turn did not complete successfully".into())
+                                Err(event.error.unwrap_or_else(|| format!("Provider turn ended with status {}", event.status)))
                             };
                         }
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if !agents.is_running_bound(&observe_root, &observe_thread)? {
+                            return Err("Codex process exited or lost its exact session binding before a completed turn was observed".into());
+                        }
+                    }
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
                         return Err("Provider completion observer disconnected".into())
                     }
@@ -1830,10 +1900,26 @@ fn seal_task_candidate(
     Ok(candidate)
 }
 
+fn provider_candidate(root: &Path, expected_head: &str, task: &TaskRecord) -> Result<Option<String>, String> {
+    if task.auto_commit { return seal_task_candidate(root, expected_head, task).map(Some); }
+    let (sources, outputs) = controlled_paths(task)?;
+    let observed = crate::task_inputs::retained_candidate(root, expected_head, &task.scope, &sources, &outputs)?;
+    validate_scope(root, &task.base_sha, &observed.head_sha, &task.scope)?;
+    Ok(observed.clean.then_some(observed.head_sha))
+}
+
+fn should_verify_provider(task: &TaskRecord, candidate: Option<&str>) -> bool {
+    task.profile.is_some() && candidate.is_some()
+}
+
 async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Result<(), String> {
     let task = app.state::<TaskManager>().get(&queued.task_id)?;
     let root = workspace(&task)?;
     let sources = prerequisites(app, &task)?;
+    crate::task_reports::update(app, &queued.task_id, &queued.attempt_id, |report| {
+        report.finish("running", None);
+        report.entry("status", "Starting the supervised Codex app-server session in the task worktree", false);
+    })?;
     if slot.is_cancelled() {
         return Err("Task cancellation requested".into());
     }
@@ -1859,7 +1945,7 @@ async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Re
         if attempt.state != "running" {
             return Err("Task is stopping".into());
         }
-        attempt.phase = "sealing".into();
+        attempt.phase = if task.auto_commit { "sealing" } else { "review" }.into();
         Ok(())
     })?;
     let seal_app = app.clone();
@@ -1887,23 +1973,42 @@ async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Re
         {
             return Err("Task execution stopped before native sealing".into());
         }
-        let candidate = seal_task_candidate(&root, &expected_head, &seal_task)?;
+        let candidate = provider_candidate(&root, &expected_head, &seal_task)?;
         Ok::<_, String>(candidate)
     })
     .await
     .map_err(|_| "Candidate sealing worker failed; manual reconciliation required")??;
     update_attempt(app, queued, |attempt| {
         // Preserve a successfully observed commit even if cancellation won during sealing.
-        attempt.candidate_sha = Some(candidate);
+        attempt.candidate_sha = candidate.clone();
         if attempt.state != "stopping" {
-            attempt.phase = "verification".into();
+            attempt.phase = if should_verify_provider(&task, candidate.as_deref()) { "verification" } else { "review" }.into();
         }
         Ok(())
     })?;
     if slot.is_cancelled() {
         return Err("Task cancellation requested".into());
     }
-    verify_in_slot(app.clone(), task.id).await?;
+    if should_verify_provider(&task, candidate.as_deref()) {
+        verify_in_slot(app.clone(), task.id).await?;
+    } else {
+        crate::task_reports::update(app, &queued.task_id, &queued.attempt_id, |report| {
+            report.entry("status", if candidate.is_none() {
+                "Codex execution completed. Changes are retained without an automatic commit. Formal verification requires a clean committed candidate; this result is unverified and awaits review."
+            } else {
+                "Codex execution completed. No formal verification profile is configured; this result is unverified and awaits review."
+            }, false);
+            report.finish("succeeded", None);
+        })?;
+        update_attempt(app, queued, |attempt| {
+            if attempt.state != "running" { return Err("Task is stopping before completion".into()); }
+            attempt.state = "succeeded".into();
+            attempt.phase = "review".into();
+            attempt.ended_at_ms = Some(now_ms());
+            attempt.failure = None;
+            Ok(())
+        })?;
+    }
     Ok(())
 }
 
@@ -1911,15 +2016,24 @@ async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
     let result = implement(&app, &queued, &slot).await;
     let cancelled = slot.is_cancelled();
     if result.is_err() || cancelled {
-        // Provider RPC text and transcripts are never copied into durable failures.
-        // The worktree and any native side effects remain available for reconciliation.
+        // A task report is explicitly user-facing. Retain the actual bounded
+        // native/provider reason, while the general AgentJournal remains metadata-only.
+        let reason = crate::task_reports::bounded_text(&if cancelled {
+            "Cancellation observed after native writers stopped; workspace retained".to_string()
+        } else { result.err().unwrap_or_else(|| "Native execution ended without a result".into()) }, 4096).0;
+        let state = if cancelled { "cancelled" } else { "failed" };
+        let _ = crate::task_reports::update(&app, &queued.task_id, &queued.attempt_id, |report| report.finish(state, Some(&reason)));
         let _ = update_attempt(&app, &queued, |attempt| {
-            attempt.state = if cancelled { "cancelled" } else { "failed" }.into();
-            attempt.failure = Some(if cancelled { "Cancellation observed after native writers stopped; workspace retained" }
-                else { "Native execution did not qualify a complete candidate; inspect retained workspace and reconcile before retry" }.into());
+            attempt.state = state.into();
+            attempt.failure = Some(reason);
             attempt.ended_at_ms = Some(now_ms());
             Ok(())
         });
+    }
+    if let Ok(task) = app.state::<TaskManager>().get(&queued.task_id) {
+        if let Some(attempt) = task.attempts.last().filter(|attempt| attempt.id == queued.attempt_id) {
+            let _ = crate::task_reports::update(&app, &queued.task_id, &queued.attempt_id, |report| report.finish(&attempt.state, attempt.failure.as_deref()));
+        }
     }
     let execution = app.state::<TaskExecution>().inner().clone();
     drop(slot);
@@ -1930,6 +2044,39 @@ async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
 mod review_tests {
     use super::*;
     use crate::tasks::{TaskDraft, TaskPlanRequest};
+    #[test]
+    fn provider_completion_without_auto_commit_retains_changes_without_a_candidate() {
+        let fixture = Fixture::new();
+        let mut task = fixture.task.clone();
+        task.auto_commit = false;
+        task.profile = None;
+        fs::write(fixture.root.join("source.txt"), "completed local work").unwrap();
+        let before_index = crate::task_inputs::git(&fixture.root, &["ls-files", "--stage", "-z"]).unwrap();
+        assert_eq!(provider_candidate(&fixture.root, &task.base_sha, &task).unwrap(), None);
+        assert_eq!(crate::task_inputs::git(&fixture.root, &["rev-parse", "HEAD"]).unwrap().trim(), task.base_sha);
+        assert_eq!(crate::task_inputs::git(&fixture.root, &["ls-files", "--stage", "-z"]).unwrap(), before_index);
+        assert_eq!(fs::read_to_string(fixture.root.join("source.txt")).unwrap(), "completed local work");
+    }
+    #[test]
+    fn provider_without_profile_or_committed_candidate_finishes_for_review() {
+        let fixture = Fixture::new();
+        let mut task = fixture.task.clone();
+        task.profile = None;
+        assert!(!should_verify_provider(&task, Some(&task.base_sha)));
+        task.profile = Some(json!({"id":"checks"}));
+        assert!(!should_verify_provider(&task, None));
+        assert!(should_verify_provider(&task, Some(&task.base_sha)));
+    }
+    #[test]
+    fn uncommitted_provider_changes_still_require_the_approved_scope() {
+        let fixture = Fixture::new();
+        let mut task = fixture.task.clone();
+        task.auto_commit = false;
+        task.scope = vec!["allowed".into()];
+        fs::write(fixture.root.join("source.txt"), "outside scope").unwrap();
+        assert!(provider_candidate(&fixture.root, &task.base_sha, &task).is_err());
+        assert_eq!(fs::read_to_string(fixture.root.join("source.txt")).unwrap(), "outside scope");
+    }
     #[test]
     fn provider_stop_retry_keeps_capacity_until_native_stop_is_observed() {
         let execution = TaskExecution::default();
