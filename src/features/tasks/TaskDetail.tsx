@@ -47,7 +47,7 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
   useEffect(() => {if (!preview) return; const timer = window.setInterval(() => setNow(Date.now()),1000);return () => clearInterval(timer);},[preview]);
   const attempt = task.attempts.at(-1); const evidence = attempt?.evidence;
   const reportObservation = useTaskAttemptReport(task.id, tab === '执行' || tab === '证据' ? attempt : undefined);
-  const implementationAttempt = tab === '证据' && attempt && !attempt.execution
+  const implementationAttempt = tab === '证据' && attempt?.phase === 'verification' && !attempt.execution
     ? [...task.attempts].reverse().find(item => item.id !== attempt.id && !!item.execution)
     : undefined;
   const implementationObservation = useTaskAttemptReport(task.id, implementationAttempt);

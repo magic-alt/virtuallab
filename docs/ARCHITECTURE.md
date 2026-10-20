@@ -219,9 +219,38 @@ The workspace survives even when there is no agent attached.
 
 **Status: local software implementation with qualification outstanding.** The Task-first implementation adds a durable native task service (`tasks`), bounded coordinator (`task_execution`), typed local candidate/integration adapters (`task_inputs`), independently observed evidence helpers (`task_evidence`) and native review/readiness/acceptance (`task_runtime`). The [Task-first guide](TASK_FIRST_CONTROL_CENTER.md) distinguishes implemented local behavior from read-only planning/Reviewer and host/provider/user qualification still outstanding. The remaining design direction below is not a claim that every roadmap/release gate has passed. The [historical design review](MULTI_AGENT_DESIGN_REVIEW.md) remains rationale; the [Roadmap](ROADMAP.md) supplies sequencing.
 
-Implemented delivery assessment is shared by readiness, acceptance and passport export. Exact fixed dependency lineage and atomic dependency-revision guards prevent newer/rejected sources from qualifying an older integration. Candidate adoption checks the full accepted base-to-HEAD scope, including manual first-conflict recovery. Source qualification compares actual byte-preserving files with committed/indexed objects, while `task_git_watch` observes linked-worktree HEAD/index/relevant refs outside the workspace. Tool/selection changes remain sticky within a session; restart requires new verification. Formal CMake verification requires preconfigured observable compiler selection; exploratory configuration grants no qualification.
+Implemented delivery assessment is shared by readiness, acceptance and passport export. Exact fixed dependency lineage and atomic dependency-revision guards prevent newer/rejected sources from qualifying an older integration. Candidate adoption checks the full accepted base-to-HEAD scope, including manual first-conflict recovery. Source qualification retains raw file fingerprints and separately compares qualified Git content with committed/indexed objects, while `task_git_watch` observes linked-worktree HEAD/index/relevant refs outside the workspace. Tool/selection changes remain sticky within a session; restart requires new verification. Formal CMake verification requires preconfigured observable compiler selection; exploratory configuration grants no qualification.
 
-**Prompt-to-report Task execution (2026-10-19).** The inline quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through `inspectRepository`, re-inspects before accepting a new launch, and calls the typed `task_launch` boundary with a stable request ID, frozen plan and executable identity. Native accepts the task, prepares its unique registered worktree and queues the existing supervised Codex app-server process. The user-triggered launch is the authorization for that sequence. Repeated accepted requests return the retained task without replaying preparation/start, even if HEAD subsequently moves. Partial failures retain a recoverable task and actionable error. The frontend does not run shell commands or start a competing writer; its execution console renders the same process's structured output. Existing multi-node manual planning remains available as an advanced mode. Repository scope `.` retains native Git-metadata/environment-secret exclusions and does not grant OS isolation or verification/human review authority.
+**Git end-of-line qualification (2026-10-20).** Ordinary Windows CRLF checkouts
+are supported through explicitly qualified built-in `core.autocrlf`, `text`,
+`text=auto`, `-text` and `eol` rules. Git content identity accounts for binary
+classification and legacy CRLF index content; the actual raw bytes and conversion
+policy remain part of input freshness. This does not rewrite repository/global
+configuration or working files. External filters, identity expansion and encoding
+conversion still fail with a specific input qualification error. A provider
+preflight snapshot follows the task until completion so normalization cannot hide
+raw edits outside its approved scope, including edits that only change EOLs.
+Working attribute files, including ignored ancestor `.gitattributes`, have their
+own scope fingerprints. Git resolves the info/global/system attribute locations;
+their bounded source fingerprints are checked independently of scoped attribute
+edits. This requires Git to expose `GIT_ATTR_SYSTEM` and `GIT_ATTR_GLOBAL`; an
+unavailable capability produces a specific input-check error. Five fixed workers
+collect independent read-only policy probes, and the complete policy is compared
+before and after source capture.
+
+Automatic candidate construction writes no-filter objects from immutable input
+snapshots and populates an isolated index from those approved identities. It does
+not run `git add` against changing files or user filters. Publication retains the
+original staged-content, hook/signing, index-lock, expected-HEAD and source/policy
+revalidation checks. The fully populated candidate index must normalize the same
+immutable raw inputs to the approved object identities before publication;
+attribute deletion cannot silently change the index fallback after committing.
+Git `core.safecrlf=true` rejects irreversible conversions;
+`warn` permits sealing and does not create a separate UI warning. Because
+conversion policy is now part of source identity, older evidence must be rechecked
+under the current input identity; historical records do not grant fresh readiness.
+
+**Prompt-to-report Task execution (2026-10-19).** The inline quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through `inspectRepository`, re-inspects before accepting a new launch, and calls the typed `task_launch` boundary with a stable request ID, frozen plan and executable identity. Native accepts the task, prepares its unique registered worktree and queues the existing supervised Codex app-server process. The user-triggered launch is the authorization for that sequence. Repeated accepted requests return the retained task without replaying preparation/start, even if HEAD subsequently moves. Partial failures retain a recoverable task and actionable error. Input-check logging precedes provider-start logging; rejected preflight explicitly states that Codex has not started and the existing worktree is retained for Retry. The frontend does not run shell commands or start a competing writer; its execution console renders the same process's structured output. Existing multi-node manual planning remains available as an advanced mode. Repository scope `.` retains native Git-metadata/environment-secret exclusions and does not grant OS isolation or verification/human review authority.
 
 Task lifetime protection covers the actual linked worktree as well as its repository.
 Guarded creation retains a nonexclusive activity before releasing its writer claim;
@@ -241,6 +270,10 @@ composer retains its draft across navigation but only inspects its baseline/Prof
 library while visible. The persistent shell observer catches up active task states
 every five seconds if events are lost. Completion follows only the selected active
 attempt on its Execution tab; explicit navigation and workspace hosts remain intact.
+Failed implementation guidance prioritizes the current failure over later delivery
+blockers such as an absent Profile. A previous implementation report can accompany
+an independent verification Attempt; it cannot replace the result of a new
+implementation retry that failed before provider startup.
 
 The launch command rejects with `{requestId, acceptance, message}`. Only
 `acceptance: 'rejected'` proves the request was durably closed under the same

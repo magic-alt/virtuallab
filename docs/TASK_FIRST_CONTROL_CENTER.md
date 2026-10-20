@@ -73,7 +73,9 @@ Profile or Run. A task report leads with Codex's recorded response and observed
 problems, then independent verification and current readiness. The prompt requests
 clear completion, discovered-problem, verification and unresolved-item sections;
 missing provider output is shown as missing, never synthesized into success.
-Earlier implementation reports remain selectable after a verification-only Attempt.
+After an independent verification-only Attempt, the report may also display the
+last implementation summary with its source Attempt labeled. A new implementation
+retry does not inherit an earlier implementation report.
 Historical verification Runs retain their checks, digests and artifact metadata;
 superseded records remain historical even if HEAD matches.
 
@@ -116,11 +118,27 @@ Execution outcome, historical gate outcomes, current readiness and human accepta
 
 Source changes invalidate evidence even without a changed HEAD. Native input watches persist an invalidation marker after verification, so restoring old contents does not silently restore that evidence. Readiness re-observes source, Profile, executable identity and artifact integrity; required unknown provenance fails closed. A subsequent run is a new immutable run; older evidence and human decisions remain historical.
 
-Committed-clean qualification compares actual bounded file bytes with committed and indexed objects; it does not trust Git's timestamp cache. This implementation supports byte-preserving regular-file inputs. Hidden index flags, submodules/symlinks, automatic CRLF/encoding conversions and external clean filters require separate qualification and are refused. Direct workspace tools remain available for those repositories.
+Committed-clean qualification reads bounded regular-file bytes and compares their
+qualified Git content with committed and indexed objects; it does not trust Git's
+timestamp cache. Built-in `core.autocrlf`, `text`, `text=auto`, `-text` and `eol`
+rules support ordinary CRLF checkouts without changing repository configuration
+or working bytes. Actual raw bytes and conversion policy remain part of input
+freshness, including per-file scope checks across provider execution. Hidden index
+flags, submodules/symlinks, active external filters, `ident`,
+`working-tree-encoding` and legacy `crlf` attributes still require separate
+qualification and are refused. Direct workspace tools remain available for those
+repositories.
 
 Each manual re-verification creates a verification-only Attempt and a new Run. Review and acceptance bind to that exact Run and toolchain; a new Run requires new human decisions. After application restart, observation continuity is unknown and previous results remain historical until re-verification and review.
 
-Automatic sealing refuses executable commit hooks or configured signing rather than bypassing user policy. Commit manually in the workspace and use verification to adopt the clean committed candidate; native checks still enforce the accepted scope and base ancestry. Generated binaries are not currently qualified delivery artifacts; the archived artifacts establish verification output integrity.
+Automatic sealing refuses executable commit hooks or configured signing. For a
+task created with a verification Profile, commit manually in the workspace and use
+verification to adopt the clean committed candidate; native checks still enforce
+the accepted scope, base ancestry and the same source qualification policy.
+Manual adoption does not bypass unsupported conversions. A task created without a
+Profile retains that frozen policy; a new Profile requires a new task. Generated
+binaries are not currently qualified delivery artifacts; the archived artifacts
+establish verification output integrity.
 
 Explicit verification can adopt a clean committed repair even after a failed integration already recorded an older candidate. Every candidate is checked against the accepted base and full task scope, including first conflict recovery without a prior candidate. An integration task's scope must encompass all source changes and conflict repairs. Its readiness, acceptance and passport all require the current dependency candidates to match the fixed source lineage in the verified manifest; a newer source cannot silently qualify an older integration.
 

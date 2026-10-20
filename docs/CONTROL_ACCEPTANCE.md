@@ -390,3 +390,47 @@ Final local verification for this change (macOS):
 | `git diff --check` / staged whitespace check | Passed |
 
 The final full batch is recorded as having a timing failure, despite the individual rerun passing. No production change was made to the Task integration/cancellation implementation. Linux `cargo check --locked`, Windows/Linux native acceptance and packaged GUI interaction remain pending on their corresponding hosts; the existing CI matrix is unchanged. Cleanup was exercised only against temporary repositories, not the user's live remote.
+
+## Control Center Git EOL compatibility and recovery (2026-10-20)
+
+Regression: the previous input policy rejected `core.autocrlf=true` before Codex
+startup, including a genuinely clean CRLF linked worktree. Disabling automatic
+commit did not avoid the check. The native fix qualifies built-in EOL conversion
+separately from raw input freshness and preserves configuration and working bytes.
+
+Desktop acceptance on a Windows development repository:
+
+1. With the repository's existing `core.autocrlf=true`, enter a small task in Control
+   Center and choose **开始任务**. The task worktree should reach Codex. Input checking
+   must appear before the provider-start entry; a clean CRLF checkout is valid.
+2. With no Profile and automatic commit disabled, let Codex change one approved
+   file. The result must retain the edits and actual Agent summary without claiming
+   formal verification or advancing the task branch.
+3. Create a new task and enable **完成后创建本地提交（不推送）** before starting it.
+   Inspect the candidate and actual file: the Git blob follows the qualified
+   repository EOL rule, while native sealing leaves working-file bytes unchanged
+   from the completed provider result. Repository and global Git configuration stay
+   unchanged. Existing signing/hook/safe-CRLF requirements continue to apply.
+4. Retry a task previously stopped by the old conversion error using **执行 →
+   重试（新 Attempt）**. It must reuse the bound worktree and branch, create one new
+   Attempt, and leave the original failure as history. No recreation is required
+   for this pre-provider failure. If actual unfinished source edits exist, preflight
+   must retain them and request reconciliation before starting Codex.
+5. An implementation preflight failure must be the recovery guidance even when
+   the task also lacks a Profile. If an older Attempt has an Agent summary, a failed
+   implementation retry must not display that summary as its new result. For a
+   separate task created with a Profile, use **报告 → 独立验证（新 Run）**: that
+   verification Attempt may still show the labeled implementation summary
+   alongside its own check results.
+6. Check `text`, `text=auto`, `-text`, `eol=lf` and `eol=crlf` fixtures, binary files,
+   and legacy CRLF index contents. An out-of-scope change that only changes line
+   endings must be rejected with edits retained for both completion modes.
+7. Unsupported custom filters and encoding/identity attributes must be identified
+   before provider startup and must not be executed by native qualification or
+   sealing. Resolving an unsupported input policy is separate from adding a Profile;
+   manual candidate adoption does not bypass source qualification.
+
+The automated fixtures exercise real Git repositories/worktrees and the production
+preflight/completion adapters. They do not establish authenticated interactive
+Codex desktop acceptance. Final automated counts and CI evidence are recorded in
+the associated PR and the implementation plan.

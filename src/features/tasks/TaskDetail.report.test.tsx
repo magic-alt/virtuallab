@@ -129,6 +129,24 @@ describe('task execution output and result report', () => {
     expect(within(result).getByText('独立检查失败')).toBeVisible();
   });
 
+  it('does not reuse an earlier Agent report when an implementation retry fails before Agent startup', async () => {
+    const implemented = attempt({ state: 'succeeded', phase: 'review', endedAtMs: 3 });
+    const failure = 'Git content conversion is not qualified; use a byte-preserving configuration or manual candidate review.';
+    const retried = attempt({ id: 'retry-2', state: 'failed', execution: undefined, failure, endedAtMs: 4 });
+    const task = taskFixture({ attempts: [implemented, retried] }); select(task, '证据');
+    native.invoke.mockImplementation(async (name, args) => name === 'task_attempt_report'
+      ? reportFixture({ attemptId: args.request.attemptId, status: args.request.attemptId === 'retry-2' ? 'failed' : 'succeeded',
+          summary: args.request.attemptId === 'retry-2' ? null : '上次实现已经完成', entries: [],
+          problems: args.request.attemptId === 'retry-2' ? [{ source: 'native', message: failure }] : [{ source: 'provider', message: '上次实现的问题' }] }) : null);
+    render(<TaskDetail task={task} onOpenWorkspace={vi.fn()} />);
+    const result = await screen.findByRole('region', { name: '任务结果报告' });
+    expect(await within(result).findByRole('button', { name: '刷新报告' })).toBeEnabled();
+    expect(within(result).queryByText('上次实现已经完成')).not.toBeInTheDocument();
+    expect(within(result).queryByText('上次实现的问题')).not.toBeInTheDocument();
+    expect(within(result).getByText(/没有可读取的.*总结/)).toBeVisible();
+    expect(within(result).getByText(failure)).toBeVisible();
+  });
+
   it('does not present a superseded implementation problem as a current result', async () => {
     const task = taskFixture({ attempts: [attempt({ id: 'old-failure', state: 'failed', endedAtMs: 2 }), attempt({ state: 'succeeded', phase: 'review', endedAtMs: 3 })] });
     select(task, '证据');

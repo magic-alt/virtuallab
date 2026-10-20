@@ -1936,36 +1936,46 @@ pub(crate) async fn verify_in_slot(app: AppHandle, task_id: String) -> Result<Ta
     .map_err(|_| "Verification observation failed")?
 }
 
-fn seal_task_candidate(
+fn provider_preflight(
     root: &Path,
-    expected_head: &str,
     task: &TaskRecord,
-) -> Result<String, String> {
+) -> Result<crate::task_inputs::SourceSnapshot, String> {
+    (|| {
+        let (sources, outputs) = controlled_paths(task)?;
+        let before = crate::task_inputs::source_snapshot(root, &sources, &outputs)?;
+        if !before.identity.clean {
+            return Err("Task workspace has uncommitted changes; explicit reconciliation required".into());
+        }
+        validate_scope(root, &task.base_sha, &before.identity.head_sha, &task.scope)?;
+        Ok(before)
+    })().map_err(|reason: String| format!(
+        "Task input check failed before Codex started: {reason} The task worktree is preserved; resolve the input issue and use Retry (new Attempt)."
+    ))
+}
+
+fn provider_candidate(
+    root: &Path,
+    expected: &crate::task_inputs::SourceSnapshot,
+    task: &TaskRecord,
+) -> Result<Option<String>, String> {
     let (sources, outputs) = controlled_paths(task)?;
-    let candidate = if task.auto_commit {
-        crate::task_inputs::seal_candidate_with_policy(
+    if task.auto_commit {
+        // The sealer checks the actual immutable candidate against the preflight
+        // snapshot; a separate earlier scope check cannot authorize later bytes.
+        let candidate = crate::task_inputs::seal_candidate_from_snapshot(
             root,
-            expected_head,
+            expected,
             &task.scope,
             &format!("Task {}: approved candidate", task.id),
             &sources,
             &outputs,
-        )?
-    } else {
-        let identity = crate::task_inputs::source_identity(root, &sources, &outputs)?;
-        if !identity.clean {
-            return Err("autoCommit is disabled; a committed clean candidate is required".into());
-        }
-        identity.head_sha
-    };
-    validate_scope(root, &task.base_sha, &candidate, &task.scope)?;
-    Ok(candidate)
-}
-
-fn provider_candidate(root: &Path, expected_head: &str, task: &TaskRecord) -> Result<Option<String>, String> {
-    if task.auto_commit { return seal_task_candidate(root, expected_head, task).map(Some); }
-    let (sources, outputs) = controlled_paths(task)?;
-    let observed = crate::task_inputs::retained_candidate(root, expected_head, &task.scope, &sources, &outputs)?;
+        )?;
+        validate_scope(root, &task.base_sha, &candidate, &task.scope)?;
+        return Ok(Some(candidate));
+    }
+    let observed = crate::task_inputs::retained_candidate(
+        root, expected, &task.scope, &sources, &outputs,
+    )?;
     validate_scope(root, &task.base_sha, &observed.head_sha, &task.scope)?;
     Ok(observed.clean.then_some(observed.head_sha))
 }
@@ -1980,25 +1990,20 @@ async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Re
     let sources = prerequisites(app, &task)?;
     crate::task_reports::update(app, &queued.task_id, &queued.attempt_id, |report| {
         report.finish("running", None);
-        report.entry("status", "Starting the supervised Codex app-server session in the task worktree", false);
+        report.entry("status", "Checking the task workspace and Git inputs before Codex startup", false);
     })?;
     if slot.is_cancelled() {
         return Err("Task cancellation requested".into());
     }
-    let expected_head = {
+    let before = {
         let _reservation = app
             .state::<WorkspaceLifecycle>()
             .reserve(&root.to_string_lossy(), "task execution preflight")?;
-        let (source_paths, output_paths) = controlled_paths(&task)?;
-        let before = crate::task_inputs::source_identity(&root, &source_paths, &output_paths)?;
-        if !before.clean {
-            return Err(
-                "Task workspace has uncommitted changes; explicit reconciliation required".into(),
-            );
-        }
-        validate_scope(&root, &task.base_sha, &before.head_sha, &task.scope)?;
-        before.head_sha
+        provider_preflight(&root, &task)?
     };
+    crate::task_reports::update(app, &queued.task_id, &queued.attempt_id, |report| {
+        report.entry("status", "Starting the supervised Codex app-server session in the task worktree", false);
+    })?;
     run_provider(app, queued, &task, &root.to_string_lossy(), &sources).await?;
     if slot.is_cancelled() {
         return Err("Task cancellation requested".into());
@@ -2035,7 +2040,7 @@ async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Re
         {
             return Err("Task execution stopped before native sealing".into());
         }
-        let candidate = provider_candidate(&root, &expected_head, &seal_task)?;
+        let candidate = provider_candidate(&root, &before, &seal_task)?;
         Ok::<_, String>(candidate)
     })
     .await
@@ -2229,12 +2234,94 @@ mod review_tests {
         let mut task = fixture.task.clone();
         task.auto_commit = false;
         task.profile = None;
+        let before = provider_preflight(&fixture.root, &task).unwrap();
         fs::write(fixture.root.join("source.txt"), "completed local work").unwrap();
         let before_index = crate::task_inputs::git(&fixture.root, &["ls-files", "--stage", "-z"]).unwrap();
-        assert_eq!(provider_candidate(&fixture.root, &task.base_sha, &task).unwrap(), None);
+        assert_eq!(provider_candidate(&fixture.root, &before, &task).unwrap(), None);
         assert_eq!(crate::task_inputs::git(&fixture.root, &["rev-parse", "HEAD"]).unwrap().trim(), task.base_sha);
         assert_eq!(crate::task_inputs::git(&fixture.root, &["ls-files", "--stage", "-z"]).unwrap(), before_index);
         assert_eq!(fs::read_to_string(fixture.root.join("source.txt")).unwrap(), "completed local work");
+    }
+
+    fn windows_provider_workspace() -> (Fixture, TaskRecord, PathBuf, Arc<RepositoryActivity>) {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("source.txt"), "base\n").unwrap();
+        fs::write(fixture.root.join("outside.txt"), "outside\n").unwrap();
+        let git = |args: &[&str]| crate::task_inputs::git(&fixture.root, args).unwrap();
+        git(&["add", "--", "source.txt", "outside.txt"]);
+        git(&["commit", "-qm", "Windows checkout baseline"]);
+        let mut task = fixture.task.clone();
+        task.base_sha = git(&["rev-parse", "HEAD"]).trim().to_string();
+        git(&["config", "core.autocrlf", "true"]);
+        let target = fixture.dir.join("CRLF 工作区");
+        let (_, activity) = crate::git::create_task_worktree_blocking(
+            task.repository_root.clone(), "task/crlf-provider".into(), Some(task.base_sha.clone()),
+            Some(target.to_string_lossy().into_owned()), &WorkspaceLifecycle::default(),
+        ).unwrap();
+        task.workspace_root = Some(target.to_string_lossy().into_owned());
+        assert_eq!(fs::read(target.join("source.txt")).unwrap(), b"base\r\n");
+        assert_eq!(fs::read(target.join("outside.txt")).unwrap(), b"outside\r\n");
+        (fixture, task, target, activity)
+    }
+
+    #[test]
+    fn provider_completion_accepts_windows_crlf_and_retains_edits() {
+        let (_fixture, mut task, root, _activity) = windows_provider_workspace();
+        task.auto_commit = false;
+        let before = provider_preflight(&root, &task).unwrap();
+        assert!(before.identity.clean, "an ordinary CRLF checkout must reach Codex preflight");
+        let index = crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap();
+        fs::write(root.join("source.txt"), "provider result\r\n").unwrap();
+        assert_eq!(provider_candidate(&root, &before, &task).unwrap(), None);
+        assert_eq!(crate::task_inputs::git(&root, &["rev-parse", "HEAD"]).unwrap().trim(), task.base_sha);
+        assert_eq!(crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap(), index);
+        assert_eq!(fs::read(root.join("source.txt")).unwrap(), b"provider result\r\n");
+    }
+
+    #[test]
+    fn automatic_provider_candidate_preserves_windows_bytes() {
+        let (_fixture, task, root, _activity) = windows_provider_workspace();
+        let before = provider_preflight(&root, &task).unwrap();
+        assert!(before.identity.clean);
+        fs::write(root.join("source.txt"), "approved result\r\n").unwrap();
+        let candidate = provider_candidate(&root, &before, &task).unwrap().unwrap();
+        assert_ne!(candidate, task.base_sha);
+        assert_eq!(crate::task_inputs::git(&root, &["show", "HEAD:source.txt"]).unwrap(), "approved result\n");
+        assert_eq!(fs::read(root.join("source.txt")).unwrap(), b"approved result\r\n");
+        assert_eq!(crate::task_inputs::git(&root, &["config", "--get", "core.autocrlf"]).unwrap().trim(), "true");
+        assert!(crate::task_inputs::source_identity(&root, &[], &[]).unwrap().clean);
+    }
+
+    #[test]
+    fn provider_rejects_eol_only_edit_outside_scope() {
+        for auto_commit in [false, true] {
+            let (_fixture, mut task, root, _activity) = windows_provider_workspace();
+            task.auto_commit = auto_commit;
+            let before = provider_preflight(&root, &task).unwrap();
+            assert!(before.identity.clean);
+            let index = crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap();
+            fs::write(root.join("outside.txt"), "outside\n").unwrap();
+            let error = provider_candidate(&root, &before, &task).unwrap_err();
+            assert!(error.contains("outside the approved scope"), "{error}");
+            assert_eq!(crate::task_inputs::git(&root, &["rev-parse", "HEAD"]).unwrap().trim(), task.base_sha);
+            assert_eq!(crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap(), index);
+            assert_eq!(fs::read(root.join("outside.txt")).unwrap(), b"outside\n");
+        }
+    }
+
+    #[test]
+    fn preflight_rejects_dirty_windows_inputs_with_retained_retry_context() {
+        let (_fixture, task, root, _activity) = windows_provider_workspace();
+        let index = crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap();
+        fs::write(root.join("source.txt"), "retained unfinished work\r\n").unwrap();
+        let failure = provider_preflight(&root, &task).unwrap_err();
+        assert!(failure.contains("before Codex started"), "{failure}");
+        assert!(failure.contains("uncommitted changes"), "{failure}");
+        assert!(failure.contains("worktree is preserved"), "{failure}");
+        assert_eq!(crate::task_inputs::git(&root, &["rev-parse", "HEAD"]).unwrap().trim(), task.base_sha);
+        assert_eq!(crate::task_inputs::git(&root, &["ls-files", "--stage", "-z"]).unwrap(), index);
+        assert_eq!(fs::read(root.join("source.txt")).unwrap(), b"retained unfinished work\r\n");
+        assert_eq!(workspace(&task).unwrap(), fs::canonicalize(&root).unwrap());
     }
     #[test]
     fn provider_without_profile_or_committed_candidate_finishes_for_review() {
@@ -2252,8 +2339,9 @@ mod review_tests {
         let mut task = fixture.task.clone();
         task.auto_commit = false;
         task.scope = vec!["allowed".into()];
+        let before = provider_preflight(&fixture.root, &task).unwrap();
         fs::write(fixture.root.join("source.txt"), "outside scope").unwrap();
-        assert!(provider_candidate(&fixture.root, &task.base_sha, &task).is_err());
+        assert!(provider_candidate(&fixture.root, &before, &task).is_err());
         assert_eq!(fs::read_to_string(fixture.root.join("source.txt")).unwrap(), "outside scope");
     }
     #[test]
@@ -2682,6 +2770,7 @@ mod review_tests {
         let fixture = Fixture::new();
         let mut task = fixture.task.clone();
         task.profile = Some(json!({"sourcePaths":[],"outputPaths":["build"]}));
+        let before = provider_preflight(&fixture.root, &task).unwrap();
         fs::create_dir_all(fixture.root.join(".virtuallab/evidence/run")).unwrap();
         fs::create_dir(fixture.root.join("build")).unwrap();
         fs::write(
@@ -2691,7 +2780,7 @@ mod review_tests {
         .unwrap();
         fs::write(fixture.root.join("build/product"), "generated").unwrap();
         fs::write(fixture.root.join("source.txt"), "candidate").unwrap();
-        let candidate = seal_task_candidate(&fixture.root, &task.base_sha, &task).unwrap();
+        let candidate = provider_candidate(&fixture.root, &before, &task).unwrap().unwrap();
         assert_ne!(candidate, task.base_sha);
         let files =
             crate::task_inputs::git(&fixture.root, &["ls-tree", "-r", "--name-only", "HEAD"])
