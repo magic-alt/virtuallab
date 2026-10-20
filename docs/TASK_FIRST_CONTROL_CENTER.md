@@ -21,6 +21,11 @@ Agents, Run/build processes and verification share an exclusive workspace writer
 
 The default action is the user's authorization to create and start that task.
 Merely opening a page, changing a filter, or selecting a task never starts work.
+Queued and running tasks keep their linked worktrees protected from native removal
+and **Clean merged**, including the gaps before Codex starts and while it stops.
+Cancelling queued work releases that protection after the cancellation is saved;
+running work releases it only after observed cleanup. Other active native owners
+can still keep the workspace busy.
 The advanced **高级任务图 / JSON** editor retains multi-node dependencies,
 integration and manual preparation/start controls. A partial worktree creation or
 persistence failure keeps the task, worktree and preparation intent for explicit

@@ -14,6 +14,9 @@ mod bounded {
         pub task_id: String,
         pub attempt_id: String,
         pub executable_path: Option<String>,
+        // Nonexclusive target ownership moves into the worker, including any
+        // independently spawned observer, until all native cleanup is observed.
+        pub _workspace_activity: Arc<crate::workspace_lifecycle::RepositoryActivity>,
     }
     #[derive(Default)]
     struct Inner {
@@ -108,8 +111,9 @@ mod bounded {
             inner.queue.push_back(entry);
             Ok(result)
         }
-        pub(super) fn queued(&self) -> Result<Vec<Queued>, String> {
-            Ok(self.lock()?.queue.iter().cloned().collect())
+        pub(super) fn queued_ids(&self) -> Result<Vec<String>, String> {
+            // Pump snapshots must not extend a cancelled task's workspace lease.
+            Ok(self.lock()?.queue.iter().map(|entry| entry.task_id.clone()).collect())
         }
         pub(super) fn dispatch(
             &self,
@@ -149,7 +153,12 @@ mod bounded {
             if let Some(run) = inner.running.get(id) {
                 run.cancel.store(true, Ordering::Release);
             }
-            inner.queue.retain(|entry| entry.task_id != id);
+            let removed = inner.queue.iter().position(|entry| entry.task_id == id)
+                .and_then(|index| inner.queue.remove(index));
+            // Workspace ownership has its own mutex. Release it outside the
+            // coordinator lock, and only after cancellation reached storage.
+            drop(inner);
+            drop(removed);
             Ok(result)
         }
         pub(super) fn operation(&self, id: &str) -> Result<Operation, String> {
@@ -261,6 +270,33 @@ mod bounded {
     mod tests {
         use super::*;
         #[test]
+        fn queue_admission_retains_target_across_failed_dispatch_and_cancel() {
+            let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+            let root = std::env::temp_dir().join(format!("vl-task-lease-{}-{nonce}", std::process::id()));
+            let target = root.join("sibling task 工作区");
+            std::fs::create_dir_all(target.join(".git")).unwrap();
+            let lifecycle = crate::workspace_lifecycle::WorkspaceLifecycle::default();
+            let preparing = lifecycle.begin_repository_activity(target.to_str().unwrap()).unwrap();
+            let execution = TaskExecution::default();
+            let queued = Queued {
+                task_id: "protected".into(), attempt_id: "attempt".into(), executable_path: None,
+                _workspace_activity: preparing.clone(),
+            };
+            execution.enqueue(queued, || {
+                assert!(lifecycle.begin_removal(target.to_str().unwrap()).is_err());
+                Ok(())
+            }).unwrap();
+            drop(preparing);
+            assert!(execution.dispatch("protected", |_| Err("disk full".into())).is_err());
+            assert!(lifecycle.begin_removal(target.to_str().unwrap()).is_err(),
+                "the queue must retain the target after preparation and failed dispatch");
+            assert!(execution.cancel("protected", |_| Err::<(), _>("disk full".into())).is_err());
+            assert!(lifecycle.begin_removal(target.to_str().unwrap()).is_err());
+            execution.cancel("protected", |_| Ok(())).unwrap();
+            assert!(lifecycle.begin_removal(target.to_str().unwrap()).is_ok());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        #[test]
         fn completion_requires_exact_workspace_thread_turn_and_observed_success() {
             let expected = ("/work/task", "thread-one", "turn-one");
             assert_eq!(
@@ -345,7 +381,7 @@ mod bounded {
             assert!(execution.is_closed());
             assert!(first.is_cancelled());
             assert!(second.is_cancelled());
-            assert_eq!(execution.queued().unwrap()[0].task_id, "waiting");
+            assert_eq!(execution.queued_ids().unwrap()[0], "waiting");
             execution
                 .cancel("first", |running| {
                     assert!(running);
@@ -369,7 +405,7 @@ mod bounded {
                 })
                 .is_err());
             assert!(!persisted);
-            assert_eq!(execution.queued().unwrap().len(), 1);
+            assert_eq!(execution.queued_ids().unwrap().len(), 1);
         }
         #[test]
         fn dispatch_waiting_at_shutdown_cannot_persist_a_start() {
@@ -393,7 +429,7 @@ mod bounded {
             ready.wait();
             assert!(worker.join().unwrap());
             assert!(!persisted.load(Ordering::Acquire));
-            assert_eq!(execution.queued().unwrap().len(), 1);
+            assert_eq!(execution.queued_ids().unwrap().len(), 1);
         }
         #[test]
         fn version_identity_rejects_raw_output_and_bounds_utf8() {
@@ -467,6 +503,8 @@ mod bounded {
                 task_id: id.into(),
                 attempt_id: format!("attempt-{id}"),
                 executable_path: None,
+                _workspace_activity: crate::workspace_lifecycle::WorkspaceLifecycle::default()
+                    .begin_repository_activity(std::env::temp_dir().to_str().unwrap()).unwrap(),
             }
         }
         #[test]
@@ -486,7 +524,7 @@ mod bounded {
             assert!(execution
                 .enqueue(entry("failed"), || Err::<(), _>("disk full".into()))
                 .is_err());
-            assert!(execution.queued().unwrap().is_empty());
+            assert!(execution.queued_ids().unwrap().is_empty());
             for i in 0..32 {
                 execution
                     .enqueue(entry(&format!("task-{i}")), || Ok(()))
@@ -531,11 +569,11 @@ mod bounded {
             assert!(execution
                 .dispatch("one", |_| Err("disk full".into()))
                 .is_err());
-            assert_eq!(execution.queued().unwrap().len(), 1);
+            assert_eq!(execution.queued_ids().unwrap().len(), 1);
             assert!(execution
                 .cancel("one", |_| Err::<(), _>("disk full".into()))
                 .is_err());
-            assert_eq!(execution.queued().unwrap().len(), 1);
+            assert_eq!(execution.queued_ids().unwrap().len(), 1);
             execution
                 .cancel("one", |running| {
                     assert!(!running);
@@ -562,7 +600,7 @@ mod bounded {
             execution.enqueue(entry("eligible"), || Ok(())).unwrap();
             let (queued, slot) = execution.dispatch("eligible", |_| Ok(())).unwrap().unwrap();
             assert_eq!(queued.attempt_id, "attempt-eligible");
-            assert_eq!(execution.queued().unwrap()[0].task_id, "blocked");
+            assert_eq!(execution.queued_ids().unwrap()[0], "blocked");
             assert!(execution.claim("eligible").is_err());
             drop(slot);
             assert!(execution.claim("eligible").is_ok());
@@ -576,7 +614,7 @@ use crate::{
     task_runtime::{prerequisites, publish},
     tasks::{new_id, now_ms, TaskAttempt, TaskManager, TaskRecord},
     verification::VerificationManager,
-    workspace_lifecycle::WorkspaceLifecycle,
+    workspace_lifecycle::{RepositoryActivity, WorkspaceLifecycle},
 };
 use bounded::Queued;
 pub(crate) use bounded::{ExecutionSlot, TaskExecution};
@@ -598,7 +636,8 @@ use tauri::{AppHandle, Manager};
 /// success, failure and cancellation path. Waking always follows slot release.
 pub(crate) struct ManualExecutionSlot {
     slot: Option<ExecutionSlot>,
-    _activity: Arc<crate::workspace_lifecycle::RepositoryActivity>,
+    _activity: Arc<RepositoryActivity>,
+    _workspace_activity: Arc<RepositoryActivity>,
     app: AppHandle,
 }
 impl TaskExecution {
@@ -609,9 +648,11 @@ impl TaskExecution {
     ) -> Result<ManualExecutionSlot, String> {
         let task = app.state::<TaskManager>().get(task_id)?;
         let activity = app.state::<WorkspaceLifecycle>().begin_repository_activity(&task.repository_root)?;
+        let workspace_activity = retain_task_workspace(&task, app.state::<WorkspaceLifecycle>().inner())?;
         Ok(ManualExecutionSlot {
             slot: Some(self.claim(task_id)?),
             _activity: activity,
+            _workspace_activity: workspace_activity,
             app,
         })
     }
@@ -735,7 +776,9 @@ pub(crate) async fn task_launch(app: AppHandle, request: TaskLaunchRequest) -> R
     publish(&app, &manager);
     let task_id = accepted.task.id.clone();
     let outcome = async {
-        task_prepare_workspace(app.clone(), PrepareWorkspaceRequest { task_id: task_id.clone(), branch: format!("task/{task_id}"), target_path: None }).await?;
+        let (_prepared, _workspace_activity) = prepare_workspace_retained(app.clone(), PrepareWorkspaceRequest { task_id: task_id.clone(), branch: format!("task/{task_id}"), target_path: None }).await?;
+        // Keep the creation lease until enqueue has acquired its own target
+        // activity. A separate path-based acquisition after prepare is too late.
         task_start(app.clone(), StartRequest { task_id: task_id.clone(), executable_path: request.executable_path })
     }.await;
     let mut launch_error = outcome.err().map(|error| crate::task_reports::bounded_text(&error, 4096).0);
@@ -1265,6 +1308,15 @@ fn workspace(task: &TaskRecord) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn retain_task_workspace(task: &TaskRecord, lifecycle: &WorkspaceLifecycle) -> Result<Arc<RepositoryActivity>, String> {
+    let target = task.workspace_root.as_deref().ok_or("Explicitly prepare a task workspace first")?;
+    // Acquire before registration/preflight IO; native removal uses this same
+    // mutex and cannot invalidate the target after admission has won the race.
+    let activity = lifecycle.begin_repository_activity(target)?;
+    workspace(task)?;
+    Ok(activity)
+}
+
 fn active(state: &str) -> bool {
     matches!(state, "queued" | "running" | "stopping")
 }
@@ -1274,6 +1326,15 @@ pub(crate) async fn task_prepare_workspace(
     app: AppHandle,
     request: PrepareWorkspaceRequest,
 ) -> Result<TaskRecord, String> {
+    // A manual preparation action ends here. With no attempt or running writer,
+    // the workspace remains eligible for a later explicit cleanup operation.
+    prepare_workspace_retained(app, request).await.map(|(task, _activity)| task)
+}
+
+async fn prepare_workspace_retained(
+    app: AppHandle,
+    request: PrepareWorkspaceRequest,
+) -> Result<(TaskRecord, Arc<RepositoryActivity>), String> {
     let execution = app.state::<TaskExecution>().inner().clone();
     let operation = execution.operation(&request.task_id)?;
     let manager = app.state::<TaskManager>().inner().clone();
@@ -1302,7 +1363,7 @@ pub(crate) async fn task_prepare_workspace(
         .target_path
         .clone()
         .ok_or("Validated target missing")?;
-    let created = crate::git::create_worktree(
+    let created = crate::git::create_task_worktree(
         app.clone(),
         task.repository_root.clone(),
         request.branch,
@@ -1310,7 +1371,7 @@ pub(crate) async fn task_prepare_workspace(
         Some(expected_target.clone()),
     )
     .await;
-    let created = match created {
+    let (created, workspace_activity) = match created {
         Ok(created) => created,
         Err(error) => {
             let _ = mark_preparation_failed(&manager, &task.id);
@@ -1331,7 +1392,7 @@ pub(crate) async fn task_prepare_workspace(
     publish(&app, &manager);
     drop(operation);
     execution.pump(app);
-    Ok(updated)
+    Ok((updated, workspace_activity))
 }
 
 fn enqueue(app: &AppHandle, request: StartRequest, retry: bool) -> Result<TaskRecord, String> {
@@ -1343,7 +1404,7 @@ fn enqueue(app: &AppHandle, request: StartRequest, retry: bool) -> Result<TaskRe
     if task.kind != "implementation" {
         return Err("Integration requires native preview and explicit confirmation".into());
     }
-    workspace(&task)?;
+    let workspace_activity = retain_task_workspace(&task, app.state::<WorkspaceLifecycle>().inner())?;
     if task
         .attempts
         .last()
@@ -1362,6 +1423,7 @@ fn enqueue(app: &AppHandle, request: StartRequest, retry: bool) -> Result<TaskRe
             task_id: task.id.clone(),
             attempt_id: attempt_id.clone(),
             executable_path: request.executable_path,
+            _workspace_activity: workspace_activity,
         },
         || {
             app.state::<crate::task_reports::TaskReports>().initialize(&manager.storage_dir(), &task.id, &attempt_id)?;
@@ -1453,11 +1515,11 @@ impl TaskExecution {
                 return;
             }
             let manager = app.state::<TaskManager>().inner().clone();
-            let Ok(queue) = execution.queued() else {
+            let Ok(queue) = execution.queued_ids() else {
                 return;
             };
-            for entry in queue {
-                let Ok(task) = manager.get(&entry.task_id) else {
+            for task_id in queue {
+                let Ok(task) = manager.get(&task_id) else {
                     continue;
                 };
                 if task.kind != "implementation" { continue; }
@@ -1465,7 +1527,7 @@ impl TaskExecution {
                     continue; // Detached queues stay pending until explicit re-import/cancel.
                 };
                 if prerequisites(&app, &task).is_err() { continue; }
-                let dispatched = execution.dispatch(&entry.task_id, |queued| {
+                let dispatched = execution.dispatch(&task_id, |queued| {
                     manager.update(&queued.task_id, |record| {
                         let attempt = record.attempts.last_mut().ok_or("Attempt missing")?;
                         if attempt.id != queued.attempt_id || attempt.state != "queued" {
@@ -2036,6 +2098,9 @@ async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
         }
     }
     let execution = app.state::<TaskExecution>().inner().clone();
+    // implement has observed provider/verification shutdown, and terminal
+    // attempt/report writes above have finished. Release target before waking.
+    drop(queued);
     drop(slot);
     execution.pump(app);
 }
@@ -2044,6 +2109,120 @@ async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
 mod review_tests {
     use super::*;
     use crate::tasks::{TaskDraft, TaskPlanRequest};
+
+    fn prepare_cleanup_task(fixture: &Fixture, lifecycle: &WorkspaceLifecycle) -> (TaskRecord, String, Arc<RepositoryActivity>) {
+        crate::task_inputs::git(&fixture.root, &["branch", "-M", "main"]).unwrap();
+        let branch = format!("task/{}", fixture.task.id);
+        let request = validate_preparation(&fixture.task, &PrepareWorkspaceRequest {
+            task_id: fixture.task.id.clone(), branch: branch.clone(), target_path: None,
+        }).unwrap();
+        let target = Path::new(request.target_path.as_deref().unwrap());
+        assert!(!target.starts_with(&fixture.root), "exercise the default sibling worktree");
+        persist_preparation(&fixture.manager, &fixture.task, &request).unwrap();
+        let (_, activity) = crate::git::create_task_worktree_blocking(
+            fixture.task.repository_root.clone(), branch.clone(), Some(fixture.task.base_sha.clone()),
+            request.target_path.clone(), lifecycle).unwrap();
+        let task = reconcile_preparation(&fixture.manager, &fixture.task, lifecycle).unwrap();
+        assert_cleanup_keeps_task(&task, &branch, lifecycle);
+        (task, branch, activity)
+    }
+
+    fn assert_cleanup_keeps_task(task: &TaskRecord, branch: &str, lifecycle: &WorkspaceLifecycle) {
+        let (preview, failures) = crate::git::execute_merged_cleanup_for_task_test(
+            &task.repository_root, lifecycle).unwrap();
+        assert!(preview["targets"].as_array().unwrap().iter().any(|target| target["branch"] == branch),
+            "the clean queued task must be eligible in the Git preview");
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("active task operation"), "{failures:?}");
+        let target = Path::new(task.workspace_root.as_deref().unwrap());
+        assert!(target.exists());
+        assert_eq!(workspace(task).unwrap(), fs::canonicalize(target).unwrap());
+        assert_eq!(crate::task_inputs::git(Path::new(&task.repository_root),
+            &["rev-parse", &format!("refs/heads/{branch}")]).unwrap().trim(), task.base_sha);
+    }
+
+    #[test]
+    fn queued_task_worktree_blocks_merged_cleanup_until_cancel_is_saved() {
+        let fixture = Fixture::new();
+        let lifecycle = WorkspaceLifecycle::default();
+        let (task, branch, preparing) = prepare_cleanup_task(&fixture, &lifecycle);
+        let _repository = lifecycle.begin_repository_activity(&task.repository_root).unwrap();
+        let execution = TaskExecution::default();
+        let _first = execution.claim("first").unwrap();
+        let _second = execution.claim("second").unwrap();
+        execution.enqueue(Queued {
+            task_id: task.id.clone(), attempt_id: "queued-attempt".into(), executable_path: None,
+            _workspace_activity: retain_task_workspace(&task, &lifecycle).unwrap(),
+        }, || Ok(())).unwrap();
+        drop(preparing);
+        let snapshot = execution.queued_ids().unwrap();
+        assert!(execution.dispatch(&task.id, |_| Ok(())).unwrap().is_none());
+        assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        assert!(execution.cancel(&task.id, |_| Err::<(), _>("disk full".into())).is_err());
+        assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        execution.cancel(&task.id, |running| { assert!(!running); Ok(()) }).unwrap();
+        let (_, failures) = crate::git::execute_merged_cleanup_for_task_test(
+            &task.repository_root, &lifecycle).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(!Path::new(task.workspace_root.as_deref().unwrap()).exists());
+        assert!(crate::task_inputs::git(&fixture.root, &["rev-parse", "--verify",
+            &format!("refs/heads/{branch}")]).is_err());
+        assert_eq!(snapshot.len(), 1, "a stale queue snapshot must not pin cancelled workspaces");
+    }
+
+    #[test]
+    fn dispatched_task_worktree_lease_outlives_writer_gaps_cancel_and_shutdown() {
+        let fixture = Fixture::new();
+        let lifecycle = WorkspaceLifecycle::default();
+        let (task, branch, preparing) = prepare_cleanup_task(&fixture, &lifecycle);
+        let execution = TaskExecution::default();
+        execution.enqueue(Queued {
+            task_id: task.id.clone(), attempt_id: "running-attempt".into(), executable_path: None,
+            _workspace_activity: retain_task_workspace(&task, &lifecycle).unwrap(),
+        }, || Ok(())).unwrap();
+        drop(preparing);
+        let (queued, slot) = execution.dispatch(&task.id, |_| Ok(())).unwrap().unwrap();
+        let target = task.workspace_root.as_deref().unwrap();
+        for owner in ["task preflight", "Codex session", "candidate sealing", "verification"] {
+            let writer = lifecycle.reserve(target, owner).unwrap();
+            drop(writer);
+            assert!(!lifecycle.is_reserved(target).unwrap(), "task lifetime is not a writer");
+            assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        }
+        execution.cancel(&task.id, |running| { assert!(running); Ok(()) }).unwrap();
+        assert!(slot.is_cancelled());
+        assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        execution.shutdown();
+        assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        // Native writers have stopped, but final attempt/report persistence still
+        // owns the queued entry. Only the worker's final release permits cleanup.
+        drop(queued);
+        drop(slot);
+        let (_, failures) = crate::git::execute_merged_cleanup_for_task_test(
+            &task.repository_root, &lifecycle).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(!Path::new(target).exists());
+    }
+
+    #[test]
+    fn failed_queue_admission_releases_target_after_preparation_action_finishes() {
+        let fixture = Fixture::new();
+        let lifecycle = WorkspaceLifecycle::default();
+        let (task, branch, preparing) = prepare_cleanup_task(&fixture, &lifecycle);
+        let execution = TaskExecution::default();
+        assert!(execution.enqueue(Queued {
+            task_id: task.id.clone(), attempt_id: "failed-admission".into(), executable_path: None,
+            _workspace_activity: retain_task_workspace(&task, &lifecycle).unwrap(),
+        }, || Err::<(), _>("disk full".into())).is_err());
+        assert!(execution.queued_ids().unwrap().is_empty());
+        assert_cleanup_keeps_task(&task, &branch, &lifecycle);
+        drop(preparing);
+        let (_, failures) = crate::git::execute_merged_cleanup_for_task_test(
+            &task.repository_root, &lifecycle).unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+        assert!(!Path::new(task.workspace_root.as_deref().unwrap()).exists());
+    }
+
     #[test]
     fn provider_completion_without_auto_commit_retains_changes_without_a_candidate() {
         let fixture = Fixture::new();

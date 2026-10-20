@@ -18,7 +18,8 @@ reports, then expose them through the existing task observer and control center.
 - Preserve workspace identity and exact task/attempt/thread/turn correlation.
 - Keep verification, review, and acceptance independent of execution success.
 - Preserve Windows, spaces, Unicode paths, existing task data, and advanced flows.
-- Changes stay on `feat/control-center-auto-codex-20261019`, based on main `31d29ce`.
+- Changes stay on `feat/control-center-auto-codex-20261019`, initially based on
+  main `31d29ce` and integrated with main `304ba43` before delivery.
 
 ## Review focus
 
@@ -27,6 +28,8 @@ reports, then expose them through the existing task observer and control center.
 - Fast completion and foreign events must not drop or contaminate the report.
 - A normal task without a profile or auto-commit must finish without false failure.
 - Background completion must preserve explicit navigation and active terminals.
+- Queued worktrees must survive merged cleanup, including creation-to-queue and
+  provider-startup ownership handoffs.
 
 ## Task 1: Native launch and reporting
 
@@ -126,3 +129,18 @@ An authenticated real Codex task and interactive desktop layout were not exercis
 in this environment. Protocol, Git worktree, native ownership, persistence,
 reporting, component navigation and process/toolchain regressions were exercised.
 Windows/macOS/Linux PR jobs provide the combined target-platform gates.
+
+## Compatibility with main `304ba43`
+
+Main advanced during delivery and added **Clean merged**. Independent review
+identified a real ownership gap: a clean sibling task worktree still at main could
+be deleted while its attempt waited for one of the two execution slots. The
+existing repository activity did not cover that sibling path.
+
+The integration retains a target activity before guarded creation releases its
+writer, passes ownership into the queue, and keeps it through dispatch, startup,
+reporting and observed cleanup. Queued cancellation releases ownership only after
+its state is persisted; running cancellation retains ownership until the worker
+stops. Manual preparation without an attempt does not create a permanent lease.
+Regression coverage uses native lifecycle/coordinator checks and real temporary
+Git worktree cleanup. The final PR records verification of the combined tree.

@@ -1,3 +1,5 @@
+mod cleanup;
+pub use cleanup::{git_cleanup_preview, git_cleanup_merged};
 use crate::process::background_command;
 use crate::workspace_lifecycle::WorkspaceLifecycle;
 use tauri::Manager;
@@ -59,6 +61,8 @@ pub struct WorktreeSummary {
     head: String,
     branch: Option<String>,
     detached: bool,
+    missing: bool,
+    locked: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,7 +133,7 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
     )
     .and_then(|name| name.trim().strip_prefix("origin/").map(str::to_string));
 
-    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain", "-z"])?);
     let branches = read_branches(&root, &worktrees)?;
     let recent_commits = parse_commits(&git_read(
         &root,
@@ -347,9 +351,11 @@ fn parse_worktrees(raw: &str) -> Vec<WorktreeSummary> {
     let mut result = Vec::new();
     let mut current = WorktreeSummary::default();
 
-    for line in raw.lines().chain(std::iter::once("")) {
+    let fields: Vec<&str> = if raw.contains('\0') { raw.split('\0').collect() } else { raw.lines().collect() };
+    for line in fields.into_iter().chain(std::iter::once("")) {
         if line.is_empty() {
             if !current.path.is_empty() {
+                current.missing = matches!(std::fs::symlink_metadata(&current.path), Err(error) if error.kind() == std::io::ErrorKind::NotFound);
                 result.push(current);
                 current = WorktreeSummary::default();
             }
@@ -364,6 +370,8 @@ fn parse_worktrees(raw: &str) -> Vec<WorktreeSummary> {
             current.branch = Some(value.to_string());
         } else if line == "detached" {
             current.detached = true;
+        } else if line == "locked" || line.starts_with("locked ") {
+            current.locked = true;
         }
     }
 
@@ -530,19 +538,25 @@ fn macos_gh_cli() -> Option<String> {
 /// a native git-credential-osxkeychain password dialog for each deletion.
 /// Linux/Windows and SSH/non-GitHub remotes keep their existing Git behavior.
 fn git_origin_network(repo: &str, args: &[&str], pushing: bool) -> Result<String, String> {
+    let destination = if pushing {
+        git_read(repo, &["remote", "get-url", "--push", "origin"])?
+    } else {
+        git_read(repo, &["remote", "get-url", "origin"])?
+    };
+    git_network_at(repo, destination.trim(), args, pushing)
+}
+
+// Cleanup passes its approved URL as the actual Git destination as well as
+// the authentication context, so changing the remote name cannot redirect it.
+fn git_network_at(repo: &str, destination: &str, args: &[&str], pushing: bool) -> Result<String, String> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = pushing;
+        let _ = (pushing, destination);
         git(repo, args)
     }
     #[cfg(target_os = "macos")]
     {
-        let remote_url = if pushing {
-            git_read(repo, &["remote", "get-url", "--push", "origin"])?
-        } else {
-            git_read(repo, &["remote", "get-url", "origin"])?
-        };
-        if !is_github_https_remote(&remote_url) {
+        if !is_github_https_remote(destination) {
             return git(repo, args);
         }
 
@@ -1070,7 +1084,7 @@ fn validate_relative_path(value: &str) -> Result<String, String> {
 fn ensure_registered_worktree(repository_root: &str, workspace_root: &str) -> Result<(), String> {
     let inventory = parse_worktrees(&git_read(
         repository_root,
-        &["worktree", "list", "--porcelain"],
+        &["worktree", "list", "--porcelain", "-z"],
     )?);
     let requested = canonical_or_original(Path::new(workspace_root));
     let registered = inventory
@@ -1563,7 +1577,7 @@ fn git_delete_local_branch_blocking(
     }
 
     // Also guard linked worktrees, including a worktree with uncommitted files.
-    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain"])?);
+    let worktrees = parse_worktrees(&git_read(&root, &["worktree", "list", "--porcelain", "-z"])?);
     if let Some(owner) = worktrees.iter().find(|item| item.branch.as_deref() == Some(branch)) {
         return Err(format!(
             "Branch '{branch}' is checked out at {}. Switch that worktree first.",
@@ -1618,7 +1632,7 @@ fn force_delete_local_branch_ref(root: &str, state: &LocalBranchDeletionState) -
     let local_ref = format!("refs/heads/{}", state.branch);
     // Repeat ownership immediately before the mutation adapter. The ref
     // transaction itself enforces the approved branch and comparison OIDs.
-    let worktrees = parse_worktrees(&git_read(root, &["worktree", "list", "--porcelain"])?);
+    let worktrees = parse_worktrees(&git_read(root, &["worktree", "list", "--porcelain", "-z"])?);
     if worktrees.iter().any(|tree| tree.branch.as_deref() == Some(&state.branch)) {
         return Err("Branch became checked out before force deletion. Switch that worktree first.".into());
     }
@@ -1774,6 +1788,35 @@ pub async fn create_worktree(
     .map_err(|error| format!("Worktree creation task failed: {error}"))?
 }
 
+/// Task admission keeps the target alive across creation, binding and enqueue.
+/// Acquire that lifetime from the creation reservation before any filesystem/Git
+/// mutation, so no remover can enter between dropping the claim and returning.
+pub(crate) async fn create_task_worktree(
+    app: tauri::AppHandle,
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+) -> Result<(WorkspaceMutationResult, std::sync::Arc<crate::workspace_lifecycle::RepositoryActivity>), String> {
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        create_task_worktree_blocking(repository_root, branch, base_ref, target_path, &lifecycle)
+    })
+    .await
+    .map_err(|error| format!("Worktree creation task failed: {error}"))?
+}
+
+pub(crate) fn create_task_worktree_blocking(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+    lifecycle: &WorkspaceLifecycle,
+) -> Result<(WorkspaceMutationResult, std::sync::Arc<crate::workspace_lifecycle::RepositoryActivity>), String> {
+    create_worktree_guarded(repository_root, branch, base_ref, target_path, lifecycle,
+        crate::workspace_lifecycle::WorkspaceReservation::retain_activity)
+}
+
 fn create_worktree_blocking(
     repository_root: String,
     branch: String,
@@ -1781,6 +1824,18 @@ fn create_worktree_blocking(
     target_path: Option<String>,
     lifecycle: &WorkspaceLifecycle,
 ) -> Result<WorkspaceMutationResult, String> {
+    create_worktree_guarded(repository_root, branch, base_ref, target_path, lifecycle, |_| Ok(()))
+        .map(|(created, ())| created)
+}
+
+fn create_worktree_guarded<T>(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+    lifecycle: &WorkspaceLifecycle,
+    retain: impl FnOnce(&crate::workspace_lifecycle::WorkspaceReservation) -> Result<T, String>,
+) -> Result<(WorkspaceMutationResult, T), String> {
     let _repository = lifecycle.reserve(&repository_root, "Git worktree creation")?;
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
@@ -1814,6 +1869,7 @@ fn create_worktree_blocking(
     };
 
     let (_target, target) = lifecycle.reserve_creation_target(&target.to_string_lossy(), "Git worktree creation target")?;
+    let retained = retain(&_target)?;
     // Keep the canonical target's case while presenting ordinary Windows paths
     // to Git. Filesystem IO and the returned workspace use the same location.
     let target_string = worktree_git_path(
@@ -1849,10 +1905,10 @@ fn create_worktree_blocking(
         ],
     )?;
 
-    Ok(WorkspaceMutationResult {
+    Ok((WorkspaceMutationResult {
         path: target_string,
         branch,
-    })
+    }, retained))
 }
 
 fn worktree_git_path(path: &str, windows: bool) -> Result<String, String> {
@@ -1930,14 +1986,14 @@ fn worktree_removal_state(worktree: &str) -> Result<(WorktreeRemovalState, usize
 // Authoritative inventory includes linked worktrees outside the repository.
 fn repository_registered_paths(root: &str) -> Result<Vec<String>, String> {
     let repository = git_read(root, &["rev-parse", "--show-toplevel"])?;
-    let paths = parse_worktrees(&git_read(repository.trim(), &["worktree", "list", "--porcelain"])?)
+    let paths = parse_worktrees(&git_read(repository.trim(), &["worktree", "list", "--porcelain", "-z"])?)
         .into_iter().map(|tree| tree.path).collect::<Vec<_>>();
     if paths.is_empty() { return Err("Git reported no registered worktrees".into()); }
     Ok(paths)
 }
 
 fn repository_inventory_identities(paths: &[String]) -> Result<std::collections::BTreeSet<std::path::PathBuf>, String> {
-    paths.iter().map(|path| WorkspaceLifecycle::resolve_identity(path)).collect()
+    paths.iter().map(|path| WorkspaceLifecycle::resolve_registered_identity(path)).collect()
 }
 
 fn detach_repository_blocking(root: &str, lifecycle: &WorkspaceLifecycle) -> Result<(), String> {
@@ -1985,7 +2041,7 @@ fn resolve_terminal_stop_target(repository_root: &str, worktree_path: &str) -> R
         requested != WorkspaceLifecycle::resolve_identity(&workspace)? {
         return Err("Terminal stop target must be an exact registered worktree root".into());
     }
-    let inventory = parse_worktrees(&git_read(&repository, &["worktree", "list", "--porcelain"])?);
+    let inventory = parse_worktrees(&git_read(&repository, &["worktree", "list", "--porcelain", "-z"])?);
     let primary = inventory.first().ok_or("Repository has no registered worktrees")?;
     if requested == WorkspaceLifecycle::resolve_identity(&primary.path)? {
         return Err("Refusing to stop primary-worktree terminals for worktree removal".into());
@@ -2028,34 +2084,50 @@ fn remove_worktree_blocking(
     expected_state: Option<WorktreeRemovalState>,
     lifecycle: &WorkspaceLifecycle,
 ) -> Result<WorktreeRemovalResult, String> {
-    let _removal = lifecycle.begin_removal(&worktree_path)?;
+    remove_worktree_guarded(repository_root, worktree_path, force, expected_state, lifecycle, None)
+}
+
+fn remove_worktree_guarded(
+    repository_root: String,
+    worktree_path: String,
+    force: bool,
+    expected_state: Option<WorktreeRemovalState>,
+    lifecycle: &WorkspaceLifecycle,
+    cleanup_guard: Option<&LocalBranchDeletionState>,
+) -> Result<WorktreeRemovalResult, String> {
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
     let inventory = parse_worktrees(&git(
         &repository_root,
-        &["worktree", "list", "--porcelain"],
+        &["worktree", "list", "--porcelain", "-z"],
     )?);
 
     if inventory.is_empty() {
         return Err("Repository has no registered worktrees".to_string());
     }
 
-    let requested = canonical_or_original(std::path::Path::new(worktree_path.trim()));
-    let primary = canonical_or_original(std::path::Path::new(&inventory[0].path));
+    let requested = registered_path_key(&worktree_path)?;
+    let primary = registered_path_key(&inventory[0].path)?;
 
     if requested == primary {
         return Err("Refusing to remove the repository primary worktree".to_string());
     }
 
-    let registered = inventory.iter().any(|item| {
-        canonical_or_original(std::path::Path::new(&item.path)) == requested
-    });
-    if !registered {
-        return Err("Requested path is not a registered worktree".to_string());
+    let registered = inventory.iter().find(|item| registered_path_key(&item.path).ok().as_ref() == Some(&requested))
+        .ok_or("Requested path is not a registered worktree")?;
+    if registered.locked { return Err("Worktree is locked; unlock it explicitly in Git before removal.".into()); }
+    let worktree_string = registered.path.clone();
+    if registered.missing {
+        if force || expected_state.is_some() { return Err("Missing worktree requires ordinary removal.".into()); }
+        let _removal = lifecycle.begin_missing_removal(&worktree_string)?;
+        validate_cleanup_removal(&repository_root, registered, cleanup_guard)?;
+        // Exact registered target only. No global prune, force, or filesystem deletion.
+        git(&repository_root, &["worktree", "remove", "--", &worktree_string])?;
+        return Ok(WorktreeRemovalResult::Removed);
     }
-
-    let worktree_string = requested.to_string_lossy().to_string();
+    let _removal = lifecycle.begin_removal(&worktree_string)?;
+    validate_cleanup_removal(&repository_root, registered, cleanup_guard)?;
     let (actual_state, tracked_count, untracked_count) =
         worktree_removal_state(&worktree_string)?;
     let dirty = tracked_count + untracked_count > 0;
@@ -2089,6 +2161,24 @@ fn remove_worktree_blocking(
     Ok(WorktreeRemovalResult::Removed)
 }
 
+fn validate_cleanup_removal(root: &str, tree: &WorktreeSummary, guard: Option<&LocalBranchDeletionState>) -> Result<(), String> {
+    if let Some(state) = guard {
+        let branch_ref = format!("refs/heads/{}", state.branch);
+        if tree.branch.as_deref() != Some(&state.branch) ||
+            git_read(root, &["rev-parse", "--verify", &branch_ref])?.trim() != state.branch_head_sha ||
+            git_read(root, &["rev-parse", "--verify", &state.comparison_ref])?.trim() != state.comparison_head_sha {
+            return Err("Branch or default branch changed; preview cleanup again".into());
+        }
+        if !tree.missing {
+            let (actual, _, _) = worktree_removal_state(&tree.path)?;
+            if actual.head_sha != state.branch_head_sha || actual.branch != branch_ref || !cleanup::cleanup_worktree_clean(&tree.path)? {
+                return Err("Worktree changed; preview cleanup again".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn default_worktree_path(repository_root: &str, branch: &str) -> Result<std::path::PathBuf, String> {
     let root = std::path::Path::new(repository_root);
     let parent = root
@@ -2116,8 +2206,41 @@ fn default_worktree_path(repository_root: &str, branch: &str) -> Result<std::pat
         .join(slug))
 }
 
+fn registered_path_key(path: &str) -> Result<String, String> {
+    let path = Path::new(path);
+    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+        return Err("Worktree path must be absolute without parent traversal".into());
+    }
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                suffix.push(ancestor.file_name().ok_or("Cannot resolve worktree parent")?);
+                ancestor = ancestor.parent().ok_or("Cannot resolve worktree parent")?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let mut resolved = std::fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+    for part in suffix.into_iter().rev() { resolved.push(part); }
+    Ok(crate::workspace_identity::key(&resolved.to_string_lossy()))
+}
+
 fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+pub(crate) fn execute_merged_cleanup_for_task_test(
+    root: &str,
+    lifecycle: &WorkspaceLifecycle,
+) -> Result<(serde_json::Value, Vec<String>), String> {
+    let plan = cleanup::preview_cleanup(root, root)?;
+    let preview = serde_json::to_value(&plan).map_err(|error| error.to_string())?;
+    let outcome = cleanup::execute_cleanup(plan, lifecycle, |_, _, _| {})?;
+    Ok((preview, outcome.failed))
 }
 
 
@@ -2126,6 +2249,335 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn task_worktree_creation_retains_target_before_git_and_releases_on_creation_failure() {
+        let (sandbox, repo) = init_fixture_repo("task-create-lifetime");
+        let target = sandbox.join("future task 工作区");
+        let lifecycle = WorkspaceLifecycle::default();
+        let mut retained_before_git = false;
+        let result = create_worktree_guarded(repo.to_string_lossy().into_owned(), "task/failure".into(),
+            Some("missing-base-reference".into()), Some(target.to_string_lossy().into_owned()), &lifecycle,
+            |reservation| {
+                assert!(!target.exists());
+                retained_before_git = true;
+                reservation.retain_activity()
+            });
+        assert!(retained_before_git);
+        assert!(result.is_err());
+        assert!(!target.exists());
+        assert!(lifecycle.reserve_creation(target.to_str().unwrap(), "retry after observed failure").is_ok());
+        assert!(lifecycle.reserve(repo.to_str().unwrap(), "repository writer").is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_preserves_remote_feature_until_main_merge_is_published() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-unpublished-main");
+        let origin = sandbox.join("origin.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["push", "origin", "main"]);
+        git_ok(&repo, &["switch", "-c", "feat/unpublished"]);
+        fs::write(repo.join("feature.txt"), "feature commit").unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["commit", "-m", "feature"]);
+        git_ok(&repo, &["push", "origin", "feat/unpublished"]);
+        git_ok(&repo, &["switch", "main"]);
+        git_ok(&repo, &["merge", "--ff-only", "feat/unpublished"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap();
+        assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+        assert!(git_read(origin.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/unpublished"]).is_ok());
+        // Publishing main makes the remote feature eligible on a fresh preview.
+        git_ok(&repo, &["push", "origin", "main"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap();
+        assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+        assert!(git_read(origin.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/unpublished"]).is_err());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_refuses_secondary_url_rewrites_without_deleting_either_repository() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-rewrite-chain");
+        let first = sandbox.join("A");
+        let second = sandbox.join("B");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let first = fs::canonicalize(first).unwrap();
+        let second = fs::canonicalize(second).unwrap();
+        let first_git = worktree_git_path(&first.to_string_lossy(), cfg!(windows)).unwrap();
+        let second_git = worktree_git_path(&second.to_string_lossy(), cfg!(windows)).unwrap();
+        let origin = std::path::PathBuf::from(&first_git).join("origin.git");
+        let other = std::path::PathBuf::from(&second_git).join("origin.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["branch", "feat/done"]);
+        for bare in [&origin, &other] {
+            git_ok(&repo, &["init", "--bare", bare.to_str().unwrap()]);
+            git_ok(bare, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+            git_ok(&repo, &["push", bare.to_str().unwrap(), "main", "feat/done"]);
+        }
+        git_ok(&repo, &["remote", "add", "origin", "alias:origin.git"]);
+        let first_key = format!("url.{first_git}/.insteadOf");
+        let second_key = format!("url.{second_git}/.insteadOf");
+        git_ok(&repo, &["config", &first_key, "alias:"]);
+        git_ok(&repo, &["config", &second_key, &format!("{first_git}/")]);
+        assert!(cleanup::preview_cleanup(root, root).unwrap_err().contains("rewritten again"));
+        for bare in [&origin, &other] {
+            assert!(git_read(bare.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/done"]).is_ok());
+        }
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_requires_main_both_at_preview_and_after_confirmation() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-requires-main");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["branch", "feat/done"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        git_ok(&repo, &["switch", "-c", "feat/current"]);
+        assert!(cleanup::preview_cleanup(root, root).unwrap_err().contains("Switch to main"));
+        assert!(cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap_err().contains("Switch to main"));
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/done"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_relative_origin_cannot_be_interpreted_as_another_remote_name() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-relative-origin");
+        let origin = repo.join("backup");
+        let other = sandbox.join("different.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&repo, &["init", "--bare", other.to_str().unwrap()]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_ok(&other, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_ok(&repo, &["remote", "add", "origin", "backup"]);
+        git_ok(&repo, &["remote", "add", "backup", other.to_str().unwrap()]);
+        git_ok(&repo, &["branch", "feat/done"]);
+        git_ok(&repo, &["push", "origin", "main", "feat/done"]);
+        git_ok(&repo, &["push", "backup", "main", "feat/done"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let json = serde_json::to_value(&plan).unwrap();
+        assert_ne!(json["pushUrl"], "backup");
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap();
+        assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+        assert!(git_read(origin.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/done"]).is_err());
+        assert!(git_read(other.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/done"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_keeps_local_resources_when_origin_default_changes_during_execution() {
+        let (sandbox, repo, lane) = removal_fixture("cleanup-remote-default-race");
+        let origin = sandbox.join("origin.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["push", "origin", "main", "feat/removal-test"]);
+        git_ok(&repo, &["fetch", "origin"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |completed, _, _| {
+            if completed == 0 { git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/feat/removal-test"]); }
+        }).unwrap();
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(outcome.removed.is_empty());
+        assert!(lane.exists());
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/removal-test"]).is_ok());
+        assert!(git_read(origin.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/removal-test"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_rejects_multiple_or_different_origin_push_destinations() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-push-destinations");
+        let origin = sandbox.join("origin.git");
+        let other = sandbox.join("other.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["config", "--add", "remote.origin.pushurl", origin.to_str().unwrap()]);
+        git_ok(&repo, &["config", "--add", "remote.origin.pushurl", other.to_str().unwrap()]);
+        assert!(cleanup::preview_cleanup(root, root).is_err());
+        git_ok(&repo, &["config", "--unset-all", "remote.origin.pushurl"]);
+        git_ok(&repo, &["config", "remote.origin.pushurl", other.to_str().unwrap()]);
+        assert!(cleanup::preview_cleanup(root, root).is_err());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn registered_missing_worktrees_do_not_block_repository_restore_or_detach() {
+        let (sandbox, repo, lane) = removal_fixture("missing-inventory-lifecycle");
+        fs::remove_dir_all(&lane).unwrap();
+        let root = repo.to_str().unwrap();
+        let lifecycle = WorkspaceLifecycle::default();
+        detach_repository_blocking(root, &lifecycle).unwrap();
+        assert!(lifecycle.reserve(root, "test").is_err());
+        lifecycle.restore_repository(&repository_registered_paths(root).unwrap()).unwrap();
+        assert!(lifecycle.reserve(root, "test").is_ok());
+        assert!(lifecycle.reserve(lane.to_str().unwrap(), "test").is_err(), "missing directories still cannot start native work");
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_executes_against_real_origin_and_preserves_unmerged_branches() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-origin");
+        let origin = sandbox.join("origin.git");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "main"]);
+        git_ok(&repo, &["init", "--bare", origin.to_str().unwrap()]);
+        git_ok(&origin, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["push", "origin", "main:trunk"]);
+        let lane = sandbox.join("merged 工程 lane");
+        git_ok(&repo, &["worktree", "add", "-b", "feat/done", lane.to_str().unwrap()]);
+        git_ok(&repo, &["push", "origin", "feat/done"]);
+        git_ok(&repo, &["branch", "feat/remote-only"]);
+        git_ok(&repo, &["push", "origin", "feat/remote-only"]);
+        git_ok(&repo, &["branch", "-d", "feat/remote-only"]);
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("unique.txt"), "not merged").unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["commit", "-m", "unmerged"]);
+        git_ok(&repo, &["push", "-u", "origin", "feat/unmerged"]);
+        git_ok(&repo, &["switch", "main"]);
+        git_ok(&repo, &["fetch", "origin"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap();
+        assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+        assert!(!lane.exists());
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/done"]).is_err());
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/unmerged"]).is_ok());
+        let refs = git_read(origin.to_str().unwrap(), &["for-each-ref", "--format=%(refname)", "refs/heads"]).unwrap();
+        assert_eq!(refs.lines().collect::<Vec<_>>(), vec!["refs/heads/feat/unmerged", "refs/heads/trunk"]);
+        assert!(git_read(root, &["show-ref", "--verify", "refs/remotes/origin/feat/done"]).is_err());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_rejects_stale_preview_before_any_deletion() {
+        let (sandbox, repo, lane) = removal_fixture("cleanup-stale");
+        git_ok(&repo, &["branch", "-M", "main"]);
+        let root = repo.to_str().unwrap();
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        fs::write(lane.join("keep.txt"), "arrived during confirmation").unwrap();
+        assert!(cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap_err().contains("stale"));
+        assert!(lane.join("keep.txt").exists());
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/removal-test"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_preserves_busy_worktrees_and_rechecks_changes_during_execution() {
+        let (sandbox, repo, lane) = removal_fixture("cleanup-busy");
+        git_ok(&repo, &["branch", "-M", "main"]);
+        let root = repo.to_str().unwrap();
+        let lifecycle = WorkspaceLifecycle::default();
+        let writer = lifecycle.reserve(lane.to_str().unwrap(), "test build").unwrap();
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &lifecycle, |_, _, _| {}).unwrap();
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(lane.exists());
+        drop(writer);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &lifecycle, |completed, _, _| {
+            if completed == 0 { fs::write(lane.join("keep.txt"), "new file").unwrap(); }
+        }).unwrap();
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(lane.join("keep.txt").exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_does_not_remove_worktree_if_approved_base_changes_after_preflight() {
+        let (sandbox, repo, lane) = removal_fixture("cleanup-base-race");
+        git_ok(&repo, &["branch", "-M", "main"]);
+        let root = repo.to_str().unwrap();
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let outcome = cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |completed, _, _| {
+            if completed == 0 { git_ok(&repo, &["commit", "--allow-empty", "-m", "base moved"]); }
+        }).unwrap();
+        assert_eq!(outcome.failed.len(), 1);
+        assert!(lane.exists());
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/removal-test"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worktree_inventory_preserves_unicode_newlines_and_literal_backslashes() {
+        let (sandbox, repo) = init_fixture_repo("worktree-porcelain-paths");
+        let lane = sandbox.join("工程 lane\nwith\\literal");
+        git_ok(&repo, &["worktree", "add", "-b", "feat/literal", lane.to_str().unwrap()]);
+        let snapshot = inspect_repository_blocking(repo.to_string_lossy().into()).unwrap();
+        let tree = snapshot.worktrees.iter().find(|t| t.branch.as_deref() == Some("feat/literal")).unwrap();
+        assert_eq!(fs::canonicalize(&tree.path).unwrap(), fs::canonicalize(&lane).unwrap());
+        assert!(!tree.missing);
+        assert!(matches!(request_removal(&repo, &lane, false, None), Ok(WorktreeRemovalResult::Removed)));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn merged_cleanup_previews_clean_and_missing_worktrees_but_preserves_unmerged_dirty_and_current() {
+        let (sandbox, repo) = init_fixture_repo("cleanup preview 工程");
+        git_ok(&repo, &["branch", "-M", "main"]);
+        for branch in ["feat/merged", "feat/dirty", "feat/missing", "feat/locked", "feat/ignored"] {
+            let lane = sandbox.join(branch.replace('/', " "));
+            git_ok(&repo, &["worktree", "add", "-b", branch, lane.to_str().unwrap()]);
+        }
+        fs::write(sandbox.join("feat dirty/new.txt"), "keep").unwrap();
+        fs::write(repo.join(".git/info/exclude"), "*.cache\n").unwrap();
+        fs::write(sandbox.join("feat ignored/state.cache"), "keep ignored data").unwrap();
+        fs::remove_dir_all(sandbox.join("feat missing")).unwrap();
+        git_ok(&repo, &["worktree", "lock", sandbox.join("feat locked").to_str().unwrap()]);
+        git_ok(&repo, &["switch", "-c", "feat/unmerged"]);
+        fs::write(repo.join("unique.txt"), "unique").unwrap();
+        git_ok(&repo, &["add", "."]);
+        git_ok(&repo, &["commit", "-m", "unmerged"]);
+        git_ok(&repo, &["switch", "main"]);
+        let unmerged_lane = sandbox.join("unmerged lane");
+        git_ok(&repo, &["worktree", "add", unmerged_lane.to_str().unwrap(), "feat/unmerged"]);
+        let plan = cleanup::preview_cleanup(repo.to_str().unwrap(), repo.to_str().unwrap()).unwrap();
+        let json = serde_json::to_value(&plan).unwrap();
+        let branches: Vec<_> = json["targets"].as_array().unwrap().iter().map(|t| t["branch"].as_str().unwrap()).collect();
+        assert_eq!(branches, vec!["feat/merged", "feat/missing"]);
+        assert_eq!(json["baseRef"], "refs/heads/main");
+        assert!(sandbox.join("feat merged").exists(), "preview is read only");
+        assert!(git_read(repo.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/unmerged"]).is_ok());
+        assert!(unmerged_lane.exists());
+        assert!(sandbox.join("feat ignored/state.cache").exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn missing_registered_worktree_can_be_removed_without_touching_other_registrations() {
+        let (sandbox, repo) = init_fixture_repo("missing-worktree");
+        let missing = sandbox.join("missing 工程 lane");
+        let other = sandbox.join("other lane");
+        git_ok(&repo, &["worktree", "add", "-b", "feat/missing", missing.to_str().unwrap()]);
+        git_ok(&repo, &["worktree", "add", "-b", "feat/other", other.to_str().unwrap()]);
+        let lifecycle = WorkspaceLifecycle::default();
+        let writer = lifecycle.reserve(missing.to_str().unwrap(), "test agent").unwrap();
+        fs::remove_dir_all(&missing).unwrap();
+        assert!(remove_worktree_blocking(repo.to_string_lossy().into(), missing.to_string_lossy().into(), false, None, &lifecycle).unwrap_err().contains("reserved"));
+        drop(writer);
+        let result = remove_worktree_blocking(repo.to_string_lossy().into(), missing.to_string_lossy().into(), false, None, &lifecycle);
+        assert!(matches!(result, Ok(WorktreeRemovalResult::Removed)), "{result:?}");
+        let snapshot = inspect_repository_blocking(repo.to_string_lossy().into()).unwrap();
+        assert_eq!(snapshot.worktrees.len(), 2);
+        assert!(snapshot.branches.iter().any(|b| b.name == "feat/missing" && b.worktree_path.is_none()));
+        assert!(other.exists());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 
     #[test]
     fn trust_path_is_an_exact_repository_root_not_a_subdirectory_or_pattern() {
@@ -2955,7 +3407,7 @@ mod tests {
         let root = repo.to_string_lossy().into_owned();
         create_worktree_blocking(root.clone(), "external".into(), None,
             Some(sibling.to_string_lossy().into_owned()), &lifecycle).unwrap();
-        let before = git_read(&root, &["worktree", "list", "--porcelain"]).unwrap();
+        let before = git_read(&root, &["worktree", "list", "--porcelain", "-z"]).unwrap();
         let head = git_read(&root, &["rev-parse", "HEAD"]).unwrap();
         let owner = lifecycle.reserve(&sibling.to_string_lossy(), "terminal").unwrap();
         assert!(detach_repository_blocking(&root, &lifecycle).is_err());
@@ -2968,7 +3420,7 @@ mod tests {
             Some(target.to_string_lossy().into_owned()), &lifecycle).is_err());
         assert!(!target.exists());
         assert_eq!(git_read(&root, &["rev-parse", "HEAD"]).unwrap(), head);
-        assert_eq!(git_read(&root, &["worktree", "list", "--porcelain"]).unwrap(), before);
+        assert_eq!(git_read(&root, &["worktree", "list", "--porcelain", "-z"]).unwrap(), before);
         assert!(repo.join("README.md").exists());
         assert!(sibling.join("README.md").exists());
         lifecycle.restore_repository(&repository_registered_paths(&root).unwrap()).unwrap();
@@ -3286,7 +3738,7 @@ mod tests {
         ).is_err());
         assert!(worktree.join("README.md").is_file());
         let registered = parse_worktrees(
-            &git_read(repo.to_str().unwrap(), &["worktree", "list", "--porcelain"]).unwrap(),
+            &git_read(repo.to_str().unwrap(), &["worktree", "list", "--porcelain", "-z"]).unwrap(),
         );
         // Git porcelain uses forward slashes on Windows; compare native identities.
         let expected = crate::workspace_identity::key(worktree.to_str().unwrap());

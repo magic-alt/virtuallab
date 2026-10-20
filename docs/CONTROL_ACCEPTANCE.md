@@ -302,13 +302,29 @@ A green CI means tests/builds passed on that commit, not that provider credentia
 See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix. Manually verify detected npm and Tauri scripts, Qt CMake configure/build, Windows Keil UV4 batch build, a customized two-step profile across two worktrees, cancellation and stop-on-failure. Confirm that a cancelled Deploy prompt creates no process and that no implicit firmware flashing or remote publish occurs. Build workflow output is transient and must not be claimed as durable verification evidence.
 
 
+## Control center automatic Codex tasks (2026-10-20)
+
+- Add/select a disposable repository and enter a concrete goal under **工作任务**. Choose **开始任务** once: the task's unique worktree is created, the installed/authenticated Codex receives the goal, and **执行** opens with structured live output. Repeated clicks or a lost response must retain the same accepted task and worktree.
+- Complete a task without a Profile or auto-commit. Its changes remain in the task worktree, and **报告** shows the recorded result and discovered problems without claiming formal verification. A failed or interrupted provider must show its actual failure; absent output must not become a fabricated success summary.
+- Occupy both execution slots and launch a third task whose clean sibling worktree still points at main. Confirm **Clean merged…** from main: the queued worktree and local branch must survive and the result must explain why they were kept. Release a slot and confirm the queued task starts in that same worktree. Also attempt removal during provider preflight and shutdown; protection lasts through observed process cleanup.
+- Cancel a queued task and wait for the cancellation to persist. With no other native owner, its clean worktree may then be removed through the normal explicit confirmation. A running cancellation must retain protection until its worker and child processes actually stop.
+- Navigate to another task or repository while a launch or completion is pending. The accepted task/report must be retained without replacing that explicit navigation; returning to the control center preserves the draft and current task selection.
+- Restart after a setup failure or completed attempt. Read the retained setup error/report and use explicit reconciliation when needed. Opening the application or selecting historical work must never replay Codex or create another worktree.
+
+Automated coverage includes `tasks.launch.test.ts`, `TaskQuickCreate.test.tsx`,
+`TaskControlCenter.test.tsx`, `TaskDetail.report.test.tsx`, the native task launch,
+report, coordinator and workspace-lifecycle regressions, and real temporary Git
+worktree/cleanup fixtures. Authenticated Codex and packaged desktop interaction
+remain manual checks on Windows/macOS/Linux.
+
+
 ## Safe repository removal and re-import
 
 - Open two repositories and an external linked worktree (include spaces/Unicode in its path). Start a terminal, Agent, Run or verification in the linked worktree. Confirm **Remove repository**: removal must fail, preserve the selected repository and its notification inbox, and leave the worker running.
 - Cancel/close the native confirmation: no repository, selection or notification changes. While confirmation/native preflight is pending, duplicate remove and add operations are disabled.
 - Stop the worker and wait for observed shutdown. Confirm removal again: only the workbench record and its owned notices disappear; files, commits, branches and all worktree registrations remain. Other repositories and their notices remain available.
 - Re-add the repository through the native folder picker: its validated registered worktrees become runnable again. A failed native restore must not add a frontend record. Historical Tasks/evidence remain historical; removal does not accept, delete or replay them.
-- Race a native worker startup/worktree creation against removal: either the worker wins and removal is refused, or removal wins and new reservations are refused until re-import. External Git/process changes are outside this process-local protocol. Missing registered paths reject removal rather than silently pruning or deleting Git state.
+- Race a native worker startup/worktree creation against removal: either the worker wins and removal is refused, or removal wins and new reservations are refused until re-import. External Git/process changes are outside this process-local protocol. Missing registered paths remain represented in the validated inventory and do not prevent workbench detach/re-import. This does not prune or delete Git state and does not allow native startup in absent directories.
 
 
 ## Unmerged local branch deletion
@@ -317,3 +333,60 @@ See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix
 - Cancel/close either dialog, or deny dialog permissions: the branch and commits remain; no forced mutation occurs. Default branches and branches checked out in any linked worktree remain protected even in force mode.
 - Approve the second warning: only the local branch is deleted; current checkout, files and remote branch remain. The branch inventory refreshes normally.
 - While the second warning is open, change the branch tip, upstream or comparison HEAD externally, or check out the branch in another worktree. Approval must reject the stale/protected state and retain the branch; retry must show the latest state.
+
+
+## Merged cleanup and missing worktree recovery (2026-10-19)
+
+- **Clean merged…** in Git branches first switches/navigates to main. Cancelled stashing, a blocked checkout, missing main or a failed navigation prevents cleanup. Existing main worktrees are selected instead of checking main out twice. The selected workspace remains on main after cleanup.
+- Inspect the native preview's repository, main SHA, origin destination and exact local/origin branch commits and worktree paths. Cancel or close it: nothing is deleted. No eligible targets means no mutation command.
+- Confirm: only candidates proven by Git ancestry to be merged into main are eligible. Default/main/master branches, current/primary worktrees, unmerged local or remote commits, dirty/untracked/ignored worktrees, locked worktrees and active native work must survive. No force option exists in this bulk workflow. A local main merge that has not been published keeps the remote feature branch; remote deletion additionally requires ancestry into the live origin default branch. Squash/rebase equivalents without ancestry proof are preserved.
+- During confirmation or execution, change main, a target tip/worktree, origin URL, push destinations or live default identity. Stale approval must be rejected or the affected item kept. Multiple/different push URLs and secondary URL rewrites must refuse cleanup; relative local remote URLs cannot become another remote name. Verify the individual success/failure report and refreshed inventory.
+- Delete a linked worktree directory outside Git while leaving its registration. Reopen/re-import the repository: the primary stays usable, missing lane/branch directory navigation is disabled, and explicit confirmed Remove removes only that registration while preserving its branch and other worktrees. A previously held native lease must still block removal.
+
+Automated coverage: `gitCleanup.test.ts`, `WorkbenchShell.branchSwitch.test.tsx`, `ProjectSidebar.test.tsx`, native `merged_cleanup_*`, missing-worktree, literal-path and lifecycle regressions in `git.rs`. The existing native Git suite also exercises creation, switching, fetch/prune, pull, local/origin branch deletion, dirty/force removal and stale state. These temporary bare-repository fixtures do not delete branches on a user's live remote. Windows/Linux packaged GUI qualification remains required by the existing CI/desktop matrix.
+
+Validation notes: earlier sandboxed full acceptance was interrupted after OS process-inspection and filesystem-watcher restrictions caused failures. An unsandboxed default-concurrency native run observed `execution::worktree_terminal_stop_tests::replacement_during_shutdown_cannot_report_release_before_the_final_session_owner_drops` (`fs::rename` returned `IsADirectory`) and `task_inputs::tests::integration_cancellation_stops_hook_descendants_and_preserves_partial_worktree` (15-second deadline exceeded). A parallel frontend run timed out in `WorkbenchShell.watchRefresh.test.tsx` → `does not let a queued refresh reclaim a removed path after another worktree is selected`. The full frontend rerun with `--maxWorkers=1` passed 481 tests (1 intentionally skipped); the serial native rerun passed the earlier terminal/watcher checks and was stopped for wall-clock cost. Final native verification uses `--test-threads=4` without sandbox restrictions. No timeout was relaxed and no test was disabled for these runs.
+
+Sandbox-restricted failures recorded before that interrupted run:
+
+- `agent::tests::fresh_start_rejects_registered_runtime_without_touching_its_process_or_claim`
+- `agent::tests::process_exit_reports_the_observed_current_thread`
+- `agent::tests::bound_stop_removes_exact_runtime_and_absent_runtime_is_successful`
+- `agent::tests::confirmed_agent_stop_releases_reservation_before_return`
+- `agent::tests::bound_stop_rejects_changed_thread_without_signalling_the_current_process`
+- `agent::tests::process_exit_never_attributes_an_old_process_to_a_replacement_binding`
+- `managed_process::tests::stop_reaps_tree_and_closes_descendant_output_pipes`
+- `execution::worktree_terminal_stop_tests::single_terminal_stop_waits_for_final_owner_and_keeps_other_workspaces`
+- `execution::worktree_terminal_stop_tests::replacement_during_shutdown_cannot_report_release_before_the_final_session_owner_drops`
+- `execution::worktree_terminal_stop_tests::replaced_symlink_cannot_redirect_a_captured_terminal_reservation`
+- `execution::worktree_terminal_stop_tests::stops_target_terminal_started_in_subdirectory_and_observes_reservation_release`
+- `task_git_watch::tests::real_index_lock_only_activity_is_not_an_identity_change`
+- `task_git_watch::tests::real_linked_empty_commit_and_ref_restore_never_restore_watch_freshness`
+- `task_git_watch::tests::real_packed_branch_ref_round_trip_without_index_events_is_sticky`
+- `terminal_process::tests::cancelled_live_session_retries_cleanup_without_waiting_for_exit_or_eof`
+- `terminal_process::tests::observes_shell_exit_without_reaping_while_background_keeps_pty_open`
+- `terminal_process::tests::eof_cleans_background_jobs_after_shell_exits_before_reaping`
+- `terminal_process::tests::signal_rechecks_session_membership_on_the_pinned_target`
+- `terminal_process::tests::stop_cleans_foreground_and_background_groups_without_touching_other_sessions`
+- `task_runtime::tests::compiler_selection_change_and_restore_inside_outputs_is_sticky_before_publication`
+- `verification::tests::cancellation_cleans_descendants_before_joining_readers`
+- `verification::tests::timeout_cleans_descendants_before_joining_readers`
+- `watch::tests::linked_workspace_observes_existing_sibling_branch_switches`
+
+
+Final local verification for this change (macOS):
+
+| Check | Result |
+| --- | --- |
+| `npm ci --ignore-scripts --no-audit --no-fund` | Passed; committed npm lockfile retained |
+| `npm run typecheck` | Passed |
+| `npm test -- --maxWorkers=1` | 481 passed, 1 existing skip |
+| `npm run build` | Passed |
+| `cargo check --locked --manifest-path src-tauri/Cargo.toml` | Passed; 6 pre-existing dead-code warnings |
+| Latest `cargo test --locked --manifest-path src-tauri/Cargo.toml git::tests -- --nocapture` | 71 passed, including unpublished-main remote preservation |
+| Full native suite before the final remote-publication guard, `--test-threads=4` | 397 passed, 1 existing ignore |
+| Final full native suite including that guard, `--test-threads=4` | 397 passed, 1 failure, 1 existing ignore: the unchanged hook-cancellation test exceeded its 15-second assertion again |
+| Exact hook-cancellation test rerun alone, `--exact --test-threads=1 --nocapture` | 1 passed; total test time 16.10 seconds including setup, existing internal 15-second cancellation assertion passed |
+| `git diff --check` / staged whitespace check | Passed |
+
+The final full batch is recorded as having a timing failure, despite the individual rerun passing. No production change was made to the Task integration/cancellation implementation. Linux `cargo check --locked`, Windows/Linux native acceptance and packaged GUI interaction remain pending on their corresponding hosts; the existing CI matrix is unchanged. Cleanup was exercised only against temporary repositories, not the user's live remote.
