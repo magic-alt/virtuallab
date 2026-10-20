@@ -6,6 +6,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 
 ## Features
 
+- **Unified Agents Hub** — one place for isolated Codex tasks, durable execution reports and existing-workspace agent sessions. Repository tabs stay focused on Overview, Changes, GitHub, Terminal and Run. Task-owned agents are controlled through their Task; saved sessions retain provider, role, skill and recovery controls.
 - **Prompt-to-report control center** — describe a task and choose **开始任务** to create an isolated worktree, start the installed Codex, follow its live output, and read the persisted result and problems. Task lists are part of the control center; **报告** includes execution results even without a verification Profile. Failed setup preserves the task for recovery, and repeated launch requests do not create duplicate worktrees.
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
 - **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
@@ -65,7 +66,7 @@ The preview uses representative data. Native folder selection, Git operations, t
 
 **New to VirtualLab?** Choose **Help → 使用文档** from the app menu bar. The in-app help center works before any repository is imported and includes searchable workflow tutorials, local diagrams and executable examples. The companion [Chinese user guide](docs/USER_GUIDE.md) is also available on GitHub.
 
-For automatic task execution, add a local repository, return to **控制中心**, enter
+For automatic task execution, add a local repository, return to **Agents Hub → Agent 任务**, enter
 the work in **工作任务**, and choose **开始任务**. VirtualLab prepares the task worktree
 at the displayed HEAD and launches Codex with your goal. The execution panel follows
 the same supervised process and opens the report when the task finishes. Without
@@ -79,7 +80,7 @@ Direct workspace tools remain available:
 2. Open an existing workspace or create an isolated worktree with **New Workspace**.
 3. Use **Changes**, **History**, and **Overview** to inspect the selected workspace. Worktree lists unstaged and untracked entries; Staged shows index changes; Base compares committed changes against a selected ref. Untracked text files are previewed as new additions without staging. Expand an untracked folder to inspect its files; Staged and Base continue to show only their respective Git changes.
 4. Use **Terminal** for interactive work (choose **Start Codex with alerts** for long-running Codex turns and OS notifications). In **Run**, choose an automatically detected one-click build/package recipe or save an editable multi-step Build/Test/Package/Deploy profile. Steps run sequentially in the selected worktree; Deploy requires explicit confirmation every time. See [Project Build Workflows](docs/PROJECT_BUILD_WORKFLOWS.md).
-5. Use **GitHub** to select an open PR, inspect failing/pending CI jobs, and confirm a merge once GitHub reports `CLEAN`; see [PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md). Use **Agents** when an optional agent provider is configured.
+5. Use **GitHub** to select an open PR, inspect failing/pending CI jobs, and confirm a merge once GitHub reports `CLEAN`; see [PR and CI workflow](docs/GITHUB_PR_CI_MERGE.md). Use **Agents Hub → 工作区会话** to manage an existing worktree session and its optional provider.
 
 For code review, select a changed file (tracked or untracked text) and choose unified or side-by-side layout. Line comments are saved locally. After editing, use **Refresh and re-review**, reload the diff, and inspect the updated content before marking it reviewed. Posting a local draft to GitHub is a separate confirmed action and requires the local revision to match the pull request head.
 

@@ -2,14 +2,34 @@
 
 Every visible interactive control must have an automated test and/or an explicit desktop acceptance step. Automated success does not prove authenticated GitHub posting or safe physical hardware behavior.
 
-## Task-first local implementation
+## Agents Hub consolidation (2026-10-20)
+
+The application has one **Agents Hub**, with **Agent 任务** for managed Tasks and
+**工作区会话** for direct Provider sessions. Repository tools remain Overview,
+Changes, GitHub, Terminal and Run. The two Hub sections share navigation and
+configuration; a saved session binding does not become a Task or verification
+evidence. See [the architecture audit](AGENTS_HUB_AUDIT_2026-10-20.md) for the
+latest baseline, implementation findings and verification results.
+
+| Control or boundary | Automated evidence | Desktop acceptance still required |
+| --- | --- | --- |
+| Hub entry, sections and retained drafts | `AgentsHub.test.tsx`, `AgentSessionHub.test.tsx`, `agentsHub.test.ts` | Switch tasks, sessions, reports and settings with an unsent prompt and a running Agent |
+| Existing repository selection and old Agents tab | `workbench.test.ts`, `WorkspaceContent.test.tsx`, `WorkbenchShell.agentsHub.test.tsx` | Upgrade a saved v7 workspace on an external linked worktree; confirm Overview and exact path are restored |
+| Session repository/worktree ownership | `AgentSessionHub.test.tsx`, shell Hub routing tests | Select sibling/Unicode worktrees, then remove a selected worktree externally and try to connect; it must be refused without silently selecting another target |
+| Task ownership and native session controls | `AgentSessionHub.test.tsx`, `agent::tests`, `task_execution` fixtures | Open a running task worktree from the repository header and a notification; use Task cancellation, then inspect retained Task/Attempt history |
+| Provider configuration and request recovery | `agentPreferences.test.ts`, `AgentWorkspace.test.tsx`, `TaskQuickCreate.test.tsx` | Change default Codex path; start a new Task and a new direct session; confirm an already accepted request retains its original executable |
+| Agent and Terminal notifications | `taskNotifications.test.ts`, `WorkbenchShell.agentsHub.test.tsx`, existing Terminal notice tests | Receive notices in another repository and under Help; open the exact execution/session or terminal without stopping PTYs |
+| Session recovery and cleanup | Existing journal tests plus `AgentWorkspace.test.tsx` | Reopen an existing saved thread, inspect metadata-only history, and exercise the existing native confirmation for history deletion |
+
+## Task workflow local implementation
 
 See [capability boundaries](TASK_FIRST_CONTROL_CENTER.md). These automated regressions do not close the remaining packaged GUI, authenticated provider or three-host qualification gates.
 
 | Surface | Automated evidence | Desktop acceptance still required |
 | --- | --- | --- |
 | App navigation and terminal retention | `WorkbenchShell.tasks.test.tsx`, existing workspace/terminal tests | Switch Task/repository pages with live PTYs in multiple worktrees |
-| Natural-language quick create | `TaskQuickCreate.test.tsx`, `tasks.test.ts`, native task-scope tests | Enter Unicode goal in new task composer, inspect auto HEAD; change/switch repository; use advanced node wizard; confirm task accepted without implicit worktree/Agent start and with protected paths refused |\n| Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Manual plan through native folder/worktree provisioning; interrupted preparation reconciliation |
+| Natural-language quick create | `TaskQuickCreate.test.tsx`, `tasks.test.ts`, native task-scope tests | Enter Unicode goal in the composer; inspect auto HEAD; change/switch repository; confirm **开始任务** accepts the request, prepares its workspace and queues execution, while protected paths are refused |
+| Plan, explicit preparation and recovery | Task UI/store tests; native task/coordinator fixtures | Use the advanced node wizard to accept a plan, then explicitly prepare its workspace; reconcile interrupted preparation |
 | Execute, Cancel and Retry | Task cancellation tests; exact-run/thread and bounded-slot native fixtures | Authenticated concurrent Codex instances; cancellation during startup, verification and integration |
 | Task review context | `ChangesReview.taskBase.test.tsx`, `TaskWorkspaceTools.test.tsx` | Clean committed changes against accepted base; responsive diff and independent scroll |
 | Evidence, review, acceptance and passport | Native source/toolchain/runtime/atomic-store tests | Source change-and-restore, tool replacement, restart, stale dependency and superseded human decision |
@@ -28,7 +48,7 @@ See [capability boundaries](TASK_FIRST_CONTROL_CENTER.md). These automated regre
 | Sidebar | Workspace select | `ProjectSidebar.test.tsx` | switch worktree |
 | Sidebar | Workspace remove | `WorkbenchShell.branchSwitch.test.tsx`, `backend.worktreeRemoval.test.ts`, Rust `git.rs` force-removal fixtures | clean removal; dirty requires second native confirmation; cancel preserves selection/files; stale HEAD/status, primary, unknown and locked worktrees refused |
 | Header | Fetch (default prune); no manual Refresh | `WorkspaceHeader.test.tsx`, `WorkbenchShell.watchRefresh.test.tsx`, Rust Git prune fixture | fetch/prune origin; local state refreshes automatically |
-| Navigation | Overview/Changes/Terminal/Run/Checks/History | `WorkspaceContent.test.tsx` | switch each tab |
+| Navigation | Overview/Changes/GitHub/Terminal/Run | `WorkspaceContent.test.tsx` | switch each repository tool; open Agents Hub from the global navigation or repository header |
 | Workspace dialog | Create / Cancel / close | `NewWorkspaceDialog.test.tsx` | create real worktree |
 | Terminal | Start/New/Select/Stop | `TerminalWorkspace.test.tsx` | real PowerShell/bash PTY |
 | Terminal | typing / Ctrl+C / resize | backend compile + local acceptance | required manual PTY check |
@@ -276,7 +296,7 @@ has been observed and resolved on a physical Windows session.
 | --- | --- | --- | --- |
 | Navigation | Agents tab | \`WorkspaceContent.test.tsx\` | switch across all tabs and reopen Agents |
 | Agents | provider selector, explicit Codex path, capability detection | \`agentHarness.test.ts\`, \`AgentWorkspace.test.tsx\`, Rust launcher-path tests | Compare PowerShell 0.162 against a GUI that resolves older 0.157.1; inspect path; choose newer launcher; verify detected/runtime paths match |
-| Agents | One-click Connect & run task, manual Attach, stop and forget thread | \`AgentWorkspace.test.tsx\`, \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | Run harmless turn without pre-attaching; stop and explicitly resume saved thread after restart |
+| Agents | One-click Connect & send, manual Attach, stop and forget thread | \`AgentWorkspace.test.tsx\`, \`workspaceAgent.test.ts\`, \`agentSessions.test.ts\` | Run harmless turn without pre-attaching; stop and explicitly resume saved thread after restart |
 | Native | exactly one harness runtime per workspace | \`agent_ownership.rs\` Rust test | attempt a second provider without stopping first; must refuse |
 | Agents | bounded structured event timeline, interrupt | \`AgentWorkspace.test.tsx\`, native protocol unit tests | stream real provider turn and inspect 300-event cap; stop and interrupt |
 | Agents | custom roles and optional skills | \`agentConfiguration.test.ts\`, \`AgentWorkspace.test.tsx\` | select role, add user-defined skill, switch worktrees, verify isolation |
@@ -285,7 +305,7 @@ has been observed and resolved on a physical Windows session.
 
 ### V0.5 manual provider checks (not covered by CI)
 
-1. Use two disposable worktrees. Select **Agents**, enter a harmless prompt, click **Connect & run task** (no manual Attach required). Confirm \`item/agentMessage/delta\` and \`turn/completed\` appear as structured events.
+1. Use two disposable worktrees. Open **Agents Hub → 工作区会话**, select the repository/worktree, enter a harmless prompt and click **Connect & send** (no manual Attach required). Confirm \`item/agentMessage/delta\` and \`turn/completed\` appear as structured events.
 2. Run a long non-destructive Codex turn and Interrupt; verify the runtime can accept another turn. Stop and resume; thread ID should remain bound.
 3. Set \`DEEPSEEK_API_KEY\` in the desktop process environment and configure the official Codex DeepSeek model catalog. Check availability, select DeepSeek, Attach, run a harmless request, confirm selected provider/model and that no API key appears in UI logs/argv.
 4. With native \`claude\` and \`opencode\` executables installed and authenticated, run harmless read-only prompts. Verify provider-native session IDs replace provisional IDs and subsequent turns resume the same session. Test missing executable and malformed event failure behavior.
@@ -391,7 +411,7 @@ Final local verification for this change (macOS):
 
 The final full batch is recorded as having a timing failure, despite the individual rerun passing. No production change was made to the Task integration/cancellation implementation. Linux `cargo check --locked`, Windows/Linux native acceptance and packaged GUI interaction remain pending on their corresponding hosts; the existing CI matrix is unchanged. Cleanup was exercised only against temporary repositories, not the user's live remote.
 
-## Control Center Git EOL compatibility and recovery (2026-10-20)
+## Task Git EOL compatibility and recovery (2026-10-20)
 
 Regression: the previous input policy rejected `core.autocrlf=true` before Codex
 startup, including a genuinely clean CRLF linked worktree. Disabling automatic
@@ -400,8 +420,8 @@ separately from raw input freshness and preserves configuration and working byte
 
 Desktop acceptance on a Windows development repository:
 
-1. With the repository's existing `core.autocrlf=true`, enter a small task in Control
-   Center and choose **开始任务**. The task worktree should reach Codex. Input checking
+1. With the repository's existing `core.autocrlf=true`, enter a small task in **Agents Hub → Agent 任务**
+   and choose **开始任务**. The task worktree should reach Codex. Input checking
    must appear before the provider-start entry; a clean CRLF checkout is valid.
 2. With no Profile and automatic commit disabled, let Codex change one approved
    file. The result must retain the edits and actual Agent summary without claiming

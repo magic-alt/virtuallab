@@ -19,7 +19,7 @@ VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元�
 | Workspace lanes | 创建、导航 Git worktree | 工作目录互相独立 |
 | Git branches | 切换与删除 local/origin 分支 | 不可绕过分支保护 |
 | 工作区头部 | HEAD、remote、dirty；Open in IDE、Fetch / Pull；Git 状态自动刷新 | 可直接用外部编辑器打开当前 Worktree；Pull 仅快进 |
-| 功能标签 | Overview、Changes、GitHub、Agents、Terminal、Run、Checks、History | 按当前 worktree 执行；文档不在标签栏中 |
+| 功能标签 | Overview、Changes、GitHub、Terminal、Run | 按当前 worktree 执行；文档不在标签栏中 |
 | 底部状态栏 | 本地执行边界、程序版本 | 不代替正式验收记录 |
 
 ### Repository、Workspace 与 Worktree
@@ -62,13 +62,19 @@ npm run tauri:dev
 
 工作区采用**静默增量刷新**：Terminal / Coding Agent 持续修改源码时，只更新工作区的文件修改状态和 Changes 数量，不会让左侧 Git branches 列表反复进入 Loading 或使操作按钮闪烁。执行 `git add` 后会更新暂存状态；通过 Terminal 执行提交、创建分支、切换分支等 Git 元数据操作时，才会更新完整分支与 Worktree 列表。持续写入会自动合并刷新请求。工作区头部不再提供手动 Refresh 按钮；文件修改、Git 元数据变更和应用内 Git 操作都会自动刷新对应状态。
 
-### 控制中心：创建任务、查看报告与恢复
+### Agents Hub：任务与已有工作区会话
 
-进入 **控制中心**，在 **工作任务** 中输入目标，点击 **开始任务**。应用会创建独立任务 Worktree，先检查 Git 输入，再启动 Codex。任务的 **执行** 标签显示日志，**报告** 标签显示本次执行结果和实际收到的 Agent 总结。受支持的内置换行规则允许正常的 Windows CRLF 工作区；应用不会为此改写仓库或全局 Git 配置。
+全局 **Agents Hub** 统一管理 Agent。默认 **Agent 任务** 用于创建独立 Worktree、排队执行、重试与报告；**工作区会话** 用于已存在工作目录中的 Provider 会话、角色/技能和恢复记录。工程仓库不再有单独的 Agents 标签，Git、Terminal、Run 等操作仍在原处。
+
+工作区会话按实际 Git Worktree 清单选择目录，也支持仓库外部的兄弟目录。若目录已经绑定 Task，Hub 引导回该任务的执行页，使用任务的取消/重试，不会通过普通会话控制接管任务。旧版保存的 Agents 标签升级为 Overview，原仓库、Worktree 和已保存线程仍保留。
+
+### Agents Hub：创建任务、查看报告与恢复
+
+进入 **Agents Hub**，在 **工作任务** 中输入目标，点击 **开始任务**。应用会创建独立任务 Worktree，先检查 Git 输入，再启动 Codex。任务的 **执行** 标签显示日志，**报告** 标签显示本次执行结果和实际收到的 Agent 总结。受支持的内置换行规则允许正常的 Windows CRLF 工作区；应用不会为此改写仓库或全局 Git 配置。
 
 任务因 Git 输入检查失败而保留下来时，解决输入问题后，选中原任务，进入 **执行 → 重试（新 Attempt）**。重试复用已绑定的任务工作区，并新增执行记录；原失败记录和现有文件会保留。若输入检查报告未提交源码，应先检查并明确处理这些修改，再重试。Codex 尚未启动的执行记录没有 Agent 总结；报告会保留原生失败原因。
 
-验证 Profile 在任务创建时冻结。创建时未配置 Profile 的旧任务仍可重试 Codex 和查看报告，但在 **设置** 中新增或修改 Profile 不会更新该任务。若要使用新 Profile，请创建新任务，在 **可选设置 · 修改范围、验证 Profile、本地提交** 中选择 **正式验证 Profile（可选）**，再点击 **开始任务**。新任务以所选仓库当时的 HEAD 为基线，不会自动带入旧任务工作区的未提交修改。完整行为说明见 [Task-first 控制中心指南](TASK_FIRST_CONTROL_CENTER.md)。
+验证 Profile 在任务创建时冻结。创建时未配置 Profile 的旧任务仍可重试 Codex 和查看报告，但在 **设置** 中新增或修改 Profile 不会更新该任务。若要使用新 Profile，请创建新任务，在 **可选设置 · 修改范围、验证 Profile、本地提交** 中选择 **正式验证 Profile（可选）**，再点击 **开始任务**。新任务以所选仓库当时的 HEAD 为基线，不会自动带入旧任务工作区的未提交修改。完整行为说明见 [Task-first Agents Hub指南](TASK_FIRST_CONTROL_CENTER.md)。
 
 ## 03 · Git Worktree 与分支管理
 
@@ -180,7 +186,7 @@ History 只展示近期 commit，Overview 展示 workspace 拓扑与 readiness�
 
 运行方式包括 Build now / Package now，或者保存为自定义 Build/Test/Package/Deploy profile。多步骤 workflow 按顺序运行，**任何一步失败即停止**；通过结构化 program、args 和 cwd 执行，不拼接任意 Shell 字符串。自定义 profile 绑定仓库，保存在本机而不是 Git 中。
 
-**构建日志与滚动：** 桌面宽屏中，Run 左侧的构建配置列表与右侧的 **Build / package output** 各自独立滚动；日志持续增加时，黑色面板保持工作区高度，不再把整个页面撑长。窄窗口改为上下布局：工作区可上下浏览，日志面板仍限制高度并在面板内滚动。向上滚动日志即可暂停自动跟随新增输出；点击 **Latest output** 回到末尾并恢复跟随。日志支持键盘聚焦后使用方向键、Page Up / Page Down 查看。Terminal 的滚动缓冲、Changes 的文件列表/差异编辑器、GitHub 的 PR / CI 列表和 Agents 的事件时间线各自保留独立滚动区域。
+**构建日志与滚动：** 桌面宽屏中，Run 左侧的构建配置列表与右侧的 **Build / package output** 各自独立滚动；日志持续增加时，黑色面板保持工作区高度，不再把整个页面撑长。窄窗口改为上下布局：工作区可上下浏览，日志面板仍限制高度并在面板内滚动。向上滚动日志即可暂停自动跟随新增输出；点击 **Latest output** 回到末尾并恢复跟随。日志支持键盘聚焦后使用方向键、Page Up / Page Down 查看。Terminal 的滚动缓冲、Changes 的文件列表/差异编辑器、GitHub 的 PR / CI 列表和 Agents Hub 的事件时间线各自保留独立滚动区域。
 
 **Windows 下在 VirtualLab 内编译 VirtualLab 自身：** 选择 VirtualLab 的 worktree，执行 **Tauri · Desktop build → Build desktop app**。程序会识别当前运行的应用，弹出 **Build and restart** 确认。确认后使用独立的 `src-tauri/target/self-build-stage-v2/` 目录，并执行 `npm run tauri:build -- --no-bundle`，仅编译新的独立 EXE、跳过 WiX/MSI/NSIS 安装包制作。这样既避免运行中的 EXE 被 Windows 锁定而报 `os error 5`，也避免安装包阶段 `candle.exe` 出错导致成功编译的 EXE 无法用于重启。构建成功才会关闭当前窗口，并在旧进程退出后启动新版；构建失败、取消或重启辅助程序启动失败均不关闭现有窗口。仅当旧 EXE 就在当前 worktree 的 `src-tauri/target/release/` 内时才替换该文件并保留旧版备份；通过安装器安装的程序或调试版不会被原地覆盖，新版会从轮换的 `src-tauri/target/self-build-runtimes/a` 或 `b` 目录启动，确保下一次编译仍不会锁住 Cargo 的输出 EXE；安装版本需要另外运行 NSIS/MSI 安装器升级。这一流程只针对当前应用，不会因为编译其他 Tauri 仓库而关闭 VirtualLab。首次使用前需先安装/启动包含此修复的 VirtualLab 版本。
 
@@ -248,7 +254,7 @@ args: -b Firmware.uvprojx -j0
 3. 顶栏铃铛显示待查看数量。点击通知条目会回到原 Worktree、Terminal 和对应的终端会话。**Desktop alerts** 开关仅影响系统弹窗：关闭后仍保留应用内提醒。
 4. 如果系统通知被操作系统阻止，会在通知中心提示错误；请在 Windows/macOS 的系统通知权限中允许 VirtualLab。
 
-**技术边界**：手动在普通 Terminal 中输入 `codex`，Codex 可能采用 BEL（终端响铃）而不是 OSC 9，VirtualLab 仅提示「终端需要关注」，**不会把响铃当作任务完成**。使用 **Start Codex** 可为该次会话启用更明确的完成提醒；已经运行的 CLI 不会被强行重启。Claude/OpenCode 等工具如果主动发出 OSC 9，也能提示关注，但未提供结构化完成事件时不声称「任务完成」。Agents 页面通过 app-server / CLI 的结构化 turn 结束事件生成准确的完成/失败提醒，进程退出或长时间没有输出不等于任务成功。通知标题和正文不包含提示词、模型回复或终端日志，通知历史仅保留最近 50 条内存记录；任务与 PTY 生命周期保持相互独立。详见 [桌面通知专题](TERMINAL_NOTIFICATIONS.md)。
+**技术边界**：手动在普通 Terminal 中输入 `codex`，Codex 可能采用 BEL（终端响铃）而不是 OSC 9，VirtualLab 仅提示「终端需要关注」，**不会把响铃当作任务完成**。使用 **Start Codex** 可为该次会话启用更明确的完成提醒；已经运行的 CLI 不会被强行重启。Claude/OpenCode 等工具如果主动发出 OSC 9，也能提示关注，但未提供结构化完成事件时不声称「任务完成」。Agents Hub 中的工作区会话通过 app-server / CLI 的结构化 turn 结束事件生成准确的完成/失败提醒，进程退出或长时间没有输出不等于任务成功。通知标题和正文不包含提示词、模型回复或终端日志，通知历史仅保留最近 50 条内存记录；任务与 PTY 生命周期保持相互独立。详见 [桌面通知专题](TERMINAL_NOTIFICATIONS.md)。
 
 
 ~~~bash
@@ -271,7 +277,7 @@ git log -5 --oneline
 
 **注意**：普通 Run 并不会自动生成该目录；当前底层能力也没有提供签名不可篡改的产物注册表。HIL、soak、硬件门仍为 BLOCKED。详见 [Verification and Hardware Policy](V0.4_VERIFICATION_HARDWARE_POLICY.md)。
 
-## 07 · GitHub PR/Issue 与 Coding Agents
+## 07 · GitHub PR/Issue 与 Agents Hub
 
 ### GitHub 接入
 
@@ -298,9 +304,9 @@ PR/Issue 可用于创建预填的 Review Worktree，但**不会自动检出远�
 | Claude Code | CLI plan/read-only | 能力依赖本机 provider |
 | OpenCode | CLI plan/read-only | 能力依赖本机 provider |
 
-**推荐操作（新版简化界面）**：选择要执行任务的仓库与 Worktree → 打开 **Agents** → 在 **Provider** 选择 Codex（或其他已配置的 CLI）→ 在 **Describe the task** 中写任务 → 点击 **Connect & run task**。首次点击会自动检测 CLI、连接/恢复这个 Worktree 的 thread，并开始一个 turn；结果在 **Agent activity** 中显示。任务结束后可继续点击 **Send next task**。不需要预先逐个操作 Check、Attach、Role、Skills。
+**直接会话操作**：打开 **Agents Hub → 工作区会话**，选择 **会话仓库 / 会话工作区** → 在 **Provider** 选择 Codex（或其他已配置的 CLI）→ 在 **Describe your request** 中写请求 → 点击 **Connect & send**。首次点击会自动检测 CLI、连接/恢复这个 Worktree 的 thread，并开始一个 turn；结果在 **Agent activity** 中显示。当前 turn 结束后可继续点击 **Send message**。这里继续的是已有工作区中的会话；需要独立 Worktree 和任务报告时，使用 **Agent 任务**。
 
-**按钮说明**：`Check availability` 只调用本机版本检测，不连接模型也不验证账户登录；`Attach / resume` 只连接/恢复线程、不发起任务；`Interrupt task` 中断当前 turn；`Stop runtime` 停止工作区中的 Agent 进程但保留线程关联；`Forget saved thread` 在确认后停止运行时并删除本地关联。Role/Skills、完整 JSON 事件、恢复日志及硬件审批演示已折叠到高级设置。一次仅允许一个 Agent harness 占用同一个 Worktree；并发工作应使用不同 Worktree。
+**按钮说明**：`Check availability` 只调用本机版本检测，不连接模型也不验证账户登录；`Attach / resume` 只连接/恢复线程、不发送消息；`Interrupt turn` 中断当前 turn；`Stop runtime` 停止工作区中的 Agent 进程但保留线程关联；`Forget saved thread` 在确认后停止运行时并删除本地关联。Role/Skills、完整 JSON 事件、恢复日志及硬件审批演示已折叠到高级设置。一次仅允许一个 Agent harness 占用同一个 Worktree；并发工作应使用不同 Worktree。
 
 **Codex 版本检测不一致（例如终端 0.162、Agents 0.157.1）**：桌面应用继承的 PATH 可能比 PowerShell/终端旧，或 Windows `where` 先找到旧版 `codex.cmd`。点击 Check availability 后查看 **Detected executable** 绝对路径，与 PowerShell 中的 `Get-Command codex -All` / `where.exe codex` 比较。若不同，展开 **CLI diagnostics · executable selection**，点击 **Choose Codex executable**，选择较新版本的真实 `codex.exe` 或 `codex.cmd`，重新检测。此设置只保存在本机，Codex/DeepSeek 共用，检测及 app-server 会使用同一可执行文件。替换/切换路径前请先 Stop runtime；若要恢复桌面自动搜索，点 **Use automatic PATH**。安装新 CLI 本身并不保证已经打开的 VirtualLab GUI 会获取新的 PATH，必要时重启桌面程序。
 
