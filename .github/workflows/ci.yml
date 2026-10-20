@@ -152,9 +152,9 @@ jobs:
       matrix:
         include:
           - shard: git-inputs
-            filter: task_inputs::tests::
+            filter: "task_inputs::tests::"
           - shard: provider-review
-            filter: task_execution::review_tests::
+            filter: "task_execution::review_tests::"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
