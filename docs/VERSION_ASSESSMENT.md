@@ -1,15 +1,15 @@
 # Application version assessment
 
-Version: 0.5.6 → 0.5.7 (patch).
+Version: 0.5.7 → 0.5.8 (patch).
 
-Baseline commit: 31d29ce1116ff43d24742fbd8db031d4f2da4d99
-Assessed main commit: 4b92c38faf26d78b7a02b83930f2f720fb0d5b5a
+Baseline commit: 304ba4316531e6a582501f2c417677c91dc92442
+Assessed main commit: 38f1af0ef33419755e5eeba4c5ff24cc0e501f47
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #87 — fix\(git\): recover missing worktrees and safely clean merged branches (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #88 — feat\(control-center\): automate task worktrees, Codex execution, and reports (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 
