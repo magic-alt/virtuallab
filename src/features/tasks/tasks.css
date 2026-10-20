@@ -61,13 +61,22 @@
 .task-quick-dialog { width:min(740px,calc(100vw - 32px)); }
 .task-quick-dialog header { align-items:flex-start; }
 .task-quick-dialog header p { color:var(--task-muted); }
-.task-quick-dialog .task-quick-prompt-label { font-weight:600; }
-.task-quick-dialog .task-quick-prompt { min-height:168px; resize:vertical; font:400 15px/1.7 system-ui,sans-serif; }
+.task-quick-dialog .task-quick-prompt-label,.task-quick-inline .task-quick-prompt-label { font-weight:600; }
+.task-quick-dialog .task-quick-prompt,.task-quick-inline .task-quick-prompt { min-height:140px; max-height:360px; resize:vertical; font:400 15px/1.7 system-ui,sans-serif; }
 .task-quick-baseline { display:flex; align-items:center; flex-wrap:wrap; gap:6px; color:var(--task-muted); padding:8px 12px; background:#11151b; border-radius:8px; overflow-wrap:anywhere; }
 .task-quick-baseline button { margin-left:auto; }
 .task-quick-suggestions { display:flex; flex-wrap:wrap; gap:8px; }
 .task-center .task-quick-suggestions button { font-size:12px; color:var(--task-muted); border-radius:16px; padding:5px 10px; }
-.task-quick-dialog .task-quick-hint { color:var(--task-muted); font-size:12px; }
+.task-quick-dialog .task-quick-hint,.task-quick-inline .task-quick-hint { color:var(--task-muted); font-size:12px; }
+.task-quick-inline {border-color:#66523d;}
+.task-quick-inline header p {color:var(--task-muted);}
+.task-quick-inline .task-quick-prompt {min-height:104px;}
+.task-quick-repository-row {display:flex;align-items:center;gap:16px;flex-wrap:wrap;}
+.task-quick-repository-row>label {flex:1 1 240px;}
+.task-quick-repository-row>.task-quick-baseline {flex:1 1 220px;font-size:12px;}
+.task-quick-inline .task-quick-advanced {margin:12px 0 0;}
+.task-quick-inline .task-quick-actions {padding-top:8px;justify-content:flex-end;}
+.task-quick-advanced-action {margin-top:12px;}
 .task-quick-advanced { margin:18px 0; border-top:1px solid var(--task-border); padding-top:10px; }
 .task-quick-advanced[open] { border-bottom:1px solid var(--task-border); padding-bottom:14px; }
 .task-quick-advanced p { color:var(--task-muted); font-size:12px; }
