@@ -234,9 +234,11 @@ Working attribute files, including ignored ancestor `.gitattributes`, have their
 own scope fingerprints. Git resolves the info/global/system attribute locations;
 their bounded source fingerprints are checked independently of scoped attribute
 edits. This requires Git to expose `GIT_ATTR_SYSTEM` and `GIT_ATTR_GLOBAL`; an
-unavailable capability produces a specific input-check error. Five fixed workers
-collect independent read-only policy probes, and the complete policy is compared
-before and after source capture.
+unavailable capability produces a specific input-check error. Six fixed workers
+collect independent read-only policy probes. Two configuration workers each run
+at most three existing Git queries, retaining native boolean parsing. Every worker
+is joined before errors propagate, and the complete policy is compared before and
+after source capture.
 
 Automatic candidate construction writes no-filter objects from immutable input
 snapshots and populates an isolated index from those approved identities. It does

@@ -39,8 +39,12 @@ filters, identity expansion and encoding conversion behind a clear input error.
 `retained_candidate(..., &SourceSnapshot, ...)` serve provider execution.
 `seal_candidate_from_snapshot` validates the provider baseline against the same
 observation whose objects it prepares. Private snapshot fields retain conversion
-configuration and attribute provenance. Fixed-capacity parallel read-only probes
-retain the existing managed-process cleanup and cancellation semantics.
+configuration and attribute provenance. Six fixed parallel read-only workers
+retain the existing managed-process cleanup and cancellation semantics. Two
+configuration workers each issue at most three unchanged Git queries; the other
+workers observe working attributes, cached attributes, indexed EOLs and attribute
+sources. All workers are joined before any error is propagated, and complete
+policy comparison remains unchanged.
 
 ## Reporting and recovery
 

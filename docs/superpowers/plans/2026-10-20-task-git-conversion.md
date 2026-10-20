@@ -45,7 +45,7 @@ as the expected input to `retained_candidate`.
 - [x] Implement bounded built-in conversion qualification and raw snapshot identity.
 - [x] Construct isolated candidate entries from approved immutable objects and retain
   all existing index/ref/hook/signing guards.
-- [ ] Run the complete input module and record its result; commit native repair.
+- [x] Run the complete input module and record its result; commit native repair.
 
 ## Task 2: Provider preflight, completion and report recovery
 
@@ -61,7 +61,7 @@ verification continues to consume `SourceIdentity`.
   the raw snapshot for both automatic-commit and retained-edit completion.
 - [x] Add failing frontend tests for failure-priority and stale-summary reuse.
 - [x] Fix failure-priority and restrict prior-summary fallback to verification.
-- [ ] Verify the provider regressions, frontend suite, typecheck and build; commit.
+- [x] Verify the provider regressions, frontend suite, typecheck and build; commit.
 
 ## Task 3: Final validation, documentation and PR
 
@@ -69,10 +69,10 @@ verification continues to consume `SourceIdentity`.
 
 - [x] Independently review conversion, scope and publication behavior; fix material
   findings with regressions.
-- [ ] Run locked native Linux checks and full acceptance; record any exact failure
+- [x] Run locked native Linux checks and full acceptance; record any exact failure
   and unchanged rerun separately.
 - [x] Update architecture, acceptance scenarios and recovery guidance.
-- [ ] Submit the isolated branch as a reviewable PR against current main.
+- [x] Submit the isolated branch as a reviewable PR against current main.
 - [ ] Check Windows/macOS/Linux CI on the submitted commit and report the result.
 
 ## Execution notes
@@ -115,3 +115,34 @@ submitted PR's complete CI and the final native results remain the completion ga
 The PR records subsequent verification on its submitted commit separately from
 this pre-publication local record. Final provider review also corrected a test's
 workspace comparison to use canonical paths on Windows and symlinked temp roots.
+
+### First published CI and runtime follow-up
+
+PR #89 initially published commit `f2249e80dafc8a340bd8aebc9d67eb7383bc96f4`.
+[CI run 39365119941](https://github.com/magic-alt/virtuallab/actions/runs/39365119941)
+recorded the following results on its merge with the unchanged base:
+
+| Check | Observed result |
+| --- | --- |
+| Targeted local provider review suite | 21 passed |
+| Frontend Node 22 and Node 26 | Each: 523 passed, 1 skipped; typecheck and production build passed |
+| Linux locked cargo check and desktop acceptance | Passed; native 442 passed, 1 ignored, 0 failed in 1007.10 seconds; all 50 task-input and 21 provider review tests passed |
+| Windows desktop acceptance and standalone release host | Passed; native 408 passed, 3 ignored, 0 failed in 246.49 seconds; all 44 applicable task-input and 21 provider review tests passed; qualification and release ACL checks passed |
+| macOS desktop acceptance | Timed out at the existing 20-minute step deadline; native compilation took 1 minute 25 seconds; 276 distinct native tests logged as passed, 1 ignored and no assertion failure before termination |
+| Required quality gate | Failed because macOS timed out |
+
+The superseded local complete native run was interrupted after the complete Linux
+CI result and macOS timing failure became available. It is not counted as a pass;
+the sequential local cargo-check step was not reached. Linux CI supplied both
+complete native-suite and locked cargo-check evidence for that first commit.
+
+The runtime follow-up keeps every Git command, argument, default, native boolean
+check and policy fingerprint. It splits the longest configuration chain into two
+workers of at most three queries each, while retaining parallel working/cached
+attribute probes. Exactly six workers are joined before error propagation. The
+independent reviewer confirmed unchanged successful results and error precedence.
+No test deadline or managed-process cleanup behavior was changed. The six review
+regressions, native boolean-alias compatibility and original cancellation test
+all passed together: 8 passed, 0 failed in 148.88 seconds, with the existing
+less-than-15-second cancellation assertion unchanged. The new commit's complete
+CI remains required before completion; its final results are recorded in the PR.

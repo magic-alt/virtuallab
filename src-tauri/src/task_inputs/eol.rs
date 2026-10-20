@@ -56,7 +56,7 @@ fn config_bool(root: &Path, key: &str) -> Result<bool, String> {
         _ => Err(format!("Git {key} could not be qualified")),
     }
 }
-fn configuration(root: &Path) -> Result<Config, String> {
+fn configuration_eol(root: &Path) -> Result<(AutoCrlf, bool, String), String> {
     let autocrlf = if config_value(root, "core.autocrlf", "false")?.eq_ignore_ascii_case("input") {
         AutoCrlf::Input
     } else if config_bool(root, "core.autocrlf")? { AutoCrlf::True } else { AutoCrlf::False };
@@ -68,11 +68,13 @@ fn configuration(root: &Path) -> Result<Config, String> {
     let output_crlf = match autocrlf {
         AutoCrlf::True => true, AutoCrlf::Input => false, AutoCrlf::False => default_crlf,
     };
+    Ok((autocrlf, output_crlf, eol))
+}
+fn configuration_safety(root: &Path) -> Result<(SafeCrlf, String), String> {
     let safecrlf = if config_value(root, "core.safecrlf", "false")?.eq_ignore_ascii_case("warn") {
         SafeCrlf::Warn
     } else if config_bool(root, "core.safecrlf")? { SafeCrlf::True } else { SafeCrlf::False };
-    Ok(Config { autocrlf, output_crlf, eol, safecrlf,
-        attributes_file: config_value(root, "core.attributesFile", "")? })
+    Ok((safecrlf, config_value(root, "core.attributesFile", "")?))
 }
 
 fn attributes(root: &Path, names: &BTreeSet<String>, cached: bool, index: Option<&Path>)
@@ -227,18 +229,23 @@ fn worker_result<T>(result: thread::Result<Result<T, String>>) -> Result<T, Stri
 }
 
 fn observe_index(root: &Path, names: &BTreeSet<String>, index: Option<&Path>) -> Result<Policy, String> {
-    // Exactly five independent read-only probes, regardless of file count.
+    // Exactly six independent read-only probes, regardless of file count.
+    // Each configuration worker runs at most three unchanged Git commands.
     // Join every worker before propagating an error. The caller repeats and
     // compares the complete policy around the immutable source capture.
-    let (config, working, cached, indexed_crlf, sources) = thread::scope(|workers| {
-        let config = workers.spawn(|| configuration(root));
+    let (eol_config, safety_config, working, cached, indexed_crlf, sources) = thread::scope(|workers| {
+        let eol_config = workers.spawn(|| configuration_eol(root));
+        let safety_config = workers.spawn(|| configuration_safety(root));
         let working = workers.spawn(|| attributes(root, names, false, index));
         let cached = workers.spawn(|| attributes(root, names, true, index));
         let indexed_crlf = workers.spawn(|| indexed_eol(root, index));
         let sources = workers.spawn(|| attribute_sources(root, names));
-        (config.join(), working.join(), cached.join(), indexed_crlf.join(), sources.join())
+        (eol_config.join(), safety_config.join(), working.join(), cached.join(), indexed_crlf.join(), sources.join())
     });
-    Ok(Policy { config: worker_result(config)?, working: worker_result(working)?,
+    let (autocrlf, output_crlf, eol) = worker_result(eol_config)?;
+    let (safecrlf, attributes_file) = worker_result(safety_config)?;
+    let config = Config { autocrlf, output_crlf, eol, safecrlf, attributes_file };
+    Ok(Policy { config, working: worker_result(working)?,
         cached: worker_result(cached)?, indexed_crlf: worker_result(indexed_crlf)?, sources: worker_result(sources)? })
 }
 
