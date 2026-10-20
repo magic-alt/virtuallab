@@ -4,7 +4,7 @@ Source implementation added 2026-10-17. This document describes available local 
 
 ## Navigation and ownership
 
-The application navigation provides 控制中心, 任务, 工程仓库, 证据 and 设置. A new installation opens the control center; an existing selected repository keeps its workspace view during migration. 工程仓库 retains the six existing workspace tools. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
+The application navigation provides 控制中心, 工程仓库, 报告 and 设置. The task list is part of 控制中心. A new installation opens the control center; an existing selected repository keeps its workspace view during migration. 工程仓库 retains the six existing workspace tools. Application navigation hides the persistent workspace host instead of unmounting it; navigation does not stop PTYs or start work.
 
 Tasks belong to a selected repository and reference explicitly created registered Git worktrees. A task never owns repository state through an Agent session. The footer build identity still identifies the running application independently of task/repository selection.
 
@@ -12,12 +12,31 @@ Agents, Run/build processes and verification share an exclusive workspace writer
 
 ## Local workflow
 
-1. Add/select a local repository and choose 新建任务. The default prompt-first composer accepts a natural-language goal, automatically inspects the active repository HEAD and displays its branch/baseline, then creates **one implementation Task** after a native recheck. The default approved task scope is the full repository (`.`), but native source and commit controls still reject `.git` and `.env` paths; it is not an OS sandbox. Optional settings can narrow the scope, copy a frozen Profile, or explicitly allow native scoped local sealing. The new Task opens on its overview. Existing four-step manual planning remains available under **高级任务图 / JSON** for multi-node dependencies, integration, and direct Profile JSON edits; the prompt/baseline/selected Profile are carried into that editor.
-2. Create each task worktree explicitly. Creation does not start an Agent. A partial creation/persistence failure preserves the worktree and its preparation intent for manual reconciliation; it never silently cleans up or replays creation.
-3. Start implementation tasks. The native coordinator has two global execution slots and a queue of at most 32 tasks. Retry creates a new Attempt. Provider completion only advances execution; Native observes shutdown, checks scope and optionally seals a local candidate commit.
+1. Add/select a local repository, open **控制中心**, and enter a concrete goal in **工作任务**, such as “修复 git 提交错误，检查原因、完成修复和测试，并总结发现的问题”. Choose **开始任务** (or Ctrl/⌘+Enter). The composer displays the current branch/HEAD, rechecks it, and submits one native launch operation. That action accepts the task, creates its independent worktree, and starts Codex. The execution panel opens automatically; there is no separate prepare/start sequence on this default path.
+2. Optional settings can narrow the default repository scope (`.`), select a frozen verification Profile, override the Codex executable, and permit local auto-commit. The executable defaults to the path configured in Agents, or automatic native discovery. Without auto-commit, validated changes stay in the worktree. Without a Profile, successful Codex execution completes but delivery remains **unverified**, with its report preserved. Repository scope still excludes Git metadata and environment-secret files; it is not an OS sandbox.
+3. The native coordinator has two global execution slots and a queue of at most 32 tasks. The execution console shows the real supervised Codex app-server's messages, commands and file activity; it does not start another interactive writer. Task text is sent through the existing structured turn API. Cancellation waits for observed process cleanup. Retry creates a new Attempt. Duplicate launch requests reuse a durable request receipt. A lost response can be retried without accepting another task, including after the original repository HEAD moves.
 4. The native verifier runs the accepted structured software gates against committed, clean controlled inputs. Failed/unsupported/missing required gates prevent readiness. Optional limitations remain warnings. Ordinary Run output is exploratory and does not grant task readiness.
 5. For integration, prepare a dedicated worktree from the accepted base. Wait for fresh prerequisite checks and candidates, preview their exact source commits and target HEAD, then confirm through the native dialog. The preview expires after five minutes and is consumed once. No remote fetch/checkout, push or PR merge occurs.
 6. Independently verify the final integrated commit, review that revision, and explicitly accept it. After a conflict or interrupted merge, use the IDE to inspect/resolve/commit the worktree, then choose 验证已解决的集成. Native checks the clean source and dependency ancestry; it does not replay merges.
+
+The default action is the user's authorization to create and start that task.
+Merely opening a page, changing a filter, or selecting a task never starts work.
+Queued and running tasks keep their linked worktrees protected from native removal
+and **Clean merged**, including the gaps before Codex starts and while it stops.
+Cancelling queued work releases that protection after the cancellation is saved;
+running work releases it only after observed cleanup. Other active native owners
+can still keep the workspace busy.
+The advanced **高级任务图 / JSON** editor retains multi-node dependencies,
+integration and manual preparation/start controls. A partial worktree creation or
+persistence failure keeps the task, worktree and preparation intent for explicit
+reconciliation; it never deletes work or silently replays an uncertain operation.
+
+A definitive pre-acceptance rejection closes that request ID durably. The form
+keeps the task description, shows the reason, and refreshes the repository baseline
+for a new submission. An unknown/lost response retains the original request ID.
+Setup errors remain readable after restart even if no Attempt was created. Their
+recovery action can reconcile an existing worktree; an old error alone does not
+prevent corrected explicit creation when Native has no retained preparation intent.
 
 AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. The quick composer **does not invoke an AI planner** or synthesize a dependency DAG: it freezes the user's words as the implementation Agent's goal, with a bounded title derived locally. This provides low-friction Vibe Coding task creation without fabricating an AI capability, execution or verification. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through workspace Agents; the task coordinator's first implementation uses Codex only.
 
@@ -49,11 +68,20 @@ controls. Selection, detail tab and task filters survive Workspace round trips;
 removing the repository invalidates its selection. Navigation never creates or
 starts work, and retained terminals continue to belong to Workspace.
 
-The evidence page lists all Runs persisted on task Attempts, with repository,
-task, Attempt, tested SHA, historical outcome and time. Filter by repository/task/
-check outcome; select 查看 Run for checks, digests and artifact metadata, then
-explicitly open its task. Superseded records remain historical even if HEAD
-matches. This inventory does not scan all archived files or open artifact paths.
+The **报告** page lists task results, including tasks that have no verification
+Profile or Run. A task report leads with Codex's recorded response and observed
+problems, then independent verification and current readiness. The prompt requests
+clear completion, discovered-problem, verification and unresolved-item sections;
+missing provider output is shown as missing, never synthesized into success.
+Earlier implementation reports remain selectable after a verification-only Attempt.
+Historical verification Runs retain their checks, digests and artifact metadata;
+superseded records remain historical even if HEAD matches.
+
+The shell continues monitoring tasks while another workspace/page is visible.
+Events trigger scoped refreshes and active tasks have a periodic catch-up path.
+A task finishing automatically opens its report only if the user still follows
+that same Attempt on **执行**. It does not select another task or replace an
+explicitly chosen review tab. The report console has its own bounded scroll area.
 
 ## Verification Profile
 
@@ -99,6 +127,15 @@ Explicit verification can adopt a clean committed repair even after a failed int
 ## Durability and privacy
 
 Application data contains `tasks-v1.json` and `task-evidence/<runId>/manifest-v2.json` plus bounded local artifacts. The task store persists a validated generation before exposing new state/events, with atomic replacement and rollback on failure. Reopening marks unfinished queued/running/stopping Attempts interrupted. No mutation is replayed automatically. An unavailable/corrupt store disables Task operations without overwriting the file or disabling direct workspace tools.
+
+Task launch receipts are part of the atomic task generation. Execution reports
+are stored separately at `task-reports/<taskId>.<attemptId>.json`, with a 512 KiB
+file limit, at most 200 log entries/128 KiB of log text, a 64 KiB final response,
+at most 32 problems/32 KiB of problem text, and explicit truncation. Budgets leave
+room for JSON escaping. UI report queries name the exact task and attempt;
+provider output is correlated to its workspace, thread and turn. Reopening
+reconciles report status to interrupted attempts without replaying the provider.
+Reports contain local provider/build output and remain on the user's computer.
 
 Existing workspace `.virtuallab/evidence` manifests are not promoted. New task verification obtains its own before/after observations around a newly invoked native run and archives its artifacts into application data. Removing a worktree does not erase archived task evidence. Human decisions are archived transactionally when superseded or cleared.
 

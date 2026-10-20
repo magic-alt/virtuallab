@@ -606,6 +606,8 @@ pub(super) fn generation(g: &Generation) -> Result<(), String> {
         || g.tasks.len() > MAX_TASKS
         || g.events.len() > MAX_EVENTS
         || g.decision_history.len() > MAX_DECISIONS
+        || g.launch_requests.len() > MAX_TASKS
+        || g.rejected_launch_requests.len() > MAX_TASKS
     {
         return Err("Incompatible/oversized task store.".into());
     }
@@ -613,6 +615,23 @@ pub(super) fn generation(g: &Generation) -> Result<(), String> {
     let mut by_id = HashMap::new();
     let mut attempts = HashMap::new();
     let mut queued = 0;
+    let mut launch_ids = HashSet::new();
+    for receipt in &g.launch_requests {
+        id(&receipt.request_id)?;
+        id(&receipt.task_id)?;
+        digest(&receipt.request_digest)?;
+        if !launch_ids.insert(&receipt.request_id)
+            || !g.tasks.iter().any(|task| task.id == receipt.task_id)
+            || (!receipt.finished && receipt.launch_error.is_some()) {
+            return Err("Invalid durable launch receipt.".into());
+        }
+        if let Some(error) = &receipt.launch_error { text(error, 4096, false)?; }
+    }
+    for receipt in &g.rejected_launch_requests {
+        id(&receipt.request_id)?;
+        text(&receipt.message, 4096, false)?;
+        if !launch_ids.insert(&receipt.request_id) { return Err("Duplicate or contradictory launch receipt.".into()); }
+    }
     for task in &g.tasks {
         id(&task.id)?;
         if !ids.insert(task.id.as_str()) {

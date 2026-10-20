@@ -1788,6 +1788,35 @@ pub async fn create_worktree(
     .map_err(|error| format!("Worktree creation task failed: {error}"))?
 }
 
+/// Task admission keeps the target alive across creation, binding and enqueue.
+/// Acquire that lifetime from the creation reservation before any filesystem/Git
+/// mutation, so no remover can enter between dropping the claim and returning.
+pub(crate) async fn create_task_worktree(
+    app: tauri::AppHandle,
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+) -> Result<(WorkspaceMutationResult, std::sync::Arc<crate::workspace_lifecycle::RepositoryActivity>), String> {
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        create_task_worktree_blocking(repository_root, branch, base_ref, target_path, &lifecycle)
+    })
+    .await
+    .map_err(|error| format!("Worktree creation task failed: {error}"))?
+}
+
+pub(crate) fn create_task_worktree_blocking(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+    lifecycle: &WorkspaceLifecycle,
+) -> Result<(WorkspaceMutationResult, std::sync::Arc<crate::workspace_lifecycle::RepositoryActivity>), String> {
+    create_worktree_guarded(repository_root, branch, base_ref, target_path, lifecycle,
+        crate::workspace_lifecycle::WorkspaceReservation::retain_activity)
+}
+
 fn create_worktree_blocking(
     repository_root: String,
     branch: String,
@@ -1795,6 +1824,18 @@ fn create_worktree_blocking(
     target_path: Option<String>,
     lifecycle: &WorkspaceLifecycle,
 ) -> Result<WorkspaceMutationResult, String> {
+    create_worktree_guarded(repository_root, branch, base_ref, target_path, lifecycle, |_| Ok(()))
+        .map(|(created, ())| created)
+}
+
+fn create_worktree_guarded<T>(
+    repository_root: String,
+    branch: String,
+    base_ref: Option<String>,
+    target_path: Option<String>,
+    lifecycle: &WorkspaceLifecycle,
+    retain: impl FnOnce(&crate::workspace_lifecycle::WorkspaceReservation) -> Result<T, String>,
+) -> Result<(WorkspaceMutationResult, T), String> {
     let _repository = lifecycle.reserve(&repository_root, "Git worktree creation")?;
     let repository_root = git(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
@@ -1828,6 +1869,7 @@ fn create_worktree_blocking(
     };
 
     let (_target, target) = lifecycle.reserve_creation_target(&target.to_string_lossy(), "Git worktree creation target")?;
+    let retained = retain(&_target)?;
     // Keep the canonical target's case while presenting ordinary Windows paths
     // to Git. Filesystem IO and the returned workspace use the same location.
     let target_string = worktree_git_path(
@@ -1863,10 +1905,10 @@ fn create_worktree_blocking(
         ],
     )?;
 
-    Ok(WorkspaceMutationResult {
+    Ok((WorkspaceMutationResult {
         path: target_string,
         branch,
-    })
+    }, retained))
 }
 
 fn worktree_git_path(path: &str, windows: bool) -> Result<String, String> {
@@ -2190,12 +2232,44 @@ fn canonical_or_original(path: &std::path::Path) -> std::path::PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
+#[cfg(test)]
+pub(crate) fn execute_merged_cleanup_for_task_test(
+    root: &str,
+    lifecycle: &WorkspaceLifecycle,
+) -> Result<(serde_json::Value, Vec<String>), String> {
+    let plan = cleanup::preview_cleanup(root, root)?;
+    let preview = serde_json::to_value(&plan).map_err(|error| error.to_string())?;
+    let outcome = cleanup::execute_cleanup(plan, lifecycle, |_, _, _| {})?;
+    Ok((preview, outcome.failed))
+}
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn task_worktree_creation_retains_target_before_git_and_releases_on_creation_failure() {
+        let (sandbox, repo) = init_fixture_repo("task-create-lifetime");
+        let target = sandbox.join("future task 工作区");
+        let lifecycle = WorkspaceLifecycle::default();
+        let mut retained_before_git = false;
+        let result = create_worktree_guarded(repo.to_string_lossy().into_owned(), "task/failure".into(),
+            Some("missing-base-reference".into()), Some(target.to_string_lossy().into_owned()), &lifecycle,
+            |reservation| {
+                assert!(!target.exists());
+                retained_before_git = true;
+                reservation.retain_activity()
+            });
+        assert!(retained_before_git);
+        assert!(result.is_err());
+        assert!(!target.exists());
+        assert!(lifecycle.reserve_creation(target.to_str().unwrap(), "retry after observed failure").is_ok());
+        assert!(lifecycle.reserve(repo.to_str().unwrap(), "repository writer").is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
 
     #[test]
     fn merged_cleanup_preserves_remote_feature_until_main_merge_is_published() {

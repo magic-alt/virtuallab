@@ -449,6 +449,27 @@ pub(crate) fn source_identity(
     Ok(observe_sources(root, source_paths, output_paths)?.0)
 }
 
+/// Observe retained provider edits without touching the real index or history.
+/// Uncommitted results still obey the approved source/output and scope policy.
+pub(crate) fn retained_candidate(
+    root: &Path,
+    expected_head: &str,
+    scope: &[String],
+    sources: &[String],
+    outputs: &[String],
+) -> Result<SourceIdentity, String> {
+    if scope.is_empty() { return Err("Task requires an approved file scope".into()); }
+    for path in scope { safe_relative(path, true)?; }
+    let (identity, changed) = observe_sources(root, sources, outputs)?;
+    if identity.head_sha != expected_head {
+        return Err("Provider changed Git HEAD; retained work requires manual reconciliation".into());
+    }
+    if changed.iter().any(|path| !scope.iter().any(|prefix| prefix == "." || path == prefix || path.starts_with(&format!("{prefix}/")))) {
+        return Err("Provider changes files outside the approved scope; changes retained for review".into());
+    }
+    Ok(identity)
+}
+
 fn observe_sources(
     root: &Path,
     source_paths: &[String],

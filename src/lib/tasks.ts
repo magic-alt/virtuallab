@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isDesktopRuntime } from './backend';
-import type { IntegrationPreview, TaskAcceptanceRequest, TaskEvent, TaskPlanRequest, TaskReadiness, TaskRecord, TaskReviewRequest, TaskWorkspaceRequest } from '@/types/tasks';
+import type { IntegrationPreview, TaskAcceptanceRequest, TaskAttemptReport, TaskEvent, TaskLaunchFailure, TaskLaunchRequest, TaskLaunchResult, TaskPlanRequest, TaskReadiness, TaskRecord, TaskReportEvent, TaskReviewRequest, TaskWorkspaceRequest } from '@/types/tasks';
 
 function desktopOnly() {
   if (!isDesktopRuntime()) throw new Error('任务数据需要 Tauri 桌面运行时；当前原生来源不可用。');
@@ -14,6 +14,17 @@ export const getTask = (taskId: string) => query<TaskRecord>('task_get', { taskI
 export const getTaskEvents = (afterSeq: number) => query<TaskEvent[]>('task_events', { afterSeq });
 export const getTaskReadiness = (taskId: string) => query<TaskReadiness>('task_readiness', { taskId });
 export const acceptTaskPlan = (request: TaskPlanRequest) => query<TaskRecord[]>('task_accept_plan', { request });
+/** A single explicit action; Native owns idempotency, worktree preparation and queueing. */
+export const launchTask = (request: TaskLaunchRequest) => query<TaskLaunchResult>('task_launch', { request });
+/** Only this typed Native rejection can prove a request will never be accepted. */
+export function taskLaunchFailure(reason:unknown):TaskLaunchFailure|null {
+  if (!reason || typeof reason!=='object') return null;
+  const value=reason as Partial<TaskLaunchFailure>;
+  return typeof value.requestId==='string' && typeof value.message==='string'
+    && (value.acceptance==='rejected' || value.acceptance==='unknown') ? value as TaskLaunchFailure : null;
+}
+export const getTaskLaunchError = (taskId: string) => query<string | null>('task_launch_error', { taskId });
+export const getTaskAttemptReport = (taskId: string, attemptId: string) => query<TaskAttemptReport | null>('task_attempt_report', { request: { taskId, attemptId } });
 export const prepareTaskWorkspace = (request: TaskWorkspaceRequest) => query<TaskRecord>('task_prepare_workspace', { request });
 export const startTask = (taskId: string, executablePath: string | null = null) => query<TaskRecord>('task_start', { request: { taskId, executablePath } });
 export const cancelTask = (taskId: string) => query<TaskRecord>('task_cancel', { request: { taskId } });
@@ -33,6 +44,10 @@ export async function confirmTaskIntegration(preview: IntegrationPreview): Promi
 export async function subscribeTaskEvents(handler: (event: TaskEvent) => void): Promise<UnlistenFn> {
   desktopOnly();
   return listen<TaskEvent>('task://event', ({ payload }) => handler(payload));
+}
+export async function subscribeTaskReportEvents(handler: (event: TaskReportEvent) => void): Promise<UnlistenFn> {
+  desktopOnly();
+  return listen<TaskReportEvent>('task://report', ({ payload }) => handler(payload));
 }
 
 export const reconcileTaskWorkspace = (taskId: string) => query<TaskRecord>('task_reconcile_workspace', { request: { taskId } });

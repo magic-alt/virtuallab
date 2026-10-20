@@ -78,8 +78,8 @@ export function WorkbenchShell() {
     [activeRepositoryId, repositories],
   );
 
-  type AppView = "home" | "tasks" | "repositories" | "evidence" | "settings";
-  // Preserve existing operators' workspace on migration; fresh installs begin at Tasks home.
+  type AppView = "home" | "repositories" | "evidence" | "settings";
+  // Preserve existing operators' workspace; fresh installs begin at the control center.
   const [appView, setAppView] = useState<AppView>(() => activeRepositoryId ? "repositories" : "home");
   const lastTaskView = useRef<Exclude<AppView, "repositories">>("home");
   if (appView !== "repositories") lastTaskView.current = appView;
@@ -898,7 +898,7 @@ export function WorkbenchShell() {
       <div className="flex min-h-0 flex-1">
         <aside className="vl-app-navigation flex min-h-0 shrink-0 flex-col border-r">
           <nav aria-label="工程控制中心导航" className="flex shrink-0 flex-col gap-1 border-b p-2">
-            {([ ["home", "控制中心"], ["tasks", "任务"], ["repositories", "工程仓库"], ["evidence", "证据"], ["settings", "设置"] ] as const).map(([view,label]) => (
+            {([ ["home", "控制中心"], ["repositories", "工程仓库"], ["evidence", "报告"], ["settings", "设置"] ] as const).map(([view,label]) => (
               <button key={view} type="button" aria-current={appView === view ? "page" : undefined}
                 className="vl-app-route rounded-md px-3 py-2 text-left text-sm" onClick={() => setAppView(view)}>{label}</button>
             ))}
@@ -1011,7 +1011,7 @@ export function WorkbenchShell() {
           </div>
           <div hidden={appView === "repositories"} className="min-h-0 min-w-0 flex-1 overflow-auto">
             <TaskControlCenter view={lastTaskView.current} repositories={repositories} activeRepository={activeRepository}
-              searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace}/>
+              visible={appView !== "repositories"} searchQuery={searchQuery} onOpenWorkspace={openTaskWorkspace} onOpenControlCenter={() => setAppView("home")}/>
           </div>
 
           <footer className="vl-footer flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-t px-3 text-[10px] text-stone-600">

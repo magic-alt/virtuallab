@@ -88,7 +88,7 @@ they neither steal focus nor block work. Native notification errors fall back
 to the in-app inbox. Routing to an inbox item only navigates to a registered
 repository/worktree and never creates or starts work.
 
-The repository host stays mounted while the operator visits Tasks, Evidence,
+The repository host stays mounted while the operator visits Control Center, Reports,
 Settings or Home. Its application visibility is passed to retained terminal
 panes so hidden panes stop visible-only resize/focus behavior without losing
 their sessions. Agent notification suppression also requires the repository
@@ -221,7 +221,57 @@ The workspace survives even when there is no agent attached.
 
 Implemented delivery assessment is shared by readiness, acceptance and passport export. Exact fixed dependency lineage and atomic dependency-revision guards prevent newer/rejected sources from qualifying an older integration. Candidate adoption checks the full accepted base-to-HEAD scope, including manual first-conflict recovery. Source qualification compares actual byte-preserving files with committed/indexed objects, while `task_git_watch` observes linked-worktree HEAD/index/relevant refs outside the workspace. Tool/selection changes remain sticky within a session; restart requires new verification. Formal CMake verification requires preconfigured observable compiler selection; exploratory configuration grants no qualification.
 
-**Prompt-first Task creation (2026-10-19).** The React quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through the existing typed `inspectRepository` boundary and re-inspects before submitting `task_accept_plan`; any changed HEAD must be acknowledged on screen first. No frontend model inference, shell execution, implicit worktree creation or provider launch is introduced. The existing multi-node manual planner remains available as an advanced mode. A single scope entry `.` denotes the operator-approved repository-wide task scope, accepted only in task draft and persisted task validation; narrower Profile paths still require safe literal relative names, and native candidate/source checks reject Git metadata and environment-secret paths. Whole-repository scope does not grant OS isolation or override native verification/human review requirements.
+**Prompt-to-report Task execution (2026-10-19).** The inline quick composer constructs a single implementation Task from the user's free-form goal. It obtains the repository HEAD through `inspectRepository`, re-inspects before accepting a new launch, and calls the typed `task_launch` boundary with a stable request ID, frozen plan and executable identity. Native accepts the task, prepares its unique registered worktree and queues the existing supervised Codex app-server process. The user-triggered launch is the authorization for that sequence. Repeated accepted requests return the retained task without replaying preparation/start, even if HEAD subsequently moves. Partial failures retain a recoverable task and actionable error. The frontend does not run shell commands or start a competing writer; its execution console renders the same process's structured output. Existing multi-node manual planning remains available as an advanced mode. Repository scope `.` retains native Git-metadata/environment-secret exclusions and does not grant OS isolation or verification/human review authority.
+
+Task lifetime protection covers the actual linked worktree as well as its repository.
+Guarded creation retains a nonexclusive activity before releasing its writer claim;
+automatic launch holds that activity until queue admission acquires its own target
+activity. The queued entry then carries ownership through dispatch, provider
+preflight, Agent startup, final reporting and observed process cleanup. Native
+writers retain their separate exclusive claims. This closes the gaps in which a
+clean task branch still at main could otherwise be removed by **Clean merged**.
+Queued cancellation persists before releasing ownership; running cancellation
+retains ownership until cleanup finishes. Prepared work without a pending attempt
+does not keep an indefinite lease. These are process-local lifecycle guarantees,
+not protection against external filesystem or Git commands.
+
+The task list is integrated into the control center. The old `evidence` route and
+`证据` detail key remain internal aliases with the visible label **报告**. A mounted
+composer retains its draft across navigation but only inspects its baseline/Profile
+library while visible. The persistent shell observer catches up active task states
+every five seconds if events are lost. Completion follows only the selected active
+attempt on its Execution tab; explicit navigation and workspace hosts remain intact.
+
+The launch command rejects with `{requestId, acceptance, message}`. Only
+`acceptance: 'rejected'` proves the request was durably closed under the same
+acceptance mutex and cannot later create work. Closed request IDs survive restart
+and are never evicted; saturation or persistence/worker uncertainty returns
+`unknown`. The UI refreshes HEAD and clears only a matching definitely rejected
+token, preserving the original request after uncertain/lost responses.
+`task_launch_error` supplies durable setup errors for tasks with no Attempt;
+explicit reconciliation remains available without treating a historical error as
+proof that preparation is still pending.
+
+`task_attempt_report` reads one separately persisted native report;
+`task://report` invalidations carry task ID, attempt ID and sequence. Reports bind
+assistant/command/file notifications to the exact workspace/thread/turn and are
+subscribed before provider startup so short turns are not missed. Their bounded
+log, final response, observed problems and truncation metadata survive navigation
+and restart without bloating `task_list`. React rejects stale/foreign snapshots
+and catches up after listener registration. Provider output is descriptive and
+cannot establish qualification or acceptance.
+
+Report files are bounded to 512 KiB. UTF-8-safe limits retain a 64 KiB summary,
+128 KiB of log text (200 entries, 16 KiB each), and 32 KiB of problem text
+(32 problems, 4 KiB each), leaving headroom for JSON escaping. Oversized content
+is explicitly marked truncated; a high-volume report does not fail a valid task.
+
+A task without a Profile can finish implementation successfully with no formal
+verification. With local auto-commit disabled, in-scope uncommitted edits are kept
+in the worktree and reported as such; missing sealing alone is not execution
+failure. Formal verification still requires a qualified clean candidate. The
+report retains any actual provider/native failure instead of a generic success or
+reconciliation summary. Human review, verification and acceptance remain separate.
 
 ### Current Task boundary
 

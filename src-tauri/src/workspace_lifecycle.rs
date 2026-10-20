@@ -285,7 +285,7 @@ impl WorkspaceLifecycle {
         if claims.terminals.keys().any(|active| *active == key || (removal && overlaps(active, &key))) {
             return Err("Workspace is reserved by terminal; wait for observed completion.".into());
         }
-        if removal && claims.activities.keys().any(|active| overlaps(active, &key)) {
+        if claims.activities.keys().any(|active| *active == key || (removal && overlaps(active, &key))) {
             return Err("Workspace has an active task operation; wait for completion.".into());
         }
         claims.claims.insert(key.clone(), WriterClaim { owner: owner.to_owned(), blocks_terminals: true, removal });
@@ -367,6 +367,18 @@ impl WorkspaceReservation {
     pub(crate) fn workspace_root(&self) -> &Path { &self.key }
 
     pub(crate) fn release_observer(&self) -> Arc<std::sync::atomic::AtomicBool> { self.released.clone() }
+
+    /// Retain task lifetime before relinquishing a writer/creation claim. The
+    /// immutable key also works before mkdir/Git registration; resolving the path
+    /// again would either fail or temporarily identify its parent workspace.
+    pub(crate) fn retain_activity(&self) -> Result<Arc<RepositoryActivity>, String> {
+        let mut state = self.lifecycle.0.lock().map_err(|_| "Workspace lifecycle lock poisoned")?;
+        if self.terminal || state.claims.get(&self.key).is_none_or(|claim| claim.removal) {
+            return Err("Only an active non-removal writer can retain task lifetime".into());
+        }
+        *state.activities.entry(self.key.clone()).or_default() += 1;
+        Ok(Arc::new(RepositoryActivity { lifecycle: self.lifecycle.clone(), key: self.key.clone() }))
+    }
 }
 
 impl Drop for WorkspaceReservation {
@@ -726,6 +738,75 @@ mod tests {
         assert!(service.begin_repository_activity(&path).is_err());
         service.restore_repository(&[path.clone()]).unwrap();
         assert!(service.begin_repository_activity(&path).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn active_task_identity_cannot_be_recreated_if_directory_disappears() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        fs::create_dir(root.join(".git")).unwrap();
+        let target = root.join("other");
+        fs::create_dir(target.join(".git")).unwrap();
+        let repository = service.begin_repository_activity(root.to_str().unwrap()).unwrap();
+        let task = service.begin_repository_activity(target.to_str().unwrap()).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+        assert!(service.begin_missing_removal(target.to_str().unwrap()).is_err());
+        assert!(service.reserve_creation(target.to_str().unwrap(), "replacement worktree").is_err(),
+            "a queued or stopping task must retain its exact workspace identity");
+        drop(task);
+        assert!(service.reserve_creation(target.to_str().unwrap(), "new worktree").is_ok(),
+            "the parent repository activity must not block unrelated creation");
+        drop(repository);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn creation_activity_handoff_keeps_exact_target_through_registration_and_writer_gaps() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        fs::create_dir(root.join(".git")).unwrap();
+        let target = root.join("future 工作区");
+        let creation = service.reserve_creation(target.to_str().unwrap(), "creation").unwrap();
+        let activity = creation.retain_activity().unwrap();
+        assert!(!target.exists(), "retain ownership before creating the target");
+        fs::create_dir(&target).unwrap();
+        assert!(service.begin_repository_activity(target.to_str().unwrap()).is_err(),
+            "path-based acquisition cannot safely hand off an unfinished creation");
+        fs::write(target.join(".git"), "gitdir: fixture").unwrap();
+        drop(creation);
+        assert!(service.begin_removal(target.to_str().unwrap()).is_err());
+        assert!(service.begin_removal(root.to_str().unwrap()).is_err());
+        for owner in ["preflight", "Codex", "verification"] {
+            let writer = service.reserve(target.to_str().unwrap(), owner).unwrap();
+            let terminal = service.reserve_terminal(target.to_str().unwrap()).unwrap();
+            drop(terminal);
+            drop(writer);
+            assert!(!service.is_reserved(target.to_str().unwrap()).unwrap());
+            assert!(service.begin_removal(target.to_str().unwrap()).is_err());
+        }
+        let observer = activity.clone();
+        drop(activity);
+        assert!(service.detach_repository(&[target.to_string_lossy().into_owned()], || Ok(())).is_err());
+        drop(observer);
+        assert!(service.begin_removal(target.to_str().unwrap()).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn removal_and_terminal_claims_cannot_promote_to_task_lifetime() {
+        let service = WorkspaceLifecycle::default();
+        let root = fixture();
+        let removal = service.begin_removal(root.to_str().unwrap()).unwrap();
+        assert!(removal.retain_activity().is_err());
+        drop(removal);
+        let writer = service.reserve(root.to_str().unwrap(), "ordinary writer").unwrap();
+        let terminal = service.reserve_terminal(root.to_str().unwrap()).unwrap();
+        assert!(terminal.retain_activity().is_err());
+        drop(terminal);
+        assert!(writer.retain_activity().is_ok());
+        drop(writer);
+        assert!(service.begin_removal(root.to_str().unwrap()).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 

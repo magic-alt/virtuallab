@@ -1,6 +1,150 @@
 use super::*;
 
 #[test]
+fn launch_request_replay_keeps_one_durable_task_and_the_original_failure() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let request = f.request(vec![draft("quick", &[])]);
+    let first = m.accept_launch("launch-request", request.clone(), None).unwrap();
+    assert!(first.created);
+    m.finish_launch("launch-request", Some("Worktree target is unavailable".into())).unwrap();
+    assert_eq!(m.launch_error(&first.task.id).unwrap().as_deref(), Some("Worktree target is unavailable"));
+    let retry = m.accept_launch("launch-request", request.clone(), None).unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.task.id, first.task.id);
+    assert_eq!(retry.launch_error.as_deref(), Some("Worktree target is unavailable"));
+    assert_eq!(m.all().unwrap().len(), 1);
+    assert_eq!(m.events(0).unwrap().len(), 1);
+    drop(m);
+    let reopened = f.manager();
+    let replay = reopened.accept_launch("launch-request", request, None).unwrap();
+    assert!(!replay.created);
+    assert_eq!(replay.task.id, first.task.id);
+    assert_eq!(replay.launch_error, retry.launch_error);
+    assert_eq!(reopened.launch_error(&first.task.id).unwrap(), retry.launch_error);
+    assert!(reopened.launch_error("nonexistent-task").is_err());
+}
+
+#[test]
+fn accepted_launch_replay_does_not_revalidate_a_later_repository_head() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let request = f.request(vec![draft("quick", &[])]);
+    let original = m.accept_launch("fixed-request", request.clone(), None).unwrap();
+    assert!(Command::new("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","later commit"]).current_dir(&f.repo).status().unwrap().success());
+    let replay = m.accept_launch("fixed-request", request, None).unwrap();
+    assert!(!replay.created);
+    assert_eq!(replay.task.id, original.task.id);
+    assert_eq!(replay.task.base_sha, f.head);
+}
+
+#[test]
+fn launch_token_rejects_changed_inputs_and_serializes_concurrent_acceptance() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let request = f.request(vec![draft("quick", &[])]);
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let manager = m.clone();
+        let request = request.clone();
+        workers.push(std::thread::spawn(move || manager.accept_launch("same-token", request, None).unwrap()));
+    }
+    let accepted: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+    assert_eq!(accepted.iter().filter(|result| result.created).count(), 1);
+    assert!(accepted.iter().all(|result| result.task.id == accepted[0].task.id));
+    let mut changed = request.clone();
+    changed.tasks[0].goal = "Another task".into();
+    assert!(m.accept_launch("same-token", changed, None).is_err());
+    assert!(m.accept_launch("same-token", request, Some("/another/codex")).is_err());
+    assert_eq!(m.all().unwrap().len(), 1);
+}
+
+#[test]
+fn interrupted_launch_token_never_becomes_permission_to_repeat_creation() {
+    let f = Fixture::new();
+    let request = f.request(vec![draft("quick", &[])]);
+    let m = f.manager();
+    let first = m.accept_launch("uncertain-launch", request.clone(), None).unwrap();
+    drop(m);
+    let retry = f.manager().accept_launch("uncertain-launch", request, None).unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.task.id, first.task.id);
+    assert!(retry.launch_error.is_some());
+    assert!(retry.task.workspace_root.is_none());
+    assert!(retry.task.attempts.is_empty());
+}
+
+#[test]
+fn rejected_launch_token_stays_closed_after_head_restoration_and_restart() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let request = f.request(vec![draft("quick", &[])]);
+    assert!(Command::new("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","moved HEAD"]).current_dir(&f.repo).status().unwrap().success());
+    let failure = m.accept_launch("rejected-token", request.clone(), None).err().unwrap();
+    assert_eq!(failure.acceptance, "rejected");
+    assert_eq!(failure.request_id, "rejected-token");
+    assert!(failure.message.contains("HEAD"));
+    assert!(m.all().unwrap().is_empty());
+    assert!(Command::new("git").args(["checkout","--detach", &f.head]).current_dir(&f.repo).status().unwrap().success());
+    drop(m);
+    let reopened = f.manager();
+    let late_original = reopened.accept_launch("rejected-token", request.clone(), None).err().unwrap();
+    assert_eq!(late_original.acceptance, "rejected");
+    assert_eq!(late_original.message, failure.message);
+    assert!(reopened.all().unwrap().is_empty());
+    assert!(reopened.accept_launch("new-token", request, None).unwrap().created);
+}
+
+#[test]
+fn launch_storage_uncertainty_cannot_claim_a_definitive_rejection() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let request = f.request(vec![draft("quick", &[])]);
+    fs::remove_file(f.path()).unwrap();
+    fs::create_dir(f.path()).unwrap();
+    let failure = m.accept_launch("uncertain-save", request, None).err().unwrap();
+    assert_eq!(failure.acceptance, "unknown");
+    assert_eq!(failure.request_id, "uncertain-save");
+    assert!(m.all().unwrap().is_empty());
+    let mut invalid = f.request(vec![draft("invalid", &[])]);
+    invalid.tasks[0].goal.clear();
+    assert_eq!(m.accept_launch("uncertain-rejection-save", invalid, None).err().unwrap().acceptance, "unknown");
+}
+
+#[test]
+fn saturated_rejected_launch_history_never_evicts_a_closed_token() {
+    let f = Fixture::new();
+    drop(f.manager());
+    let mut generation: serde_json::Value = serde_json::from_slice(&fs::read(f.path()).unwrap()).unwrap();
+    generation["rejectedLaunchRequests"] = serde_json::json!((0..super::store::MAX_TASKS)
+        .map(|index| serde_json::json!({"requestId":format!("closed-{index}"),"message":"Previously rejected"}))
+        .collect::<Vec<_>>());
+    fs::write(f.path(), serde_json::to_vec(&generation).unwrap()).unwrap();
+    let before = fs::read(f.path()).unwrap();
+    let m = f.manager();
+    let mut invalid = f.request(vec![draft("invalid", &[])]);
+    invalid.tasks[0].goal.clear();
+    assert_eq!(m.accept_launch("overflow", invalid, None).err().unwrap().acceptance, "unknown");
+    assert_eq!(fs::read(f.path()).unwrap(), before);
+    let closed = m.accept_launch("closed-0", f.request(vec![draft("valid", &[])]), None).err().unwrap();
+    assert_eq!(closed.acceptance, "rejected");
+    assert_eq!(closed.message, "Previously rejected");
+    assert!(m.all().unwrap().is_empty());
+}
+
+#[test]
+fn accepted_token_with_changed_inputs_never_claims_rejection_or_discards_history() {
+    let f = Fixture::new();
+    let m = f.manager();
+    let mut request = f.request(vec![draft("quick", &[])]);
+    let accepted = m.accept_launch("accepted-token", request.clone(), None).unwrap();
+    request.tasks[0].goal = "A different goal".into();
+    let failure = m.accept_launch("accepted-token", request, None).err().unwrap();
+    assert_eq!(failure.acceptance, "unknown");
+    assert_eq!(m.all().unwrap()[0].id, accepted.task.id);
+}
+
+#[test]
 fn natural_language_task_can_explicitly_scope_the_repository_without_weakening_profile_paths() {
     let f = Fixture::new();
     let m = f.manager();

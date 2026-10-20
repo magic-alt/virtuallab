@@ -8,6 +8,10 @@ import type { WorkspaceTab } from '@/types/workbench';
 import { statusLabels, taskStatus } from './model';
 import { nextTaskStep } from './workflow';
 import { TaskWorkspaceTools } from './TaskWorkspaceTools';
+import { TaskExecutionConsole } from './TaskExecutionConsole';
+import { TaskReport } from './TaskReport';
+import { useTaskAttemptReport } from './useTaskAttemptReport';
+import './taskControlCenter.css';
 
 const tabs = ['概览','执行','变更与审查','证据','交付'] as const;
 export type OpenTaskWorkspace = (root: string, tab: WorkspaceTab, repositoryRoot?: string) => void;
@@ -30,7 +34,11 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
   const readiness = useTaskStore(state => state.readiness[task.id]); const readinessError = useTaskStore(state => state.readinessErrors[task.id]);
   const cancelling = useTaskStore(state => state.cancelling[task.id]);
   const pending = useTaskStore(state => state.pending[task.id]); const actionError = useTaskStore(state => state.actionErrors[task.id]);
+  const launchError = useTaskStore(state => state.launchErrors[task.id]);
   const events = useTaskStore(state => state.events);
+  // Historical launch errors do not prove a preparation intent still exists.
+  // Expose reconciliation while leaving Native to reject duplicate preparation.
+  const showPreparationRecovery = preparationUncertain || (!!launchError && !task.workspaceRoot && !task.attempts.length);
   useEffect(() => {
     if (task.workspaceRoot) setPreparationUncertain(false);
     else if (actionError && /prepar|worktree|工作区|准备|创建/i.test(actionError) && /reconcil|uncertain|核对|不确定|未知/i.test(actionError)) setPreparationUncertain(true);
@@ -38,6 +46,11 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
   useEffect(() => {alive.current = true;return () => {alive.current = false;};},[]);
   useEffect(() => {if (!preview) return; const timer = window.setInterval(() => setNow(Date.now()),1000);return () => clearInterval(timer);},[preview]);
   const attempt = task.attempts.at(-1); const evidence = attempt?.evidence;
+  const reportObservation = useTaskAttemptReport(task.id, tab === '执行' || tab === '证据' ? attempt : undefined);
+  const implementationAttempt = tab === '证据' && attempt && !attempt.execution
+    ? [...task.attempts].reverse().find(item => item.id !== attempt.id && !!item.execution)
+    : undefined;
+  const implementationObservation = useTaskAttemptReport(task.id, implementationAttempt);
   const reconcileIntegration = task.kind === 'integration' && !!attempt && ['failed','interrupted'].includes(attempt.state);
   const active = !!attempt && ['queued','running','stopping'].includes(attempt.state);
   const disabled = !!pending || !!cancelling || !isDesktopRuntime();
@@ -55,11 +68,12 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
     const link = document.createElement('a');link.href = url;link.download = `task-${task.id.replace(/[^a-z0-9_-]/gi,'_')}-passport.json`;link.click();URL.revokeObjectURL(url);
   };
   return <article className="task-surface task-detail" aria-label="任务详情">
-    <header><p>{task.kind === 'integration' ? '集成任务' : '实现任务'} · {task.id}</p><h2>{task.title}</h2><aside className="task-node" aria-label="任务下一步"><strong>{nextTaskStep(task,readiness).label}</strong><p>{nextTaskStep(task,readiness).detail}</p><button onClick={()=>setTab(nextTaskStep(task,readiness).tab)}>查看相关操作</button></aside><p>{task.repositoryRoot}</p></header>
+    <header><p className="task-muted">{task.kind === 'integration' ? '集成任务' : '实现任务'} · {task.id}</p><h2>{task.title}</h2><p className="task-muted">{task.repositoryRoot}</p><aside aria-label="任务下一步"><details className="task-next-step"><summary>下一步 · {nextTaskStep(task,readiness).label}</summary><p>{nextTaskStep(task,readiness).detail}</p><button onClick={()=>setTab(nextTaskStep(task,readiness).tab)}>查看相关操作</button></details></aside></header>
     <TaskStatusSummary task={task} readiness={readiness}/>
     {actionError && <p role="alert" className="task-error">{actionError}</p>}
+    {launchError && launchError !== actionError && <p role="alert" className="task-error">{launchError}</p>}
     {readinessError && <p className="task-error">就绪来源不可用：{readinessError}</p>}
-    <div role="tablist" aria-label="任务详情标签" className="task-tabs">{tabs.map(label => <button key={label} role="tab" id={`task-tab-${label}`} aria-selected={tab === label} aria-controls="task-detail-panel" onClick={() => setTab(label)}>{label}</button>)}</div>
+    <div role="tablist" aria-label="任务详情标签" className="task-tabs">{tabs.map(label => <button key={label} role="tab" id={`task-tab-${label}`} aria-selected={tab === label} aria-controls="task-detail-panel" onClick={() => setTab(label)}>{label === '证据' ? '报告' : label}</button>)}</div>
     <section role="tabpanel" id="task-detail-panel" aria-labelledby={`task-tab-${tab}`} className="task-panel">
       {tab === '概览' && <>
         <h3>目标</h3><p>{task.goal}</p><p>基线：<code>{task.baseSha}</code></p><h3>允许修改的范围</h3><ul>{task.scope.map(path => <li key={path}><code>{path}</code></li>)}</ul>
@@ -69,16 +83,17 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
           <h3>显式创建任务工作区</h3><p>任务附着于工作区；创建不会开始执行。工作区不是 OS 沙箱。</p>
           <fieldset disabled={disabled}><label>工作区分支<input required value={branch} onChange={event => setBranch(event.target.value)}/></label><label>工作区路径（可选）<input value={targetPath} onChange={event => setTargetPath(event.target.value)}/></label><button type="submit" disabled={!branch.trim() || preparationUncertain}>创建任务工作区</button></fieldset>
           {preparationNotice && <p role="status">{preparationNotice}</p>}
-          {preparationUncertain && <section className="task-node"><p>Native 报告准备结果不确定。先核对已创建的工作区；此操作不会重新创建、删除或自动重放 Git 操作。</p><button type="button" disabled={disabled} onClick={() => act(() => tasks.reconcileTaskWorkspace(task.id), result => {setPreparationUncertain(false);setPreparationNotice(result.workspaceRoot ? 'Native 已核对并绑定工作区。' : 'Native 已核对准备状态，尚未绑定工作区。可修正输入后再次显式创建。');})}>核对已创建工作区</button></section>}
+          {showPreparationRecovery && <section className="task-node"><p>{preparationUncertain ? 'Native 报告准备结果不确定。先核对已创建的工作区；此操作不会重新创建、删除或自动重放 Git 操作。' : '启动记录包含待核对的问题。可核对是否已有工作区，或修正输入后显式创建；原生端会阻止重复使用仍待核对的准备记录。'}</p><button type="button" disabled={disabled} onClick={() => act(() => tasks.reconcileTaskWorkspace(task.id), result => {setPreparationUncertain(false);setPreparationNotice(result.workspaceRoot ? 'Native 已核对并绑定工作区。' : 'Native 已核对准备状态，尚未绑定工作区。可修正输入后再次显式创建。');})}>核对已创建工作区</button></section>}
         </form>}
       </>}
       {tab === '执行' && <>
-        <p>默认并发 2；排队任务等待原生调度和依赖。Retry 创建新的 Attempt。执行完成不代表检查通过。</p>
-        <label>可执行程序路径（可选，不含参数）<input value={executablePath} onChange={event => setExecutablePath(event.target.value)}/></label>
         <div className="task-row"><button disabled={disabled || active || !!attempt || !task.workspaceRoot || task.kind === 'integration'} onClick={() => act(() => tasks.startTask(task.id,executablePath.trim() || null))}>开始执行</button>
           <button disabled={disabled || active || !attempt || !task.workspaceRoot || task.kind === 'integration'} onClick={() => act(() => tasks.retryTask(task.id,executablePath.trim() || null))}>重试（新 Attempt）</button>
           <button disabled={!isDesktopRuntime() || !active || !!cancelling} onClick={() => {void runTaskCancellation(task.id).catch(() => { /* Store surfaces native cancellation errors. */ });}}>取消执行</button>{tool('打开 Agents','agents')}{tool('打开终端','terminal')}</div>
         {task.kind === 'integration' && <p>集成任务请在交付标签预览并确认固定提交；不会启动实现 Agent。</p>}
+        <TaskExecutionConsole attempt={attempt} observation={reportObservation}/>
+        <p className="task-muted">任务在原生队列中持续执行；完成总结和发现的问题会显示在报告中。</p>
+        <details className="task-secondary"><summary>重试时使用的执行程序</summary><label>可执行程序路径（可选，不含参数）<input value={executablePath} onChange={event => setExecutablePath(event.target.value)}/></label><p>默认并发 2；排队任务等待原生调度和依赖。重试会创建新的执行记录。</p></details>
         <h3>Attempts</h3>{!task.attempts.length && <p>尚无执行记录。</p>}
         <ol>{task.attempts.map(item => <li key={item.id}><strong>{item.id}</strong> · {statusLabels[item.state]} · {item.phase}<dl className="task-facts"><dt>Harness</dt><dd>{item.execution?.harness || '未知'}</dd><dt>实际 CLI</dt><dd>{item.execution?.executablePath || '未知'}</dd><dt>版本</dt><dd>{item.execution?.version || '未知'}</dd></dl><p>候选：{item.candidateSha ?? '未封存'} · {new Date(item.startedAtMs).toLocaleString()}</p>{item.failure && <p className="task-error">{item.failure}</p>}{item.id !== attempt?.id && item.evidence && <details className="task-node"><summary>历史证据 · {item.id}</summary><p>此记录为历史观察，不代表当前交付就绪。</p><TaskEvidenceContext evidence={item.evidence}/></details>}</li>)}</ol>
         <TaskWorkspaceTools mode="run" repositoryRoot={task.repositoryRoot} workspaceRoot={task.workspaceRoot} baseSha={task.baseSha}/>
@@ -96,15 +111,15 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
         <TaskWorkspaceTools mode="changes" repositoryRoot={task.repositoryRoot} workspaceRoot={task.workspaceRoot} baseSha={task.baseSha}/>
       </>}
       {tab === '证据' && <>
+        <TaskReport task={task} readiness={readiness} launchError={launchError} observation={reportObservation} implementationAttempt={implementationAttempt} implementationObservation={implementationAttempt ? implementationObservation : undefined}/>
+        <h3>独立验证</h3>
         <div className="task-row"><button disabled={disabled || active || !task.workspaceRoot || !task.profile} onClick={() => act(() => tasks.verifyTask(task.id))}>{reconcileIntegration ? '验证已解决的集成' : '独立验证（新 Run）'}</button>{tool('打开 Run','run')}</div>
         {!candidate && <p>无候选时，可先提交修改，再验证干净的已提交版本以采用候选。Native 会重新检查范围、输入和依赖；Verify 不会重放创建或集成操作。</p>}
         {reconcileIntegration && <p>请先在 IDE 中解决并提交集成冲突。此操作验证干净的当前 HEAD 和固定依赖祖先关系，创建新的验证 Attempt；不会重放合并。</p>}
-        <p>Manifest 摘要由 Native 绑定；缺少绑定的旧记录只作历史参考，UI 不计算摘要或授予信任。</p>
-        <p>Task 证据由原生独立观察。现有 Run 工具的 v1 记录只作历史参考，不能自动授予任务资格。</p>
-        {!task.profile && <p>未配置 Profile：无法独立验证。可在新计划中配置，已有任务的配置已冻结。</p>}
+        <details className="task-secondary"><summary>验证记录的适用范围</summary><p>Task 验证由原生独立观察。Manifest 摘要由 Native 绑定；缺少绑定的旧记录与 Run 工具的 v1 记录只作历史参考。</p><p>已有任务的 Profile 已冻结，正式验证可在创建任务时配置。</p></details>
         {evidence ? <TaskEvidenceContext evidence={evidence}/> : <p>尚无本次 Attempt 的原生证据。</p>}
         <TaskWorkspaceTools mode="run" repositoryRoot={task.repositoryRoot} workspaceRoot={task.workspaceRoot} baseSha={task.baseSha}/>
-        <h3>冻结的 Profile</h3><pre className="task-code task-scroll">{JSON.stringify(task.profile,null,2)}</pre>
+        <details className="task-secondary"><summary>冻结的验证 Profile</summary><pre className="task-code task-scroll">{JSON.stringify(task.profile,null,2)}</pre></details>
       </>}
       {tab === '交付' && <>
         <p>执行、检查、当前就绪和人工验收独立记录。部分集成失败必须检查目标工作区，不会自动重放。</p>

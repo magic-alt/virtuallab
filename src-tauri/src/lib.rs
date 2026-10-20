@@ -6,6 +6,7 @@ mod tasks;
 mod task_profiles;
 mod task_runtime;
 mod task_execution;
+mod task_reports;
 mod workspace_lifecycle;
 #[cfg(test)]
 #[path = "../build_metadata_test.rs"]
@@ -74,6 +75,7 @@ pub fn run() {
         .manage(workspace_lifecycle::WorkspaceLifecycle::default())
         .manage(task_runtime::TaskDelivery::default())
         .manage(task_execution::TaskExecution::default())
+        .manage(task_reports::TaskReports::default())
         .manage(BuildWorkflowManager::default())
         .manage(WatchManager::default())
         .manage(AgentJournal::default())
@@ -92,6 +94,7 @@ pub fn run() {
                 }
                 Err(_) => tasks::TaskManager::unavailable(std::path::PathBuf::new(), "Task application-data directory is unavailable".into()),
             };
+            app.state::<task_reports::TaskReports>().recover(&manager);
             app.manage(manager);
             let profiles = match app.path().app_data_dir() {
                 Ok(directory) => task_profiles::TaskProfileLibrary::open(directory.join("task-profiles-v1.json"))
@@ -107,8 +110,11 @@ pub fn run() {
             task_profiles::task_profile_save,
             tasks::task_list,
             tasks::task_get,
+            tasks::task_launch_error,
             tasks::task_events,
             tasks::task_accept_plan,
+            task_execution::task_launch,
+            task_reports::task_attempt_report,
             task_execution::task_prepare_workspace,
             task_execution::task_reconcile_workspace,
             task_execution::task_start,

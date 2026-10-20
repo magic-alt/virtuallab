@@ -1,0 +1,55 @@
+/* Task creation, execution and results share one control center. */
+.task-center .task-muted { color:var(--task-muted); font-size:12px; }
+.task-center-heading > div:first-child { max-width:760px; }
+.task-center-heading > div:first-child > p { color:var(--task-muted); }
+.task-control-layout { display:grid; grid-template-columns:minmax(250px,.8fr) minmax(0,1.7fr); gap:18px; align-items:start; }
+.task-control-layout > .task-surface { margin-top:16px; }
+.task-collection .task-filters { gap:0 12px; }
+.task-collection .task-filters > label:not(.task-checkbox) { flex-basis:100%; min-width:0; }
+.task-collection .task-list { max-height:800px; overflow:auto; overscroll-behavior:contain; }
+.task-collection .task-status-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px 12px; }
+.task-collection .task-list-item { padding:12px 4px 2px; }
+.task-collection .task-list-item[data-selected=true] { background:#e7a35a08; }
+.task-detail-pane { min-width:0; scroll-margin-top:16px; }
+.task-detail-placeholder { min-height:220px; display:flex; flex-direction:column; justify-content:center; }
+.task-center .task-detail > header h2 { margin-bottom:4px; }
+.task-center .task-detail > header > p { margin:4px 0; }
+.task-next-step { margin-top:12px; font-size:12px; }
+.task-secondary > summary { font-size:13px; font-weight:600; }
+.task-secondary > .task-surface { margin-bottom:0; }
+.task-execution-console { margin:18px 0 12px; border:1px solid #41444b; border-radius:9px; overflow:hidden; background:#0d1118; }
+.task-console-heading { padding:12px 14px; justify-content:space-between; background:#181e28; border-bottom:1px solid #333a46; }
+.task-center .task-console-heading h3 { margin:0; font-size:14px; }
+.task-center .task-console-heading p { margin:2px 0 0; font-size:11px; color:#b3bdcd; }
+.task-center .task-console-heading button { font-size:12px; padding:5px 9px; }
+.task-console-viewport { min-height:200px; max-height:460px; overflow:auto; overscroll-behavior:contain; padding:6px 16px 12px; }
+.task-console-entry { padding:12px 0; border-bottom:1px solid #ffffff09; }
+.task-console-entry:last-child { border-bottom:0; }
+.task-console-entry-meta { display:flex; gap:10px; color:#8d9bb1; font:11px/1.4 system-ui,sans-serif; }
+.task-console-entry-meta time { margin-left:auto; }
+.task-console-entry pre { margin:6px 0 0; color:#dce4ef; white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; }
+.task-console-entry[data-kind=problem] pre { color:#f4b0a6; }
+.task-console-entry[data-kind=fileChange] .task-console-entry-meta { color:#9fc5b2; }
+.task-center .task-console-empty { padding:24px 0; color:#97a3b6; }
+.task-result-report { min-width:0; overflow-wrap:anywhere; }
+.task-report-heading { justify-content:space-between; align-items:start; padding-bottom:12px; border-bottom:1px solid var(--task-border); }
+.task-center .task-report-heading h3 { margin:0; font-size:18px; }
+.task-center .task-report-heading p { margin:4px 0 0; color:var(--task-muted); font-size:12px; }
+.task-report-summary { margin:16px 0; padding:4px 16px; border-left:3px solid #b88753; border-radius:0 6px 6px 0; background:#22272f; }
+.task-center .task-report-summary p { margin:12px 0; white-space:pre-wrap; line-height:1.8; }
+.task-center .task-report-verification-note { color:#d8b682; font-size:12px; }
+.task-center .task-report-problems { padding:0; list-style:none; }
+.task-report-problems li { border:1px solid #564440; border-radius:7px; background:#302726; padding:10px 12px; margin:8px 0; }
+.task-report-problems li > span { color:#deb090; font-size:11px; }
+.task-center .task-report-problems li > p { margin:4px 0 0; white-space:pre-wrap; }
+@media(max-width:1080px) {
+  .task-control-layout { grid-template-columns:minmax(0,1fr); gap:0; }
+  .task-collection .task-list { max-height:320px; }
+  .task-collection .task-filters > label:not(.task-checkbox) { flex-basis:180px; }
+  .task-collection .task-status-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+}
+@media(max-width:700px) {
+  .task-collection .task-status-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .task-console-viewport { padding-inline:12px; }
+  .task-report-summary { padding-inline:12px; }
+}

@@ -1,5 +1,6 @@
 use super::{model::*, validation};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, File, OpenOptions},
@@ -26,6 +27,51 @@ pub(super) struct Generation {
     pub(super) events: Vec<TaskEvent>,
     #[serde(default)]
     pub(super) decision_history: Vec<TaskDecision>,
+    #[serde(default)]
+    pub(super) launch_requests: Vec<LaunchReceipt>,
+    #[serde(default)]
+    pub(super) rejected_launch_requests: Vec<RejectedLaunchReceipt>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct LaunchReceipt {
+    pub(super) request_id: String,
+    pub(super) request_digest: String,
+    pub(super) task_id: String,
+    pub(super) finished: bool,
+    pub(super) launch_error: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct RejectedLaunchReceipt {
+    pub(super) request_id: String,
+    pub(super) message: String,
+}
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskLaunchRejection {
+    pub(crate) request_id: String,
+    pub(crate) acceptance: String,
+    pub(crate) message: String,
+}
+impl TaskLaunchRejection {
+    pub(crate) fn unknown(request_id: &str, message: impl AsRef<str>) -> Self {
+        Self { request_id: request_id.into(), acceptance: "unknown".into(), message: crate::task_reports::bounded_text(message.as_ref(), 4096).0 }
+    }
+    fn rejected(request_id: &str, message: impl AsRef<str>) -> Self {
+        Self { request_id: request_id.into(), acceptance: "rejected".into(), message: crate::task_reports::bounded_text(message.as_ref(), 4096).0 }
+    }
+}
+enum PlanAcceptanceError { Invalid(String), Storage(String) }
+impl From<String> for PlanAcceptanceError { fn from(message: String) -> Self { Self::Invalid(message) } }
+impl From<&str> for PlanAcceptanceError { fn from(message: &str) -> Self { Self::Invalid(message.into()) } }
+impl PlanAcceptanceError {
+    fn message(self) -> String { match self { Self::Invalid(message) | Self::Storage(message) => message } }
+}
+pub(crate) struct LaunchAcceptance {
+    pub(crate) task: TaskRecord,
+    pub(crate) created: bool,
+    pub(crate) launch_error: Option<String>,
 }
 impl Default for Generation {
     fn default() -> Self {
@@ -34,6 +80,8 @@ impl Default for Generation {
             tasks: vec![],
             events: vec![],
             decision_history: vec![],
+            launch_requests: vec![],
+            rejected_launch_requests: vec![],
         }
     }
 }
@@ -311,6 +359,103 @@ impl TaskManager {
     }
     pub(crate) fn accept_plan(&self, request: TaskPlanRequest) -> Result<Vec<TaskRecord>, String> {
         let mut state = self.lock()?;
+        self.accept_plan_locked(&mut state, request, None).map_err(PlanAcceptanceError::message)
+    }
+
+    /// The receipt and accepted task reach the same atomic commit point. A
+    /// repeated request only observes that task; it never authorizes Git replay.
+    pub(crate) fn accept_launch(
+        &self,
+        request_id: &str,
+        mut request: TaskPlanRequest,
+        executable_path: Option<&str>,
+    ) -> Result<LaunchAcceptance, TaskLaunchRejection> {
+        // An invalid ID can never have been accepted, even by a delayed call.
+        validation::id(request_id).map_err(|error| TaskLaunchRejection::rejected(request_id, error))?;
+        let mut state = self.lock().map_err(|error| TaskLaunchRejection::unknown(request_id, error))?;
+        if let Some(receipt) = state.rejected_launch_requests.iter().find(|receipt| receipt.request_id == request_id) {
+            return Err(TaskLaunchRejection::rejected(request_id, &receipt.message));
+        }
+        let accepted_receipt = state.launch_requests.iter().find(|receipt| receipt.request_id == request_id).cloned();
+        let input = (|| -> Result<String, String> {
+            if request.tasks.len() != 1 || request.tasks[0].kind != "implementation" {
+                return Err("Quick launch requires exactly one implementation task.".into());
+            }
+            request.repository_root = validation::canonical_root(&request.repository_root)?;
+            let encoded = bounded_json(&serde_json::json!({"plan":request,"executablePath":executable_path}), 256 * 1024)?;
+            Ok(format!("{:x}", Sha256::digest(encoded)))
+        })();
+        let digest = input.map_err(|error| if accepted_receipt.is_some() {
+            TaskLaunchRejection::unknown(request_id, error)
+        } else { self.close_rejected_launch(&mut state, request_id, error) })?;
+        if let Some(receipt) = accepted_receipt {
+            if receipt.request_digest != digest {
+                return Err(TaskLaunchRejection::unknown(request_id, "This launch request ID was already used for different task inputs. Inspect the retained task before continuing."));
+            }
+            let task = state.tasks.iter().find(|task| task.id == receipt.task_id)
+                .cloned().ok_or_else(|| TaskLaunchRejection::unknown(request_id, "Launch receipt task is unavailable; repair required."))?;
+            return Ok(LaunchAcceptance {
+                task, created: false,
+                launch_error: if receipt.finished { receipt.launch_error.clone() } else {
+                    Some("This request is already saved. Preparation may be in progress or interrupted; inspect the retained task. Automatic creation/start will not be replayed.".into())
+                },
+            });
+        }
+        let task = match self.accept_plan_locked(&mut state, request, Some((request_id.into(), digest))) {
+            Ok(mut tasks) => tasks.remove(0),
+            Err(PlanAcceptanceError::Invalid(error)) => return Err(self.close_rejected_launch(&mut state, request_id, error)),
+            Err(PlanAcceptanceError::Storage(error)) => return Err(TaskLaunchRejection::unknown(request_id, error)),
+        };
+        Ok(LaunchAcceptance { task, created: true, launch_error: None })
+    }
+
+    /// Closing a rejected token is durable and shares acceptance's mutex. A
+    /// delayed original request cannot become accepted after the UI refreshes
+    /// its plan. Never evict closures: at capacity, retain uncertainty instead.
+    fn close_rejected_launch(&self, state: &mut Generation, request_id: &str, message: String) -> TaskLaunchRejection {
+        let mut next = state.clone();
+        let message = crate::task_reports::bounded_text(&message, 4096).0;
+        next.rejected_launch_requests.push(RejectedLaunchReceipt { request_id: request_id.into(), message: message.clone() });
+        match validation::generation(&next).and_then(|_| persist(&self.path, &next)) {
+            Ok(()) => { *state = next; TaskLaunchRejection::rejected(request_id, message) }
+            Err(error) => TaskLaunchRejection::unknown(request_id, format!("{message}\nThe native rejection could not be saved: {error}. Keep this request identity until reconciliation.")),
+        }
+    }
+
+    pub(crate) fn finish_launch(&self, request_id: &str, error: Option<String>) -> Result<(), String> {
+        validation::id(request_id)?;
+        let mut state = self.lock()?;
+        let mut next = state.clone();
+        let receipt = next.launch_requests.iter_mut().find(|receipt| receipt.request_id == request_id)
+            .ok_or("Launch request receipt is unavailable.")?;
+        if receipt.finished { return Ok(()); }
+        receipt.finished = true;
+        receipt.launch_error = error.map(|error| error.chars().filter(|ch| *ch != '\0')
+            .scan(0usize, |size, ch| { *size += ch.len_utf8(); (*size <= 4096).then_some(ch) }).collect());
+        validation::generation(&next)?;
+        persist(&self.path, &next)?;
+        *state = next;
+        Ok(())
+    }
+
+    /// Query by durable task identity so setup failures remain reviewable after
+    /// the composer and its request token have gone away. No attempt is invented.
+    pub(crate) fn launch_error(&self, task_id: &str) -> Result<Option<String>, String> {
+        validation::id(task_id)?;
+        let state = self.lock()?;
+        let task = state.tasks.iter().find(|task| task.id == task_id).ok_or("Task not found.")?;
+        let Some(receipt) = state.launch_requests.iter().find(|receipt| receipt.task_id == task_id) else { return Ok(None); };
+        Ok(if receipt.finished { receipt.launch_error.clone() }
+            else if !task.attempts.is_empty() { None }
+            else { Some("Automatic launch was saved but its completion was not recorded. Inspect the retained task and reconcile its worktree before continuing; creation is never replayed automatically.".into()) })
+    }
+
+    fn accept_plan_locked(
+        &self,
+        state: &mut Generation,
+        request: TaskPlanRequest,
+        launch: Option<(String, String)>,
+    ) -> Result<Vec<TaskRecord>, PlanAcceptanceError> {
         if request.tasks.is_empty() || request.tasks.len() > 128 {
             return Err("A plan requires 1–128 tasks.".into());
         }
@@ -375,13 +520,18 @@ impl TaskManager {
         }
         let mut next = state.clone();
         next.tasks.extend(records.clone());
+        if let Some((request_id, request_digest)) = launch {
+            next.launch_requests.push(LaunchReceipt {
+                request_id, request_digest, task_id: records[0].id.clone(), finished: false, launch_error: None,
+            });
+        }
         for task in &records {
             append_event(&mut next, &task.id, None, "plan.accepted")?;
         }
         validation::generation(&next)?;
         // Recheck HEAD immediately before saving; acceptance itself never mutates Git.
         validation::repository_head(&root, &request.expected_head_sha)?;
-        persist(&self.path, &next)?;
+        persist(&self.path, &next).map_err(PlanAcceptanceError::Storage)?;
         *state = next;
         Ok(records)
     }

@@ -71,7 +71,11 @@ try {
 
 console.log("\nAutomated checks passed.");
 console.log("\nDesktop acceptance checklist:");
-console.log("[ ] Task-first: create and accept a manual plan, explicitly prepare a workspace, execute/cancel/retry, verify, review and accept; execution success alone never means accepted delivery.");
+console.log("[ ] Control center: enter a task and choose 开始任务 once; its unique worktree, installed Codex process, unchanged goal and live execution console appear automatically. No Profile/auto-commit still permits truthful completed implementation, with edits retained and verification unclaimed.");
+console.log("[ ] Queued task ownership: occupy both execution slots, launch a third clean sibling worktree at main, then confirm Clean merged. Its worktree and branch survive with a kept/busy result; releasing a slot starts it in that same workspace. Cancellation releases protection only after durable queued cancellation or observed running-process cleanup.");
+console.log("[ ] Task launch recovery: double submission/response loss never creates a second worktree. Setup failure keeps the task and concrete error; uncertain worktree preparation requires reconciliation before any replay.");
+console.log("[ ] Task reports: final response, discovered problems and verification status remain available after navigation/restart, including tasks with no Profile and earlier implementation Attempts. Background completion does not replace another task or an explicitly selected review tab; hidden composer drafts survive without background baseline reads.");
+console.log("[ ] Advanced tasks: create and accept a manual plan, explicitly prepare a workspace, execute/cancel/retry, verify, review and accept; execution success alone never means accepted delivery.");
 console.log("[ ] Task evidence: edit source without changing HEAD, restore it, replace a tool, then restart the application; historical evidence never silently becomes current. New verification requires new review and acceptance.");
 console.log("[ ] Task integration: rejected or stale dependencies block preview; native confirmation binds exact source commits and expires. Conflicts retain the worktree and require explicit resolution, never implicit merge replay.");
 console.log("[ ] Task tools: committed task changes appear against the accepted base; inline Run/Changes and workspace navigation preserve terminals. Cancel remains available while verification/integration is pending.");

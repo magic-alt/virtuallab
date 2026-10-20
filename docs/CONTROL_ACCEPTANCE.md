@@ -302,6 +302,22 @@ A green CI means tests/builds passed on that commit, not that provider credentia
 See [PROJECT_BUILD_WORKFLOWS.md](PROJECT_BUILD_WORKFLOWS.md) for the full matrix. Manually verify detected npm and Tauri scripts, Qt CMake configure/build, Windows Keil UV4 batch build, a customized two-step profile across two worktrees, cancellation and stop-on-failure. Confirm that a cancelled Deploy prompt creates no process and that no implicit firmware flashing or remote publish occurs. Build workflow output is transient and must not be claimed as durable verification evidence.
 
 
+## Control center automatic Codex tasks (2026-10-20)
+
+- Add/select a disposable repository and enter a concrete goal under **工作任务**. Choose **开始任务** once: the task's unique worktree is created, the installed/authenticated Codex receives the goal, and **执行** opens with structured live output. Repeated clicks or a lost response must retain the same accepted task and worktree.
+- Complete a task without a Profile or auto-commit. Its changes remain in the task worktree, and **报告** shows the recorded result and discovered problems without claiming formal verification. A failed or interrupted provider must show its actual failure; absent output must not become a fabricated success summary.
+- Occupy both execution slots and launch a third task whose clean sibling worktree still points at main. Confirm **Clean merged…** from main: the queued worktree and local branch must survive and the result must explain why they were kept. Release a slot and confirm the queued task starts in that same worktree. Also attempt removal during provider preflight and shutdown; protection lasts through observed process cleanup.
+- Cancel a queued task and wait for the cancellation to persist. With no other native owner, its clean worktree may then be removed through the normal explicit confirmation. A running cancellation must retain protection until its worker and child processes actually stop.
+- Navigate to another task or repository while a launch or completion is pending. The accepted task/report must be retained without replacing that explicit navigation; returning to the control center preserves the draft and current task selection.
+- Restart after a setup failure or completed attempt. Read the retained setup error/report and use explicit reconciliation when needed. Opening the application or selecting historical work must never replay Codex or create another worktree.
+
+Automated coverage includes `tasks.launch.test.ts`, `TaskQuickCreate.test.tsx`,
+`TaskControlCenter.test.tsx`, `TaskDetail.report.test.tsx`, the native task launch,
+report, coordinator and workspace-lifecycle regressions, and real temporary Git
+worktree/cleanup fixtures. Authenticated Codex and packaged desktop interaction
+remain manual checks on Windows/macOS/Linux.
+
+
 ## Safe repository removal and re-import
 
 - Open two repositories and an external linked worktree (include spaces/Unicode in its path). Start a terminal, Agent, Run or verification in the linked worktree. Confirm **Remove repository**: removal must fail, preserve the selected repository and its notification inbox, and leave the worker running.

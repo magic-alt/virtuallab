@@ -9,7 +9,7 @@ use std::{
     io::{Write},
     process::{ ChildStdin, Stdio},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -258,6 +258,7 @@ pub struct AgentManager {
     runtimes: Arc<Mutex<HashMap<String, Arc<AgentRuntime>>>>,
     lifecycle: Arc<Mutex<()>>,
     completions: CompletionObservers,
+    reports: ReportObservers,
 }
 
 /// Provider execution outcome only; never verification or delivery readiness.
@@ -267,8 +268,99 @@ pub(crate) struct AgentTurnCompletion {
     pub(crate) thread_id: String,
     pub(crate) turn_id: String,
     pub(crate) status: String,
+    pub(crate) final_output: Option<String>,
+    pub(crate) output_truncated: bool,
+    pub(crate) error: Option<String>,
 }
-type CompletionObservers = Arc<Mutex<Vec<mpsc::Sender<AgentTurnCompletion>>>>;
+type CompletionObservers = Arc<Mutex<Vec<(String, mpsc::Sender<AgentTurnCompletion>)>>>;
+
+#[derive(Clone, Default)]
+struct ReportObservers(Arc<Mutex<Vec<ReportObserver>>>);
+struct ReportObserver {
+    workspace_key: String,
+    sender: mpsc::SyncSender<crate::task_reports::ReportNotification>,
+    truncated: Arc<AtomicBool>,
+}
+pub(crate) struct ReportSubscription {
+    pub(crate) receiver: mpsc::Receiver<crate::task_reports::ReportNotification>,
+    truncated: Arc<AtomicBool>,
+}
+impl ReportSubscription {
+    pub(crate) fn take_truncated(&self) -> bool { self.truncated.swap(false, Ordering::AcqRel) }
+}
+impl ReportObservers {
+    fn subscribe(&self, root: &str) -> Result<ReportSubscription, String> {
+        let (sender, receiver) = mpsc::sync_channel(64);
+        let truncated = Arc::new(AtomicBool::new(false));
+        self.0.lock().map_err(lock_error)?.push(ReportObserver { workspace_key: workspace_key(root), sender, truncated: truncated.clone() });
+        Ok(ReportSubscription { receiver, truncated })
+    }
+    fn publish(&self, event: crate::task_reports::ReportNotification) {
+        // Archive only user-facing activity. Reasoning and arbitrary provider
+        // protocol payloads do not enter the task report channel.
+        let allowed = match event.method.as_str() {
+            "item/started" | "item/completed" => matches!(event.payload.pointer("/item/type").and_then(Value::as_str), Some("agentMessage" | "commandExecution" | "fileChange")),
+            "item/agentMessage/delta" | "item/commandExecution/outputDelta" | "error" | "turn/failed" | "virtuallab/serverRequestRejected" => true,
+            _ => false,
+        };
+        if !allowed { return; }
+        if let Ok(mut observers) = self.0.lock() {
+            observers.retain(|observer| {
+                if observer.workspace_key != workspace_key(&event.workspace_root) { return true; }
+                match observer.sender.try_send(event.clone()) {
+                    Ok(()) => true,
+                    Err(mpsc::TrySendError::Full(_)) => { observer.truncated.store(true, Ordering::Release); true }
+                    Err(mpsc::TrySendError::Disconnected(_)) => false,
+                }
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+struct TurnSummary { streamed: String, completed: Option<String>, truncated: bool }
+#[derive(Default)]
+struct TurnSummaries(HashMap<(String, String), TurnSummary>);
+impl TurnSummaries {
+    fn observe(&mut self, event: &crate::task_reports::ReportNotification) {
+        if !matches!(event.method.as_str(), "item/agentMessage/delta" | "item/completed") { return; }
+        let (Some(thread), Some(turn)) = (&event.thread_id, &event.turn_id) else { return; };
+        let key = (thread.clone(), turn.clone());
+        if self.0.len() >= 16 && !self.0.contains_key(&key) {
+            if let Some(oldest) = self.0.keys().next().cloned() { self.0.remove(&oldest); }
+        }
+        let summary = self.0.entry(key).or_default();
+        if event.method == "item/completed" {
+            if let Some(text) = crate::task_reports::completed_assistant_text(&event.payload) {
+                let (text, clipped) = crate::task_reports::bounded_text(&text, crate::task_reports::MAX_SUMMARY_BYTES);
+                summary.completed = Some(text);
+                summary.truncated = clipped;
+            }
+        } else if let Some(delta) = event.payload.get("delta").and_then(Value::as_str).or_else(|| event.payload.pointer("/delta/text").and_then(Value::as_str)) {
+            let (text, clipped) = crate::task_reports::bounded_text(delta, crate::task_reports::MAX_SUMMARY_BYTES.saturating_sub(summary.streamed.len()));
+            summary.streamed.push_str(&text);
+            summary.truncated |= clipped;
+        }
+    }
+    fn take(&mut self, thread: &str, turn: &str) -> (Option<String>, bool) {
+        let Some(summary) = self.0.remove(&(thread.into(), turn.into())) else { return (None, false); };
+        if summary.completed.is_some() { (summary.completed, summary.truncated) }
+        else { ((!summary.streamed.is_empty()).then_some(summary.streamed), true) }
+    }
+}
+
+fn observe_notification(root: &str, method: &str, payload: &Value, completions: &CompletionObservers, reports: &ReportObservers, summaries: &mut TurnSummaries) {
+    let (thread_id, turn_id) = extract_ids(payload);
+    let event = crate::task_reports::ReportNotification { workspace_root: root.into(), thread_id, turn_id, method: method.into(), payload: payload.clone(), timestamp_ms: crate::tasks::now_ms() };
+    summaries.observe(&event);
+    reports.publish(event);
+    if let Some(mut completion) = turn_completion(root, method, payload) {
+        (completion.final_output, completion.output_truncated) = summaries.take(&completion.thread_id, &completion.turn_id);
+        if let Ok(mut observers) = completions.lock() {
+            observers.retain(|(key, observer)| *key != workspace_key(root) || observer.send(completion.clone()).is_ok());
+        }
+    }
+}
 
 fn turn_completion(root: &str, method: &str, payload: &Value) -> Option<AgentTurnCompletion> {
     if method != "turn/completed" { return None; }
@@ -277,7 +369,9 @@ fn turn_completion(root: &str, method: &str, payload: &Value) -> Option<AgentTur
     let turn_id = turn.get("id")?.as_str()?.to_string();
     let status = turn.get("status")?.as_str()?;
     if thread_id.is_empty() || turn_id.is_empty() || !matches!(status, "completed" | "failed" | "interrupted") { return None; }
-    Some(AgentTurnCompletion { workspace_root: root.into(), thread_id, turn_id, status: status.into() })
+    let error = turn.pointer("/error/message").and_then(Value::as_str)
+        .map(|message| crate::task_reports::bounded_text(message, 4096).0);
+    Some(AgentTurnCompletion { workspace_root: root.into(), thread_id, turn_id, status: status.into(), final_output: None, output_truncated: false, error })
 }
 
 impl AgentManager {
@@ -315,11 +409,17 @@ impl AgentManager {
     }
 
     /// Subscribe before starting a turn, then match workspace/thread/turn IDs.
-    /// This channel carries no prompt, credentials, or raw provider payload.
-    pub(crate) fn subscribe_completions(&self) -> Result<mpsc::Receiver<AgentTurnCompletion>, String> {
+    /// The task receives only its workspace's terminal outcome and bounded final
+    /// assistant text. No prompt, environment, reasoning or raw payload is copied.
+    pub(crate) fn subscribe_completions(&self, root: &str) -> Result<mpsc::Receiver<AgentTurnCompletion>, String> {
         let (tx, rx) = mpsc::channel();
-        self.completions.lock().map_err(lock_error)?.push(tx);
+        self.completions.lock().map_err(lock_error)?.push((workspace_key(root), tx));
         Ok(rx)
+    }
+    pub(crate) fn subscribe_reports(&self, root: &str) -> Result<ReportSubscription, String> { self.reports.subscribe(root) }
+    pub(crate) fn is_running_bound(&self, root: &str, thread: &str) -> Result<bool, String> {
+        let runtime = self.runtimes.lock().map_err(lock_error)?.get(&workspace_key(root)).cloned();
+        match runtime { Some(runtime) if runtime.binding.thread_id == thread => runtime.process.is_running(), _ => Ok(false) }
     }
     /// Conservative gate for worktree removal: a registered runtime must be
     /// explicitly stopped before its worktree can be deleted.
@@ -535,7 +635,7 @@ fn start_session(
     }
 
     let reservation = app.state::<WorkspaceLifecycle>().reserve(root, &format!("agent {}", request.harness))?;
-    let process = spawn_codex(&app, root, &request.harness, &selected_executable, reservation, manager.completions.clone())?;
+    let process = spawn_codex(&app, root, &request.harness, &selected_executable, reservation, manager.completions.clone(), manager.reports.clone())?;
     if let Err(error) = initialize_codex(&process) {
         let _ = process.stop();
         return Err(error);
@@ -749,7 +849,7 @@ fn initialize_codex(process: &CodexProcess) -> Result<(), String> {
     process.notify("initialized")
 }
 
-fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str, reservation: WorkspaceReservation, completions: CompletionObservers) -> Result<Arc<CodexProcess>, String> {
+fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str, reservation: WorkspaceReservation, completions: CompletionObservers, reports: ReportObservers) -> Result<Arc<CodexProcess>, String> {
     let mut command = crate::execution::process_command(executable_path);
     command.arg("app-server").arg("--listen").arg("stdio://");
     if harness == "deepseek" {
@@ -798,6 +898,7 @@ fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str
         pending.clone(),
         stdin.clone(),
         completions,
+        reports,
     );
     spawn_stderr(app.clone(), root.into(), stderr);
     let process = Arc::new(CodexProcess {
@@ -842,8 +943,10 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
     pending: Pending,
     stdin: SharedStdin,
     completions: CompletionObservers,
+    reports: ReportObservers,
 ) {
     thread::spawn(move || {
+        let mut summaries = TurnSummaries::default();
         for line in bounded_lines(stdout, MAX_AGENT_LINE_BYTES) {
             let line = match line {
                 Ok(line) => line,
@@ -883,6 +986,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
             if let Some(method) = message.get("method").and_then(Value::as_str) {
                 let payload = message.get("params").cloned().unwrap_or_default();
                 if let Some(request_id) = message.get("id").cloned() {
+                    observe_notification(&root, "virtuallab/serverRequestRejected", &payload, &completions, &reports, &mut summaries);
                     emit(&app,
                         AgentEvent::server_request(&root, method, payload),
                     );
@@ -899,11 +1003,7 @@ fn spawn_stdout<R: std::io::Read + Send + 'static>(
                     }
                     continue;
                 }
-                if let Some(completion) = turn_completion(&root, method, &payload) {
-                    if let Ok(mut observers) = completions.lock() {
-                        observers.retain(|observer| observer.send(completion.clone()).is_ok());
-                    }
-                }
+                observe_notification(&root, method, &payload, &completions, &reports, &mut summaries);
                 emit(&app,
                     AgentEvent::notification(&root, method, payload),
                 );
@@ -1610,6 +1710,42 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         assert_eq!(completion.thread_id, "thread-7");
         assert_eq!(completion.turn_id, "turn-9");
         assert_eq!(completion.status, "completed");
+    }
+    #[test]
+    fn rapid_turn_completion_retains_the_final_answer_before_the_caller_receives_start() {
+        let manager = AgentManager::default();
+        let completions = manager.subscribe_completions("/workspace").unwrap();
+        let outputs = manager.subscribe_reports("/workspace").unwrap();
+        let mut summaries = TurnSummaries::default();
+        observe_notification("/workspace", "item/completed", &json!({
+            "threadId":"thread", "turnId":"turn", "item":{"type":"agentMessage","text":"Finished before start RPC returned"}
+        }), &manager.completions, &manager.reports, &mut summaries);
+        observe_notification("/workspace", "turn/completed", &json!({
+            "threadId":"thread", "turn":{"id":"turn","status":"completed"}
+        }), &manager.completions, &manager.reports, &mut summaries);
+        let completion = completions.recv_timeout(Duration::from_millis(10)).unwrap();
+        assert_eq!(completion.final_output.as_deref(), Some("Finished before start RPC returned"));
+        assert_eq!(completion.turn_id, "turn");
+        assert!(outputs.receiver.try_recv().is_ok());
+    }
+    #[test]
+    fn saturated_report_stream_is_bounded_and_cannot_drop_the_final_summary_or_cross_roots() {
+        let manager = AgentManager::default();
+        let completions = manager.subscribe_completions("/workspace").unwrap();
+        let outputs = manager.subscribe_reports("/workspace").unwrap();
+        let foreign = manager.subscribe_reports("/other").unwrap();
+        let mut summaries = TurnSummaries::default();
+        for _ in 0..100 {
+            observe_notification("/workspace", "item/agentMessage/delta", &json!({"threadId":"thread","turnId":"turn","delta":"中🔧"}), &manager.completions, &manager.reports, &mut summaries);
+        }
+        observe_notification("/workspace", "item/completed", &json!({"threadId":"thread","turnId":"turn","item":{"type":"agentMessage","text":"Exact final response"}}), &manager.completions, &manager.reports, &mut summaries);
+        observe_notification("/workspace", "turn/completed", &json!({"threadId":"thread","turn":{"id":"turn","status":"failed","error":{"message":"Provider quota exhausted"}}}), &manager.completions, &manager.reports, &mut summaries);
+        let final_event = completions.recv_timeout(Duration::from_millis(10)).unwrap();
+        assert_eq!(final_event.final_output.as_deref(), Some("Exact final response"));
+        assert_eq!(final_event.error.as_deref(), Some("Provider quota exhausted"));
+        assert!(outputs.take_truncated());
+        assert!(outputs.receiver.try_iter().count() <= 64);
+        assert!(foreign.receiver.try_recv().is_err());
     }
     #[test]
     fn native_completion_rejects_nonterminal_or_unbound_notifications() {

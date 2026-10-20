@@ -27,12 +27,12 @@ describe('Task-first application navigation', () => {
     const workspace = screen.getByTestId('workspace-main');
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(workspace).toBeVisible();
-    await user.click(screen.getByRole('button', { name: '任务' }));
+    await user.click(screen.getByRole('button', { name: '控制中心' }));
     expect(workspace).not.toBeVisible();
     expect(workspace.isConnected).toBe(true);
     await user.click(screen.getByRole('button', { name: '工程仓库' }));
     expect(screen.getByTestId('workspace-main')).toBe(workspace);
-    for (const name of ['证据','设置','控制中心','任务']) {
+    for (const name of ['报告','设置','控制中心']) {
       await user.click(screen.getByRole('button',{name}));
       expect(screen.getByTestId('workspace-main')).toBe(workspace);
       expect(workspace.isConnected).toBe(true);
@@ -48,7 +48,7 @@ describe('Task-first application navigation', () => {
     const pane = screen.getByTestId('terminal-pane');
     expect(pane).toHaveAttribute('aria-hidden', 'false');
 
-    for (const name of ['任务', '证据', '设置', '控制中心']) {
+    for (const name of ['报告', '设置', '控制中心']) {
       await user.click(screen.getByRole('button', { name }));
       // Keeping the pane mounted must not leave its PTY resize/focus observer active.
       expect(pane.isConnected).toBe(true);
@@ -57,5 +57,12 @@ describe('Task-first application navigation', () => {
       expect(screen.getByTestId('terminal-pane')).toBe(pane);
       expect(pane).toHaveAttribute('aria-hidden', 'false');
     }
+  });
+
+  it('keeps task work in the control center and exposes a report destination', () => {
+    render(<WorkbenchShell />);
+    expect(screen.queryByRole('button', { name: '任务' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '证据' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '报告' })).toBeInTheDocument();
   });
 });
