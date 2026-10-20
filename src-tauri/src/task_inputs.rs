@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod eol;
+
 const MAX_GIT_OUTPUT: usize = 8 * 1024 * 1024;
 const GIT_TIMEOUT: Duration = Duration::from_secs(120);
 static NEXT_INDEX: AtomicU64 = AtomicU64::new(0);
@@ -23,6 +25,34 @@ pub(crate) struct SourceIdentity {
     pub head_sha: String,
     pub digest: String,
     pub clean: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SourceSnapshot {
+    pub identity: SourceIdentity,
+    pub raw_files: BTreeMap<String, String>,
+    conversion_config: String,
+    conversion_external: String,
+    conversion_working: BTreeMap<String, String>,
+    conversion_files: BTreeMap<String, String>,
+}
+
+struct PreparedInput {
+    mode: String,
+    oid: String,
+    path: PathBuf,
+    raw_path: PathBuf,
+    safe_to_seal: bool,
+}
+impl PreparedInput {
+    fn entry(&self) -> String { format!("{} {} 0", self.mode, self.oid) }
+}
+struct ObservedSources {
+    snapshot: SourceSnapshot,
+    changed: BTreeSet<String>,
+    prepared: BTreeMap<String, PreparedInput>,
+    // Own the private immutable canonical copies through candidate publication.
+    _copies: TemporaryIndex,
 }
 
 fn git_command(root: &Path, args: &[&str], index: Option<&Path>) -> Command {
@@ -69,7 +99,7 @@ fn git_command(root: &Path, args: &[&str], index: Option<&Path>) -> Command {
 
 fn operation(args: &[&str]) -> &'static str {
     match args.first().copied() {
-        Some("add") => "staging",
+        Some("add") | Some("update-index") => "staging",
         Some("read-tree") | Some("write-tree") => "candidate tree",
         Some("commit-tree") => "candidate commit",
         Some("update-ref") => "candidate reference",
@@ -178,6 +208,14 @@ fn run_git(
     }
     let status = status.ok_or("Git exit status unavailable")?;
     if !status.success() {
+        // These two documented logical variables use exit 1 when a source is
+        // disabled/unset. An unsupported capability exits differently and is
+        // reported by the conversion qualifier; never ignore arbitrary errors.
+        if status.code() == Some(1)
+            && matches!(args, ["var", "GIT_ATTR_SYSTEM"] | ["var", "GIT_ATTR_GLOBAL"])
+        {
+            return Ok(String::new());
+        }
         // Raw hook/tool stderr and stdout never enter durable Attempt.failure.
         return Err(format!(
             "Git {label} failed (exit {}); inspect the preserved workspace locally.",
@@ -358,50 +396,6 @@ fn collect_declared(
     Ok(())
 }
 
-// Qualification currently supports byte-preserving Git input only. Refuse
-// conversions before diff/add can launch an unreviewed external clean filter.
-fn require_byte_preserving_inputs(root: &Path, names: &BTreeSet<String>) -> Result<bool, String> {
-    let autocrlf = git(
-        root,
-        &["config", "--default=false", "--get", "core.autocrlf"],
-    )?;
-    let reject_crlf = match autocrlf.trim() {
-        "false" | "no" | "off" | "0" => false,
-        // Without active text/filter/encoding attributes, input mode is
-        // byte-preserving for files containing no CRLF. Check actual bytes.
-        "input" => true,
-        _ => return Err("Git content conversion is not qualified; use a byte-preserving configuration or manual candidate review.".into()),
-    };
-    let names: Vec<_> = names.iter().map(String::as_str).collect();
-    for chunk in names.chunks(16) {
-        for cached in [false, true] {
-            let mut args = vec!["check-attr", "-z"];
-            if cached {
-                args.push("--cached");
-            }
-            args.extend(["--all", "--"]);
-            args.extend(chunk.iter().copied());
-            reject_content_attributes(&git(root, &args)?)?;
-        }
-    }
-    Ok(reject_crlf)
-}
-fn reject_content_attributes(value: &str) -> Result<(), String> {
-    let fields: Vec<_> = value.split_terminator('\0').collect();
-    if fields.len() % 3 != 0 {
-        return Err("Git input attributes could not be qualified".into());
-    }
-    for entry in fields.chunks_exact(3) {
-        if matches!(
-            entry[1],
-            "filter" | "text" | "eol" | "ident" | "working-tree-encoding" | "crlf"
-        ) && !matches!(entry[2], "unset" | "unspecified")
-        {
-            return Err("Git content attributes require separately qualified conversion; automatic input qualification is refused.".into());
-        }
-    }
-    Ok(())
-}
 fn head_entries(root: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut entries = BTreeMap::new();
     for entry in git(root, &["ls-tree", "-r", "-z", "HEAD"])?
@@ -446,35 +440,68 @@ pub(crate) fn source_identity(
     source_paths: &[String],
     output_paths: &[String],
 ) -> Result<SourceIdentity, String> {
-    Ok(observe_sources(root, source_paths, output_paths)?.0)
+    Ok(source_snapshot(root, source_paths, output_paths)?.identity)
+}
+
+pub(crate) fn source_snapshot(
+    root: &Path,
+    source_paths: &[String],
+    output_paths: &[String],
+) -> Result<SourceSnapshot, String> {
+    Ok(observe_sources(root, source_paths, output_paths)?.snapshot)
 }
 
 /// Observe retained provider edits without touching the real index or history.
 /// Uncommitted results still obey the approved source/output and scope policy.
 pub(crate) fn retained_candidate(
     root: &Path,
-    expected_head: &str,
+    expected: &SourceSnapshot,
     scope: &[String],
     sources: &[String],
     outputs: &[String],
 ) -> Result<SourceIdentity, String> {
     if scope.is_empty() { return Err("Task requires an approved file scope".into()); }
     for path in scope { safe_relative(path, true)?; }
-    let (identity, changed) = observe_sources(root, sources, outputs)?;
-    if identity.head_sha != expected_head {
+    let observed = observe_sources(root, sources, outputs)?;
+    validate_provider_snapshot(&observed, expected, scope)?;
+    Ok(observed.snapshot.identity)
+}
+
+fn validate_provider_snapshot(observed: &ObservedSources, expected: &SourceSnapshot, scope: &[String]) -> Result<(), String> {
+    let snapshot = &observed.snapshot;
+    if snapshot.identity.head_sha != expected.identity.head_sha {
         return Err("Provider changed Git HEAD; retained work requires manual reconciliation".into());
     }
-    if changed.iter().any(|path| !scope.iter().any(|prefix| prefix == "." || path == prefix || path.starts_with(&format!("{prefix}/")))) {
+    let raw_changed: BTreeSet<_> = expected.raw_files.keys().chain(snapshot.raw_files.keys())
+        .filter(|name| expected.raw_files.get(*name) != snapshot.raw_files.get(*name)).cloned().collect();
+    let attribute_changed: BTreeSet<_> = expected.conversion_working.keys().chain(snapshot.conversion_working.keys())
+        .filter(|name| expected.conversion_working.get(*name) != snapshot.conversion_working.get(*name)).cloned().collect();
+    if observed.changed.iter().chain(raw_changed.iter()).chain(attribute_changed.iter()).any(|path| !in_paths(path, scope)) {
         return Err("Provider changes files outside the approved scope; changes retained for review".into());
     }
-    Ok(identity)
+    if snapshot.conversion_config != expected.conversion_config {
+        return Err("Git conversion configuration changed during provider execution; retained work requires manual reconciliation".into());
+    }
+    if snapshot.conversion_external != expected.conversion_external {
+        return Err("Git input attribute policy changed outside the observed source edits; retained work requires manual reconciliation".into());
+    }
+    // Working attribute sources (including ignored files) have their own scope
+    // identities. Cached attribute edits are also covered by staged-path scope.
+    let attributes_changed = !attribute_changed.is_empty()
+        || observed.changed.iter().any(|name| name.rsplit('/').next() == Some(".gitattributes"));
+    if !attributes_changed && expected.conversion_files.iter().any(|(name, policy)| {
+        snapshot.conversion_files.get(name).is_some_and(|current| current != policy)
+    }) {
+        return Err("Git input attribute policy changed outside the observed source edits; retained work requires manual reconciliation".into());
+    }
+    Ok(())
 }
 
 fn observe_sources(
     root: &Path,
     source_paths: &[String],
     output_paths: &[String],
-) -> Result<(SourceIdentity, BTreeSet<String>), String> {
+) -> Result<ObservedSources, String> {
     reject_hidden_flags(root)?;
     let (tracked, outputs) = outputs_policy(root, source_paths, output_paths)?;
     let head_sha = git(root, &["rev-parse", "--verify", "HEAD"])?
@@ -510,23 +537,27 @@ fn observe_sources(
     for name in &names {
         safe_relative(name, false)?;
     }
-    let reject_crlf = require_byte_preserving_inputs(root, &names)?;
-    // Hash immutable copies of the very bytes entering the fingerprint. Git's
-    // raw object hashing neither consults the original stat cache nor executes
-    // filters; compare those objects to BOTH committed and staged content.
+    let policy = eol::observe(root, &names)?;
+    // Fingerprint the actual bytes, then derive Git objects from immutable
+    // canonical copies under the qualified built-in policy. No Git clean or
+    // encoding filter is executed, and the stat cache is never trusted.
     let snapshots = TemporaryIndex::new(&std::env::temp_dir())?;
     let mut actual = Vec::new();
+    let mut raw_files = BTreeMap::new();
+    let mut prepared = BTreeMap::new();
     let canonical_root = fs::canonicalize(root).map_err(|_| "Source workspace unavailable")?;
     let mut hash = Sha256::new();
+    hash.update(b"virtuallab-source-v3\0");
     hash.update(head_sha.as_bytes());
+    hash.update(policy.fingerprint().as_bytes());
     let mut clean = !changed.iter().any(|path| !in_paths(path, &outputs));
     let mut total = 0u64;
-    for name in names {
+    for name in &names {
         if name
             .split('/')
             .any(|part| part.to_lowercase().starts_with(".env"))
         {
-            if tracked.contains(&name) {
+            if tracked.contains(name) {
                 return Err("Tracked environment-secret input cannot be fingerprinted".into());
             }
             continue;
@@ -535,7 +566,7 @@ fn observe_sources(
         if in_paths(&name, &outputs) {
             continue;
         }
-        if !tracked.contains(&name) {
+        if !tracked.contains(name) {
             clean = false;
         }
         hash.update((name.len() as u64).to_le_bytes());
@@ -547,6 +578,7 @@ fn observe_sources(
                 clean = false;
                 changed.insert(name.clone());
                 hash.update(b"missing");
+                raw_files.insert(name.clone(), "missing".into());
                 continue;
             }
             Err(_) => return Err("Source metadata unavailable".into()),
@@ -569,8 +601,8 @@ fn observe_sources(
         };
         #[cfg(not(unix))]
         let mode = committed
-            .get(&name)
-            .or_else(|| indexed.get(&name))
+            .get(name)
+            .or_else(|| indexed.get(name))
             .and_then(|entry| entry.split_whitespace().next())
             .unwrap_or("100644")
             .to_owned();
@@ -578,24 +610,34 @@ fn observe_sources(
             File::open(path).map_err(|_| "Source bytes unavailable")?,
             &mut total,
         )?;
-        if reject_crlf && bytes.windows(2).any(|pair| pair == b"\r\n") {
-            return Err("Git autocrlf=input may transform these source bytes; automatic qualification is refused before staging.".into());
-        }
         hash.update((bytes.len() as u64).to_le_bytes());
         hash.update(&bytes);
+        let mut raw = Sha256::new();
+        raw.update(mode.as_bytes());
+        raw.update((bytes.len() as u64).to_le_bytes());
+        raw.update(&bytes);
+        raw_files.insert(name.clone(), format!("{:x}", raw.finalize()));
+        let (canonical, safe_to_seal) = policy.canonicalize(name, &bytes);
         let snapshot = snapshots.0.join(format!("blob-{}", actual.len()));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&snapshot)
             .map_err(|_| "Input byte snapshot unavailable")?;
-        file.write_all(&bytes)
+        file.write_all(&canonical)
             .map_err(|_| "Input byte snapshot could not be written")?;
-        actual.push((name, mode, snapshot));
+        let raw_snapshot = if canonical == bytes { snapshot.clone() } else {
+            let raw_snapshot = snapshots.0.join(format!("raw-{}", actual.len()));
+            let mut raw = OpenOptions::new().write(true).create_new(true).open(&raw_snapshot)
+                .map_err(|_| "Raw input byte snapshot unavailable")?;
+            raw.write_all(&bytes).map_err(|_| "Raw input byte snapshot could not be written")?;
+            raw_snapshot
+        };
+        actual.push((name.clone(), mode, snapshot, raw_snapshot, safe_to_seal));
     }
     for chunk in actual.chunks(16) {
         let mut args = vec!["hash-object", "--no-filters", "--"];
-        for (_, _, path) in chunk {
+        for (_, _, path, _, _) in chunk {
             args.push(path.to_str().ok_or("Non-Unicode input snapshot path")?);
         }
         let objects = git(root, &args)?;
@@ -603,7 +645,7 @@ fn observe_sources(
         if objects.len() != chunk.len() {
             return Err("Raw input object hashing was incomplete".into());
         }
-        for ((name, mode, _), oid) in chunk.iter().zip(objects) {
+        for ((name, mode, path, raw_path, safe_to_seal), oid) in chunk.iter().zip(objects) {
             if oid.len() != head_sha.len() || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                 return Err("Raw input object identity unavailable".into());
             }
@@ -611,25 +653,32 @@ fn observe_sources(
             if committed.get(name) != Some(&entry) || indexed.get(name) != Some(&entry) {
                 changed.insert(name.clone());
             }
+            prepared.insert(name.clone(), PreparedInput { mode: mode.clone(), oid: oid.to_owned(), path: path.clone(), raw_path: raw_path.clone(), safe_to_seal: *safe_to_seal });
         }
     }
     clean &= changed.is_empty();
     if git(root, &["rev-parse", "--verify", "HEAD"])?.trim() != head_sha
         || index_entries(&git(root, &["ls-files", "--stage", "-z"])?)? != indexed
+        || eol::observe(root, &names)? != policy
     {
         return Err(
-            "Committed or staged inputs changed during observation; retry after inspecting state"
+            "Committed, staged or conversion inputs changed during observation; retry after inspecting state"
                 .into(),
         );
     }
-    Ok((
-        SourceIdentity {
-            head_sha,
-            digest: format!("{:x}", hash.finalize()),
-            clean,
+    Ok(ObservedSources {
+        snapshot: SourceSnapshot {
+            identity: SourceIdentity { head_sha, digest: format!("{:x}", hash.finalize()), clean },
+            raw_files,
+            conversion_config: policy.config_fingerprint(),
+            conversion_external: policy.external_fingerprint(),
+            conversion_working: policy.working_sources(),
+            conversion_files: policy.file_fingerprints(),
         },
         changed,
-    ))
+        prepared,
+        _copies: snapshots,
+    })
 }
 
 fn require_automatic_commit_policy(root: &Path) -> Result<(), String> {
@@ -829,6 +878,66 @@ pub(crate) fn seal_candidate(
     seal_candidate_with_policy(root, expected, scope, message, &[], &[])
 }
 
+fn qualify_candidate_inputs(
+    root: &Path,
+    index: &Path,
+    names: &BTreeSet<String>,
+    observed: &ObservedSources,
+    changed: &BTreeSet<String>,
+) -> Result<eol::Policy, String> {
+    // A removed .gitattributes falls back to the index. Qualify against the
+    // fully populated candidate index before publishing it, using the same raw
+    // immutable inputs that produced the approved objects.
+    let policy = eol::observe_candidate(root, index, names)?;
+    if policy.config_fingerprint() != observed.snapshot.conversion_config
+        || policy.external_fingerprint() != observed.snapshot.conversion_external
+        || policy.working_sources() != observed.snapshot.conversion_working
+    {
+        return Err("Git conversion policy changed while preparing candidate; original index and HEAD preserved".into());
+    }
+    let copies = TemporaryIndex::new(&std::env::temp_dir())?;
+    let mut total = 0;
+    let mut qualified = Vec::new();
+    for (name, input) in &observed.prepared {
+        let bytes = read_bounded_source(File::open(&input.raw_path)
+            .map_err(|_| "Approved raw input snapshot unavailable")?, &mut total)?;
+        let mut raw = Sha256::new();
+        raw.update(input.mode.as_bytes());
+        raw.update((bytes.len() as u64).to_le_bytes());
+        raw.update(&bytes);
+        if observed.snapshot.raw_files.get(name) != Some(&format!("{:x}", raw.finalize())) {
+            return Err("Approved raw input snapshot changed; original index and HEAD preserved".into());
+        }
+        let (canonical, safe_to_seal) = policy.canonicalize(name, &bytes);
+        if changed.contains(name) && !safe_to_seal {
+            return Err(format!("Git core.safecrlf refuses the candidate line-ending round trip for {name}; original index and HEAD preserved"));
+        }
+        let path = copies.0.join(format!("qualified-{}", qualified.len()));
+        let mut file = OpenOptions::new().write(true).create_new(true).open(&path)
+            .map_err(|_| "Candidate policy snapshot unavailable")?;
+        file.write_all(&canonical).map_err(|_| "Candidate policy snapshot could not be written")?;
+        qualified.push((name, input, path));
+    }
+    for chunk in qualified.chunks(16) {
+        let mut args = vec!["hash-object", "--no-filters", "--"];
+        for (_, _, path) in chunk { args.push(path.to_str().ok_or("Non-Unicode candidate policy snapshot path")?); }
+        let objects = git(root, &args)?;
+        let objects: Vec<_> = objects.lines().collect();
+        if objects.len() != chunk.len() {
+            return Err("Candidate policy object hashing was incomplete; original index and HEAD preserved".into());
+        }
+        for ((name, input, _), oid) in chunk.iter().zip(objects) {
+            if input.oid != oid {
+                return Err(format!("Candidate attribute policy changes the approved input for {name}; original index and HEAD preserved, review attributes and source together"));
+            }
+        }
+    }
+    if eol::observe_candidate(root, index, names)? != policy {
+        return Err("Candidate conversion policy changed during qualification; original index and HEAD preserved".into());
+    }
+    Ok(policy)
+}
+
 pub(crate) fn seal_candidate_with_policy(
     root: &Path,
     expected: &str,
@@ -836,6 +945,18 @@ pub(crate) fn seal_candidate_with_policy(
     message: &str,
     source_paths: &[String],
     output_paths: &[String],
+) -> Result<String, String> {
+    seal_candidate_observed(root, expected, scope, message, source_paths, output_paths, None)
+}
+
+fn seal_candidate_observed(
+    root: &Path,
+    expected: &str,
+    scope: &[String],
+    message: &str,
+    source_paths: &[String],
+    output_paths: &[String],
+    provider_before: Option<&SourceSnapshot>,
 ) -> Result<String, String> {
     if !matches!(expected.len(), 40 | 64) || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
@@ -855,7 +976,12 @@ pub(crate) fn seal_candidate_with_policy(
     }
     require_automatic_commit_policy(root)?;
     let mut guard = IndexGuard::acquire(root)?;
-    let (before, mut changed) = observe_sources(root, source_paths, output_paths)?;
+    let observed = observe_sources(root, source_paths, output_paths)?;
+    if let Some(expected) = provider_before {
+        validate_provider_snapshot(&observed, expected, scope)?;
+    }
+    let before = &observed.snapshot.identity;
+    let mut changed = observed.changed.clone();
     let branch = git(root, &["symbolic-ref", "--quiet", "HEAD"])?;
     let branch = line(&branch);
     if !branch.starts_with("refs/heads/") {
@@ -901,22 +1027,58 @@ pub(crate) fn seal_candidate_with_policy(
             );
         }
         ensure_candidate_state(root, &guard, expected, branch)?;
-        return Ok(before.head_sha);
+        return Ok(before.head_sha.clone());
     }
     let temp = TemporaryIndex::new(guard.path.parent().ok_or("Git index parent unavailable")?)?;
     let index = temp.path();
     require_automatic_commit_policy(root)?;
     index_git(root, &index, &["read-tree", expected])?;
-    let paths: Vec<_> = tracked.iter().map(String::as_str).collect();
-    for chunk in paths.chunks(16) {
-        let mut args = vec!["check-attr", "-z", "--cached", "--all", "--"];
-        args.extend(chunk.iter().copied());
-        reject_content_attributes(&index_git(root, &index, &args)?)?;
+    let names = observed.snapshot.raw_files.keys().cloned().collect();
+    let mut expected_entries = index_entries(&index_git(root, &index, &["ls-files", "--stage", "-z"])?)?;
+    let mut write = Vec::new();
+    let mut remove = Vec::new();
+    for name in &changed {
+        if let Some(input) = observed.prepared.get(name) {
+            if !input.safe_to_seal {
+                return Err(format!("Git core.safecrlf refuses the line-ending round trip for {name}; original index and HEAD preserved"));
+            }
+            expected_entries.insert(name.clone(), input.entry());
+            write.push((name, input));
+        } else if observed.snapshot.raw_files.get(name).is_some_and(|value| value == "missing") {
+            expected_entries.remove(name);
+            remove.push(name.as_str());
+        } else {
+            return Err("Source inventory changed while preparing candidate; original index and HEAD preserved".into());
+        }
     }
-    let mut add = vec!["add", "-f", "-A", "--"];
-    add.extend(changed.iter().map(String::as_str));
-    require_automatic_commit_policy(root)?;
-    index_git(root, &index, &add)?;
+    // Publish only the already approved canonical copies. git add would reread
+    // live files and attributes, so it is deliberately absent from this adapter.
+    for chunk in write.chunks(16) {
+        let mut args = vec!["hash-object", "--no-filters", "-w", "--"];
+        for (_, input) in chunk { args.push(input.path.to_str().ok_or("Non-Unicode candidate snapshot path")?); }
+        let objects = git(root, &args)?;
+        let objects: Vec<_> = objects.lines().collect();
+        if objects.len() != chunk.len() || chunk.iter().zip(objects).any(|((_, input), oid)| input.oid != oid) {
+            return Err("Approved candidate snapshot changed before object creation; original index and HEAD preserved".into());
+        }
+        let mut args = vec!["update-index".to_string(), "--add".into()];
+        for (name, input) in chunk {
+            args.extend(["--cacheinfo".into(), format!("{},{},{}", input.mode, input.oid, name)]);
+        }
+        require_automatic_commit_policy(root)?;
+        index_git(root, &index, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    }
+    for chunk in remove.chunks(16) {
+        let mut args = vec!["update-index", "--force-remove", "--"];
+        args.extend(chunk.iter().copied());
+        require_automatic_commit_policy(root)?;
+        index_git(root, &index, &args)?;
+    }
+    let approved_entries = index_entries(&index_git(root, &index, &["ls-files", "--stage", "-z"])?)?;
+    if approved_entries != expected_entries {
+        return Err("Candidate index differs from approved immutable inputs; original index and HEAD preserved".into());
+    }
+    let candidate_policy = qualify_candidate_inputs(root, &index, &names, &observed, &changed)?;
     let tree = index_git(root, &index, &["write-tree"])?;
     let tree = tree.trim();
     let complete_changes = files(&git(
@@ -941,15 +1103,15 @@ pub(crate) fn seal_candidate_with_policy(
             );
         }
     }
-    let approved_entries =
-        index_entries(&index_git(root, &index, &["ls-files", "--stage", "-z"])?)?;
     for path in &staged {
         if original_entries.get(path) != approved_entries.get(path) {
             return Err("Staged content differs from approved working input; original index and HEAD preserved".into());
         }
     }
-    let stable = source_identity(root, source_paths, output_paths)?;
-    if stable.digest != before.digest || stable.head_sha != expected {
+    let stable = source_snapshot(root, source_paths, output_paths)?;
+    if stable.identity.digest != before.digest || stable.identity.head_sha != expected
+        || stable.raw_files != observed.snapshot.raw_files
+    {
         return Err(
             "Source changed while preparing candidate; original index and HEAD preserved".into(),
         );
@@ -961,10 +1123,20 @@ pub(crate) fn seal_candidate_with_policy(
                 .into(),
         );
     }
+    if index_entries(&index_git(root, &index, &["ls-files", "--stage", "-z"])?)? != approved_entries {
+        return Err("Candidate index changed before preparation; original index and HEAD preserved".into());
+    }
     guard.prepare(&index)?;
     require_automatic_commit_policy(root)?;
     let candidate = git(root, &["commit-tree", tree, "-p", expected, "-m", message])?;
     let candidate = candidate.trim().to_string();
+    let publishing = source_snapshot(root, source_paths, output_paths)?;
+    if publishing.identity.digest != before.digest || publishing.identity.head_sha != expected
+        || publishing.raw_files != observed.snapshot.raw_files
+        || eol::observe_candidate(root, &index, &names)? != candidate_policy
+    {
+        return Err("Source or conversion policy changed before candidate publication; original index and HEAD preserved".into());
+    }
     ensure_candidate_state(root, &guard, expected, branch)?;
     require_automatic_commit_policy(root)?;
     git(
@@ -998,6 +1170,17 @@ pub(crate) fn seal_candidate_with_policy(
         return Err("Candidate committed, but source or branch changed; preserve workspace for manual reconciliation".into());
     }
     Ok(candidate)
+}
+
+pub(crate) fn seal_candidate_from_snapshot(
+    root: &Path,
+    expected: &SourceSnapshot,
+    scope: &[String],
+    message: &str,
+    source_paths: &[String],
+    output_paths: &[String],
+) -> Result<String, String> {
+    seal_candidate_observed(root, &expected.identity.head_sha, scope, message, source_paths, output_paths, Some(expected))
 }
 
 pub(crate) fn integrate_candidates(
@@ -1193,7 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn unused_filter_config_and_byte_preserving_autocrlf_input_are_supported() {
+    fn unused_filter_config_and_builtin_autocrlf_input_are_supported() {
         let repo = Fixture::new();
         git(&repo.0, &["config", "core.autocrlf", "input"]).unwrap();
         git(
@@ -1201,33 +1384,30 @@ mod tests {
             &["config", "filter.unused.clean", "touch filter-ran; cat"],
         )
         .unwrap();
-        assert!(source_identity(&repo.0, &[], &[]).unwrap().clean);
+        let before = source_identity(&repo.0, &[], &[]).unwrap();
+        assert!(before.clean);
         let expected = head(&repo.0);
         let index = index_bytes(&repo.0);
         fs::write(repo.0.join("source.cpp"), "int main() {return 0;}\r\n").unwrap();
-        assert!(
-            source_identity(&repo.0, &[], &[]).is_err(),
-            "autocrlf=input would transform CRLF"
-        );
-        assert!(seal_candidate(&repo.0, &expected, &["source.cpp".into()], "candidate").is_err());
+        let after = source_identity(&repo.0, &[], &[]).unwrap();
+        assert!(after.clean, "input mode compares the qualified canonical bytes");
+        assert_ne!(after.digest, before.digest, "raw CRLF bytes still change evidence identity");
         assert_eq!(head(&repo.0), expected);
         assert_eq!(index_bytes(&repo.0), index);
         assert!(!repo.0.join("filter-ran").exists());
     }
 
     #[test]
-    fn unsupported_builtin_content_normalization_fails_closed() {
+    fn unsupported_content_transform_attributes_fail_closed() {
         let repo = Fixture::new();
-        git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
-        assert!(source_identity(&repo.0, &[], &[]).is_err());
-        git(&repo.0, &["config", "core.autocrlf", "false"]).unwrap();
         for attribute in [
-            "text",
-            "eol=lf",
+            "text=unknown",
+            "eol=unknown",
             "ident",
             "working-tree-encoding=UTF-8",
             "filter=undefined",
             "crlf",
+            "-crlf",
         ] {
             fs::write(
                 repo.0.join(".gitattributes"),
@@ -1236,6 +1416,287 @@ mod tests {
             .unwrap();
             assert!(source_identity(&repo.0, &[], &[]).is_err(), "{attribute}");
         }
+    }
+
+    #[test]
+    fn builtin_eol_fresh_crlf_worktree_is_clean_and_real_edits_are_dirty() {
+        let repo = Fixture::new();
+        git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+        let directory = TemporaryIndex::new(&std::env::temp_dir()).unwrap();
+        let lane = directory.0.join("task lane 工作");
+        git(&repo.0, &["worktree", "add", "-b", "eol-task", "--", lane.to_str().unwrap(), "HEAD"]).unwrap();
+        assert!(git(&lane, &["status", "--porcelain"]).unwrap().is_empty());
+        assert_eq!(fs::read(lane.join("source.cpp")).unwrap(), b"int main() {return 0;}\r\n");
+        let before = source_identity(&lane, &[], &[]).unwrap();
+        assert!(before.clean, "a fresh Git-created CRLF checkout must qualify");
+        let index = index_bytes(&lane);
+        fs::write(lane.join("source.cpp"), b"int main() {return 1;}\r\n").unwrap();
+        let after = source_identity(&lane, &[], &[]).unwrap();
+        assert!(!after.clean);
+        assert_ne!(before.digest, after.digest);
+        assert_eq!(index_bytes(&lane), index, "observation must preserve the real index");
+    }
+
+    #[test]
+    fn builtin_eol_text_attributes_qualify_their_git_canonical_content() {
+        for attribute in ["text", "text=auto", "text eol=lf", "text=auto eol=crlf", "eol=lf"] {
+            let repo = Fixture::new();
+            fs::write(repo.0.join(".gitattributes"), format!("source.cpp {attribute}\n")).unwrap();
+            git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+            git(&repo.0, &["commit", "-m", "line ending policy"]).unwrap();
+            fs::write(repo.0.join("source.cpp"), b"int main() {return 0;}\r\n").unwrap();
+            assert!(source_identity(&repo.0, &[], &[]).unwrap().clean, "{attribute}");
+        }
+    }
+
+    #[test]
+    fn builtin_eol_sealing_publishes_canonical_objects_and_preserves_worktree_bytes() {
+        let repo = Fixture::new();
+        git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+        let expected = head(&repo.0);
+        let config = fs::read(repo.0.join(".git/config")).unwrap();
+        let changed = b"int main() {return 2;}\r\n";
+        fs::write(repo.0.join("source.cpp"), changed).unwrap();
+        let candidate = seal_candidate(&repo.0, &expected, &["source.cpp".into()], "CRLF candidate").unwrap();
+        assert_ne!(candidate, expected);
+        assert_eq!(git(&repo.0, &["show", "HEAD:source.cpp"]).unwrap(), "int main() {return 2;}\n");
+        assert_eq!(fs::read(repo.0.join("source.cpp")).unwrap(), changed);
+        assert_eq!(fs::read(repo.0.join(".git/config")).unwrap(), config);
+        assert!(source_identity(&repo.0, &[], &[]).unwrap().clean);
+    }
+
+    #[test]
+    fn builtin_eol_binary_lone_cr_and_unset_text_edits_remain_byte_exact() {
+        for (attribute, original, edited) in [
+            (None, &b"a\0\n"[..], &b"a\0\r\n"[..]),
+            (None, &b"a\rb\n"[..], &b"a\rb\r\n"[..]),
+            (None, &b"\x01\x02\n"[..], &b"\x01\x02\r\n"[..]),
+            (Some("-text"), &b"alpha\n"[..], &b"alpha\r\n"[..]),
+        ] {
+            let repo = Fixture::new();
+            fs::write(repo.0.join("source.cpp"), original).unwrap();
+            if let Some(attribute) = attribute {
+                fs::write(repo.0.join(".gitattributes"), format!("source.cpp {attribute}\n")).unwrap();
+                git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+            }
+            git(&repo.0, &["add", "--", "source.cpp"]).unwrap();
+            git(&repo.0, &["commit", "-m", "byte exact baseline"]).unwrap();
+            git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+            assert!(source_identity(&repo.0, &[], &[]).unwrap().clean);
+            let expected = head(&repo.0);
+            fs::write(repo.0.join("source.cpp"), edited).unwrap();
+            assert!(!source_identity(&repo.0, &[], &[]).unwrap().clean, "{attribute:?}: binary or -text EOL edits must not be normalized away");
+            seal_candidate(&repo.0, &expected, &["source.cpp".into()], "byte exact edit").unwrap();
+            assert_eq!(git(&repo.0, &["rev-parse", "HEAD:source.cpp"]).unwrap(), git(&repo.0, &["hash-object", "--no-filters", "--", "source.cpp"]).unwrap());
+            assert_eq!(fs::read(repo.0.join("source.cpp")).unwrap(), edited);
+        }
+    }
+
+    #[test]
+    fn builtin_eol_legacy_crlf_index_content_is_not_renormalized() {
+        for original in [&b"alpha\r\nbeta\r\n"[..], &b"alpha\r\nbeta\n"[..]] {
+            let repo = Fixture::new();
+            fs::write(repo.0.join("source.cpp"), original).unwrap();
+            git(&repo.0, &["add", "--", "source.cpp"]).unwrap();
+            git(&repo.0, &["commit", "-m", "legacy CRLF baseline"]).unwrap();
+            git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+            assert!(source_identity(&repo.0, &[], &[]).unwrap().clean);
+            let expected = head(&repo.0);
+            let mut edited = original.to_vec();
+            edited[0] = b'A';
+            fs::write(repo.0.join("source.cpp"), &edited).unwrap();
+            assert!(!source_identity(&repo.0, &[], &[]).unwrap().clean);
+            seal_candidate(&repo.0, &expected, &["source.cpp".into()], "legacy edit").unwrap();
+            assert_eq!(git(&repo.0, &["rev-parse", "HEAD:source.cpp"]).unwrap(), git(&repo.0, &["hash-object", "--no-filters", "--", "source.cpp"]).unwrap());
+            assert_eq!(fs::read(repo.0.join("source.cpp")).unwrap(), edited);
+        }
+    }
+
+    #[test]
+    fn builtin_eol_explicit_text_normalizes_even_binary_content() {
+        let repo = Fixture::new();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        fs::write(repo.0.join("source.cpp"), b"a\0\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes", "source.cpp"]).unwrap();
+        git(&repo.0, &["commit", "-m", "explicit binary text policy"]).unwrap();
+        fs::write(repo.0.join("source.cpp"), b"a\0\r\n").unwrap();
+        assert!(source_identity(&repo.0, &[], &[]).unwrap().clean);
+    }
+
+    #[test]
+    fn builtin_eol_safecrlf_refusal_preserves_index_head_config_and_source() {
+        let repo = Fixture::new();
+        git(&repo.0, &["config", "core.autocrlf", "input"]).unwrap();
+        git(&repo.0, &["config", "core.safecrlf", "true"]).unwrap();
+        let expected = head(&repo.0);
+        let index = index_bytes(&repo.0);
+        let config = fs::read(repo.0.join(".git/config")).unwrap();
+        let edited = b"int main() {return 3;}\r\n";
+        fs::write(repo.0.join("source.cpp"), edited).unwrap();
+        assert!(!source_identity(&repo.0, &[], &[]).unwrap().clean);
+        let error = seal_candidate(&repo.0, &expected, &["source.cpp".into()], "unsafe round trip").unwrap_err();
+        assert!(error.contains("core.safecrlf"), "{error}");
+        assert_eq!(head(&repo.0), expected);
+        assert_eq!(index_bytes(&repo.0), index);
+        assert_eq!(fs::read(repo.0.join(".git/config")).unwrap(), config);
+        assert_eq!(fs::read(repo.0.join("source.cpp")).unwrap(), edited);
+    }
+
+    #[test]
+    fn candidate_review_safecrlf_rejects_adjacent_lone_cr_and_crlf() {
+        let repo = Fixture::new();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+        git(&repo.0, &["commit", "-m", "forced text policy"]).unwrap();
+        git(&repo.0, &["config", "core.safecrlf", "true"]).unwrap();
+        let expected = head(&repo.0);
+        let original = index_bytes(&repo.0);
+        fs::write(repo.0.join("source.cpp"), b"line\r\r\n").unwrap();
+        assert!(git(&repo.0, &["add", "--", "source.cpp"]).is_err(), "Git's own round-trip guard must reject this fixture");
+        let result = seal_candidate(&repo.0, &expected, &["source.cpp".into()], "refused round trip");
+        assert!(result.is_err(), "native sealing must preserve Git's safecrlf rejection");
+        assert_eq!(head(&repo.0), expected);
+        assert_eq!(index_bytes(&repo.0), original);
+    }
+
+    #[test]
+    fn candidate_review_snapshot_rejects_eol_scope_change_after_provider_validation() {
+        let repo = Fixture::new();
+        git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        let original = index_bytes(&repo.0);
+        fs::write(repo.0.join("source.cpp"), b"int main() {return 4;}\r\n").unwrap();
+        retained_candidate(&repo.0, &expected, &["source.cpp".into()], &[], &[]).unwrap();
+        // Reproduce an external edit between completion observation and seal.
+        fs::write(repo.0.join(".gitignore"), "build/\r\nignored-source/\r\n.env\r\n").unwrap();
+        let result = seal_candidate_from_snapshot(&repo.0, &expected, &["source.cpp".into()], "retained scope", &[], &[]);
+        assert!(result.is_err(), "the sealer must validate the pre-provider raw baseline itself");
+        assert_eq!(head(&repo.0), expected.identity.head_sha);
+        assert_eq!(index_bytes(&repo.0), original);
+    }
+
+    #[test]
+    fn candidate_review_scoped_attribute_comment_does_not_hide_external_policy_change() {
+        let repo = Fixture::new();
+        fs::write(repo.0.join(".gitattributes"), "# original comment\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+        git(&repo.0, &["commit", "-m", "attribute comment"]).unwrap();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        fs::write(repo.0.join(".gitattributes"), "# scoped comment change\n").unwrap();
+        fs::write(repo.0.join(".git/info/attributes"), "source.cpp text eol=lf\n").unwrap();
+        let result = retained_candidate(&repo.0, &expected, &[".gitattributes".into()], &[], &[]);
+        assert!(result.is_err(), "a scoped .gitattributes edit must not exempt external attribute sources");
+    }
+
+    #[test]
+    fn candidate_review_deleted_attributes_are_checked_under_populated_candidate_index() {
+        let repo = Fixture::new();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+        git(&repo.0, &["commit", "-m", "cached text fallback"]).unwrap();
+        let bytes = fs::read(repo.0.join("source.cpp")).unwrap();
+        let crlf = String::from_utf8(bytes).unwrap().replace('\n', "\r\n");
+        fs::write(repo.0.join("source.cpp"), crlf.as_bytes()).unwrap();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        assert!(expected.identity.clean);
+        let original = index_bytes(&repo.0);
+        fs::remove_file(repo.0.join(".gitattributes")).unwrap();
+        let result = seal_candidate_from_snapshot(&repo.0, &expected, &[".gitattributes".into()], "remove text policy", &[], &[]);
+        assert!(result.is_err(), "candidate policy must not leave source dirty after publication");
+        assert_eq!(head(&repo.0), expected.identity.head_sha, "policy mismatch must be found before moving HEAD");
+        assert_eq!(index_bytes(&repo.0), original);
+        assert_eq!(fs::read(repo.0.join("source.cpp")).unwrap(), crlf.as_bytes());
+        assert!(!repo.0.join(".gitattributes").exists());
+    }
+
+    #[test]
+    fn candidate_review_in_scope_staging_is_not_external_attribute_drift() {
+        for legacy in [false, true] {
+            let repo = Fixture::new();
+            if legacy {
+                fs::write(repo.0.join("source.cpp"), b"int main() {}\r\n").unwrap();
+                git(&repo.0, &["add", "--", "source.cpp"]).unwrap();
+                git(&repo.0, &["commit", "-m", "legacy indexed CRLF"]).unwrap();
+                git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+            }
+            let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+            let edited: &[u8] = if legacy { b"int main() {return 5;}\n" } else { b"int main() {return 5;}\r\n" };
+            fs::write(repo.0.join("source.cpp"), edited).unwrap();
+            git(&repo.0, &["add", "--", "source.cpp"]).unwrap();
+            retained_candidate(&repo.0, &expected, &["source.cpp".into()], &[], &[])
+                .expect("matching staged and working edits inside scope are not attribute changes");
+        }
+    }
+
+    #[test]
+    fn candidate_review_scoped_comment_does_not_hide_ignored_nested_attributes() {
+        let repo = Fixture::new();
+        fs::create_dir(repo.0.join("nested")).unwrap();
+        fs::write(repo.0.join("nested/source.cpp"), "int nested;\n").unwrap();
+        fs::write(repo.0.join(".gitattributes"), "# original comment\n").unwrap();
+        fs::write(repo.0.join(".gitignore"), "build/\nignored-source/\n.env\nnested/.gitattributes\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes", ".gitignore", "nested/source.cpp"]).unwrap();
+        git(&repo.0, &["commit", "-m", "ignored nested attributes"]).unwrap();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        fs::write(repo.0.join(".gitattributes"), "# scoped comment change\n").unwrap();
+        fs::write(repo.0.join("nested/.gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        let result = retained_candidate(&repo.0, &expected, &[".gitattributes".into()], &[], &[]);
+        assert!(result.is_err(), "ignored attribute sources must obey provider scope independently");
+    }
+
+    #[test]
+    fn builtin_eol_provider_scope_detects_raw_eol_only_changes() {
+        let repo = Fixture::new();
+        git(&repo.0, &["config", "core.autocrlf", "true"]).unwrap();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        fs::write(repo.0.join(".gitignore"), "build/\r\nignored-source/\r\n.env\r\n").unwrap();
+        assert!(source_identity(&repo.0, &[], &[]).unwrap().clean, "the Git blob identities are unchanged");
+        let error = retained_candidate(&repo.0, &expected, &["source.cpp".into()], &[], &[]).unwrap_err();
+        assert!(error.contains("outside the approved scope"));
+    }
+
+    #[test]
+    fn builtin_eol_provider_rejects_external_policy_drift_but_allows_scoped_attributes() {
+        let repo = Fixture::new();
+        let expected = source_snapshot(&repo.0, &[], &[]).unwrap();
+        git(&repo.0, &["config", "core.autocrlf", "input"]).unwrap();
+        assert!(retained_candidate(&repo.0, &expected, &[".".into()], &[], &[]).unwrap_err().contains("configuration changed"));
+        git(&repo.0, &["config", "core.autocrlf", "false"]).unwrap();
+        fs::write(repo.0.join(".git/info/attributes"), "source.cpp text eol=lf\n").unwrap();
+        assert!(retained_candidate(&repo.0, &expected, &[".".into()], &[], &[]).unwrap_err().contains("attribute policy changed"));
+        fs::remove_file(repo.0.join(".git/info/attributes")).unwrap();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        assert!(!retained_candidate(&repo.0, &expected, &[".gitattributes".into()], &[], &[]).unwrap().clean);
+    }
+
+    #[test]
+    fn builtin_eol_cached_external_filters_are_rejected_without_execution() {
+        let repo = Fixture::new();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp filter=review\n").unwrap();
+        git(&repo.0, &["add", "--", ".gitattributes"]).unwrap();
+        git(&repo.0, &["config", "filter.review.clean", "touch filter-ran; cat"]).unwrap();
+        fs::write(repo.0.join(".gitattributes"), "source.cpp text eol=lf\n").unwrap();
+        let expected = head(&repo.0);
+        let index = index_bytes(&repo.0);
+        let error = source_identity(&repo.0, &[], &[]).unwrap_err();
+        assert!(error.contains("filter") && error.contains("source.cpp"));
+        assert!(seal_candidate(&repo.0, &expected, &[".".into()], "blocked filter").is_err());
+        assert!(!repo.0.join("filter-ran").exists());
+        assert_eq!(head(&repo.0), expected);
+        assert_eq!(index_bytes(&repo.0), index);
+    }
+
+    #[test]
+    fn builtin_eol_boolean_aliases_and_inert_core_eol_are_supported() {
+        let repo = Fixture::new();
+        for setting in ["FALSE", "Off", "0", "true", "yes", "1", "INPUT"] {
+            git(&repo.0, &["config", "core.autocrlf", setting]).unwrap();
+            assert!(source_identity(&repo.0, &[], &[]).unwrap().clean, "{setting}");
+        }
+        git(&repo.0, &["config", "core.autocrlf", "false"]).unwrap();
+        git(&repo.0, &["config", "core.eol", "crlf"]).unwrap();
+        fs::write(repo.0.join("source.cpp"), b"int main() {return 0;}\r\n").unwrap();
+        assert!(!source_identity(&repo.0, &[], &[]).unwrap().clean, "core.eol without text attributes must not enable conversion");
     }
 
     #[test]

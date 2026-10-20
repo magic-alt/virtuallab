@@ -23,6 +23,13 @@ describe('native-derived task guidance',()=>{
   expect(nextTaskStep(task,readinessFixture({blockers:['依赖证据过期']})).detail).toMatch(/依赖证据过期/);
   const failed=taskFixture({profile:newProfile(),attempts:[attempt('failed')]});expect(taskQueues([failed],{}).failedChecks).toEqual([failed]);
  });
+ it.each(['failed','interrupted'] as const)('prioritizes the latest %s implementation failure over missing delivery configuration',state=>{
+  const failure='Git content conversion is not qualified; use a byte-preserving configuration or manual candidate review.';
+  const task=taskFixture({profile:null,attempts:[{...attempt(state),failure}]});
+  expect(nextTaskStep(task,readinessFixture({blockers:['尚未指定验收 Profile']}))).toEqual({
+   label:'检查失败并恢复',detail:failure,tab:'执行',
+  });
+ });
  it('requires a real acceptance record plus native currentness and labels overlapping queues',()=>{
   const task=taskFixture({acceptance:{headSha:'h',inputDigest:'i',profileDigest:'p',acceptedAtMs:1,acknowledgedWarnings:false}});
   expect(taskQueues([task],{[task.id]:readinessFixture({acceptanceCurrent:true,status:'ready'})}).accepted).toEqual([task]);
