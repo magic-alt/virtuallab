@@ -1,15 +1,15 @@
 # Application version assessment
 
-Version: 0.5.8 → 0.5.9 (patch).
+Version: 0.5.9 → 0.5.10 (patch).
 
-Baseline commit: fb55975aa8b3c912ff64e712907da08f67974eb6
-Assessed main commit: 806c7048e7ceebe6eff4500e6edaa5e6fdedb287
+Baseline commit: 3976ea6fcee52e8d00ebf5899998be6dbf4d4e49
+Assessed main commit: 9faf7c6f29f82e7741a4d0515f51b48c853ad250
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #89 — fix\(control-center\): qualify built-in Git EOL task inputs (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #90 — feat\(agents\): consolidate Agent workflows in Agents Hub (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 
