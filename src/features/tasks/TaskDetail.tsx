@@ -13,6 +13,7 @@ import { TaskWorkspaceTools } from './TaskWorkspaceTools';
 import { TaskExecutionConsole } from './TaskExecutionConsole';
 import { TaskReport } from './TaskReport';
 import { useTaskAttemptReport } from './useTaskAttemptReport';
+import { ContextRepositoryList } from '@/features/workspace/RepositoryContextSelector';
 import './taskControlCenter.css';
 
 const tabs = ['概览','执行','证据'] as const;
@@ -85,6 +86,8 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
       {tab === '概览' && <>
         <h3>目标</h3><p>{task.goal}</p><p>基线：<code>{task.baseSha}</code></p><h3>允许修改的范围</h3><ul>{task.scope.map(path => <li key={path}><code>{path}</code></li>)}</ul>
         <h3>依赖任务</h3><p>{task.dependencies.join('、') || '无依赖'}</p>
+        <ContextRepositoryList references={task.contextRepositories} label="任务参考工作区（创建时保存）"/>
+        {!!task.contextRepositories?.length && <p className="task-muted">参考仓库提供实时源码上下文；任务修改范围、提交和验证仍属于工作仓库。</p>}
         <p>Profile：{task.profile?.name ?? '未配置'} · 自动封存：{task.autoCommit ? '已允许' : '未允许'}</p>
         {task.workspaceRoot ? <><p>工作区：<code>{task.workspaceRoot}</code></p>{tool('打开工作区','overview')}</> : <form onSubmit={event => {event.preventDefault(); if (branch.trim() && !preparationUncertain) {setPreparationNotice('');act(() => tasks.prepareTaskWorkspace({taskId:task.id,branch:branch.trim(),targetPath:targetPath.trim() || null}));}}}>
           <h3>显式创建任务工作区</h3><p>任务附着于工作区；创建不会开始执行。工作区不是 OS 沙箱。</p>

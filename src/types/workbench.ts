@@ -1,3 +1,14 @@
+import type { ContextRepository } from './workspaceContext';
+
+export interface CodexTerminalSpawnRequest {
+  id: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  executablePath: string | null;
+  contextRepositories: ContextRepository[];
+}
+
 export type ChangeKind =
   | "added"
   | "modified"

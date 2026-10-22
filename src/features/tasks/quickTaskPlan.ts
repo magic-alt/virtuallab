@@ -1,4 +1,6 @@
 import type { TaskPlanRequest, TaskVerificationProfile } from '@/types/tasks';
+import type { ContextRepository } from '@/types/workspaceContext';
+import { copyContextRepositories } from '@/lib/workspaceContext';
 
 /** A single natural-language task does not require a qualified AI planning provider. */
 export function quickScopePaths(value: string): string[] {
@@ -25,6 +27,7 @@ export function quickTaskPlan(options: {
   scopeText: string | null;
   profile: TaskVerificationProfile | null;
   autoCommit: boolean;
+  contextRepositories?: ContextRepository[];
 }): TaskPlanRequest {
   const goal = options.description.trim();
   return {
@@ -39,6 +42,7 @@ export function quickTaskPlan(options: {
       dependencyKeys: [],
       profile: options.profile ? structuredClone(options.profile) : null,
       autoCommit: options.autoCommit,
+      ...(options.contextRepositories?.length ? { contextRepositories: copyContextRepositories(options.contextRepositories) } : {}),
     }],
   };
 }

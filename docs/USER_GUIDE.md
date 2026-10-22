@@ -33,6 +33,19 @@ VirtualLab 是本地优先的工程工作台：以 Git worktree 为工作单元�
 - **Workspace**：VirtualLab 工作上下文，绑定 Worktree 的路径、Terminal、Run、Review、Agent thread 等。
 - **PR/Issue**：可选外部上下文，不会自动接管 Git 工作目录。
 
+### 协作仓库：跨仓库对照代码
+
+在工程仓库中添加需要协作的本地仓库，然后打开主仓库的 **Overview → 协作仓库**。
+勾选需要参考的仓库，并选择其具体 Worktree。这个选择固定到所显示的路径；在侧栏切换到另一个分支不会悄悄改变它。
+
+- **Terminal**：点击 **Start Codex**，新 Codex 终端会收到关联代码目录，并使用执行配置中的 Codex 可执行文件。
+- **Agents Hub → 工作区会话**：选择主仓库/Worktree，检查关联仓库后发送请求。已连接会话的关联信息需要通过 **Stop runtime** 后重新连接更新。
+- **Agents Hub → Agent 任务**：创建任务时检查关联仓库；自动创建的任务 Worktree 会继承这份选择，任务详情保留创建时的路径。
+
+例如修复一个上位机协议解析问题，可以把设备固件作为关联仓库，让 Codex 对照命令编号、字节序、单位、对象字典和错误码，再修改主仓库。反向排查固件时，在固件仓库中选择上位机作为关联仓库。
+
+关联仓库提供当前本地代码供参考，修改范围仍是主 Worktree。需要同时修改另一仓库时，在该仓库创建独立任务，分别审查其 diff 和验证结果。已经运行的普通终端或 Codex 不会因改变关联设置而被重启；手动输入 `codex` 的普通 Shell 也不会自动获得这些关联说明。详细流程见 [跨仓库协作](WORKSPACE_COLLABORATION.md)。
+
 ## 02 · 安装与第一次使用
 
 **准备工具**：Node.js 22.12+、npm、Git、Rust stable、Cargo。Windows 要有 Visual Studio C++ Build Tools / SDK / WebView2；macOS 需要 Xcode Command Line Tools；Linux 要安装 WebKitGTK 4.1 等原生开发包。详见 [本地构建指南](LOCAL_BUILD.md)。
@@ -312,7 +325,7 @@ PR/Issue 可用于创建预填的 Review Worktree，但**不会自动检出远�
 
 **Codex 版本检测不一致（例如终端 0.162、Agents 0.157.1）**：桌面应用继承的 PATH 可能比 PowerShell/终端旧，或 Windows `where` 先找到旧版 `codex.cmd`。点击 Check availability 后查看 **Detected executable** 绝对路径，与 PowerShell 中的 `Get-Command codex -All` / `where.exe codex` 比较。若不同，展开 **CLI diagnostics · executable selection**，点击 **Choose Codex executable**，选择较新版本的真实 `codex.exe` 或 `codex.cmd`，重新检测。此设置只保存在本机，Codex/DeepSeek 共用，检测及 app-server 会使用同一可执行文件。替换/切换路径前请先 Stop runtime；若要恢复桌面自动搜索，点 **Use automatic PATH**。安装新 CLI 本身并不保证已经打开的 VirtualLab GUI 会获取新的 PATH，必要时重启桌面程序。
 
-**安全与局限**：Codex/DeepSeek 采用 `workspace-write` + `approvalPolicy=never`，允许在当前 Worktree 中修改文件，但并非任意可信环境的强隔离；Claude/OpenCode 以 plan 模式启动。始终先在 Changes 查看 diff 再考虑合并。工作区事件流仅留在内存中（最多 300 条），重启后保留的是脱敏生命周期元数据，不是完整聊天记录。
+**安全与局限**：Codex/DeepSeek 工作区会话默认采用 `workspace-write` + `approvalPolicy=never`，允许在当前 Worktree 中修改文件。启用协作仓库时，已有的显式只读配置和恢复线程的权限会被保留；当前无法完整保留的命名/自定义权限 Profile 会明确报错，详见[跨仓库协作](WORKSPACE_COLLABORATION.md)。这些模式并非任意可信环境的强隔离；Claude/OpenCode 以 plan 模式启动。始终先在 Changes 查看 diff 再考虑合并。工作区事件流仅留在内存中（最多 300 条），重启后保留的是脱敏生命周期元数据，不是完整聊天记录。
 
 > **重要安全边界**：人类 acknowledgement 仅记录软件决策，并非物理设备授权。VirtualLab 不包含硬件 backend；motion/power/flash/release 必须由独立硬件联锁、安全看门狗、资源授权与安全状态恢复机制实现。CLI provider 权限模式不等于 OS 沙箱。
 

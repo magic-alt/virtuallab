@@ -1,5 +1,102 @@
 use super::*;
 
+fn draft_with_context(key: &str, repository: &str, workspace: &str) -> TaskDraft {
+    let mut value = serde_json::to_value(draft(key, &[])).unwrap();
+    value["contextRepositories"] = serde_json::json!([
+        {"repositoryRoot": repository, "workspaceRoot": workspace}
+    ]);
+    serde_json::from_value(value).expect("task drafts must accept explicit companion repositories")
+}
+
+#[test]
+fn context_repository_is_preserved_and_immutable_after_acceptance() {
+    let primary = Fixture::new();
+    let companion = Fixture::new();
+    let manager = primary.manager();
+    let task = manager.accept_plan(primary.request(vec![draft_with_context(
+        "with-context", &companion.repo, &companion.repo,
+    )])).unwrap().remove(0);
+    let saved = serde_json::to_value(&task).unwrap();
+    let canonical = fs::canonicalize(&companion.repo).unwrap().to_string_lossy().into_owned();
+    assert_eq!(saved["contextRepositories"][0]["workspaceRoot"], canonical);
+    assert_eq!(saved["scope"], serde_json::json!(["src"]));
+    assert!(manager.update(&task.id, |record| {
+        let mut value = serde_json::to_value(&*record).unwrap();
+        value["contextRepositories"] = serde_json::json!([]);
+        *record = serde_json::from_value(value).unwrap();
+        Ok(())
+    }).unwrap_err().contains("immutable"));
+    assert_eq!(serde_json::to_value(manager.get(&task.id).unwrap()).unwrap()["contextRepositories"], saved["contextRepositories"]);
+}
+
+#[test]
+fn context_snapshot_reopens_and_replays_when_companion_is_offline() {
+    let primary = Fixture::new();
+    let companion = Fixture::new();
+    let request = primary.request(vec![draft_with_context("with-context", &companion.repo, &companion.repo)]);
+    let manager = primary.manager();
+    let original = manager.accept_launch("context-launch", request.clone(), None).unwrap();
+    drop(manager);
+    fs::remove_dir_all(&companion.repo).unwrap();
+    let reopened = primary.manager();
+    let retry = reopened.accept_launch("context-launch", request.clone(), None).unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.task.id, original.task.id);
+    assert_eq!(serde_json::to_value(&retry.task).unwrap()["contextRepositories"], serde_json::to_value(&original.task).unwrap()["contextRepositories"]);
+    assert!(reopened.accept_plan(request).is_err(), "new execution inputs must validate the live companion");
+}
+
+#[cfg(unix)]
+#[test]
+fn context_history_reopens_when_a_saved_path_is_retargeted() {
+    let primary = Fixture::new();
+    let first = Fixture::new();
+    let second = Fixture::new();
+    let mut value = serde_json::to_value(draft_with_context("two-peers", &first.repo, &first.repo)).unwrap();
+    value["contextRepositories"].as_array_mut().unwrap().push(serde_json::json!({
+        "repositoryRoot": second.repo, "workspaceRoot": second.repo,
+    }));
+    let request = primary.request(vec![serde_json::from_value(value).unwrap()]);
+    let manager = primary.manager();
+    let task = manager.accept_plan(request).unwrap().remove(0);
+    drop(manager);
+    fs::remove_dir_all(&first.repo).unwrap();
+    std::os::unix::fs::symlink(&second.repo, &first.repo).unwrap();
+    let reopened = primary.manager();
+    let stored = reopened.get(&task.id);
+    fs::remove_file(&first.repo).unwrap();
+    let stored = stored.expect("saved paths must be validated lexically so changed live aliases cannot quarantine history");
+    assert_eq!(stored.context_repositories, task.context_repositories);
+}
+
+#[test]
+fn context_repository_cannot_claim_a_foreign_worktree() {
+    let primary = Fixture::new();
+    let companion = Fixture::new();
+    let foreign = Fixture::new();
+    let request = primary.request(vec![draft_with_context("wrong-owner", &companion.repo, &foreign.repo)]);
+    let manager = primary.manager();
+    assert!(manager.accept_plan(request).is_err());
+    assert!(manager.all().unwrap().is_empty());
+}
+
+#[test]
+fn empty_context_keeps_legacy_launch_serialization_and_retry_identity() {
+    let primary = Fixture::new();
+    let request = primary.request(vec![draft("legacy", &[])]);
+    let encoded = serde_json::to_value(&request).unwrap();
+    assert!(encoded["tasks"][0].get("contextRepositories").is_none());
+    let manager = primary.manager();
+    let original = manager.accept_launch("legacy-launch", request, None).unwrap();
+    let mut explicit_empty = encoded;
+    explicit_empty["tasks"][0]["contextRepositories"] = serde_json::json!([]);
+    let request: TaskPlanRequest = serde_json::from_value(explicit_empty).expect("empty context must be backward compatible");
+    let retry = manager.accept_launch("legacy-launch", request, None).unwrap();
+    assert!(!retry.created);
+    assert_eq!(retry.task.id, original.task.id);
+    assert!(serde_json::to_value(retry.task).unwrap().get("contextRepositories").is_none());
+}
+
 #[test]
 fn launch_request_replay_keeps_one_durable_task_and_the_original_failure() {
     let f = Fixture::new();

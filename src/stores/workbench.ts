@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { workspaceKey } from "@/lib/workspaceKey";
+import { useRepositoryContextStore } from './repositoryContext';
 import type {
   ProcessProfile,
   RepositoryRecord,
@@ -195,6 +196,7 @@ export const useWorkbenchStore = create<WorkbenchState>()(
       removeRepository: (id) =>
         set((state) => {
           const removed = state.repositories.find((item) => item.id === id);
+          if (removed) useRepositoryContextStore.getState().removeRepository(removed.path);
           const repositories = state.repositories.filter((item) => item.id !== id);
           const workspaceStates = { ...state.workspaceStates };
           delete workspaceStates[id];

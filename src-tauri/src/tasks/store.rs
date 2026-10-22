@@ -453,7 +453,7 @@ impl TaskManager {
     fn accept_plan_locked(
         &self,
         state: &mut Generation,
-        request: TaskPlanRequest,
+        mut request: TaskPlanRequest,
         launch: Option<(String, String)>,
     ) -> Result<Vec<TaskRecord>, PlanAcceptanceError> {
         if request.tasks.is_empty() || request.tasks.len() > 128 {
@@ -466,8 +466,13 @@ impl TaskManager {
             return Err("Task storage capacity reached; explicit archive required.".into());
         }
         let mut keys = HashMap::new();
-        for draft in &request.tasks {
+        for draft in &mut request.tasks {
             validation::draft(draft, &root)?;
+            // Freeze physical reference paths when accepting the plan. Execution
+            // validates them again; history remains readable if a peer is offline.
+            draft.context_repositories = crate::workspace_context::validate_context_repositories(
+                &root, &draft.context_repositories,
+            )?;
             // Keys cannot shadow existing task IDs: dependency resolution is unambiguous.
             if state.tasks.iter().any(|t| t.id == draft.key)
                 || keys.insert(draft.key.clone(), new_id()).is_some()
@@ -507,6 +512,7 @@ impl TaskManager {
                 base_sha: request.expected_head_sha.clone(),
                 kind: draft.kind,
                 dependencies,
+                context_repositories: draft.context_repositories,
                 profile: draft.profile,
                 auto_commit: draft.auto_commit,
                 revision: 1,

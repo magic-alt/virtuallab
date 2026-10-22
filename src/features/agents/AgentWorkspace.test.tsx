@@ -107,6 +107,36 @@ describe("AgentWorkspace desktop control surface", () => {
     expect(screen.getByText(/Turn running; activity appears below/)).toBeInTheDocument();
   });
 
+  it('shows effective references and requires stopping before applying a changed selection', async () => {
+    const first = [{ repositoryRoot: '/alias/firmware', workspaceRoot: '/alias/firmware-review' }];
+    const second = [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-main' }];
+    const invoke = vi.fn(async (command: string, args?: Record<string, any>) => {
+      if (command === 'agent_journal_recover') return { workspaceId: 'test', nativeSessionRegistered: false, retainedEvents: 0, turns: [] };
+      if (command === 'agent_journal_recent') return [];
+      if (command === 'agent_harness_capabilities') return { harness: 'codex', available: true, executablePath: '/bin/codex', detail: 'Available', features: {} };
+      if (command === 'agent_session_start') return { workspaceRoot: '/host', harness: 'codex', threadId: 'thread', createdAtMs: 1, updatedAtMs: 1,
+        contextRepositories: args?.request.contextRepositories?.[0]?.workspaceRoot === first[0].workspaceRoot
+          ? [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }] : args?.request.contextRepositories };
+      if (command === 'agent_session_stop') return;
+      throw new Error('Unexpected command: ' + command);
+    });
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+    const view = render(<AgentWorkspace workspaceRoot="/host" enabled contextRepositories={first}/>);
+    await userEvent.click(screen.getByRole('button', { name: 'Attach / resume' }));
+    await waitFor(() => expect(screen.getByText(/Ready for another message/)).toBeInTheDocument());
+    expect(screen.queryByText(/先停止当前会话/)).not.toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith('agent_session_start', { request: expect.objectContaining({ contextRepositories: first }) }, undefined);
+    view.rerender(<AgentWorkspace workspaceRoot="/host" enabled contextRepositories={second}/>);
+    expect(screen.getByText(/先停止当前会话/)).toBeInTheDocument();
+    expect(screen.getByText('/firmware-review')).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Agent message' }), 'Continue with the new reference');
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Stop runtime' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Attach / resume' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Attach / resume' }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('agent_session_start', { request: expect.objectContaining({ contextRepositories: second }) }, undefined));
+  });
+
   it("stops a saved workspace runtime after the Agents pane is remounted", async () => {
     const user = userEvent.setup();
     const root = "C:/work/demo";

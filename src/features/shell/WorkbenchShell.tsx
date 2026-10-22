@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BuildIdentity } from "./BuildIdentity";
 import { AgentsHub } from "@/features/agents/AgentsHub";
 import { useTaskObserver } from "@/features/tasks/useTaskObserver";
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   Command,
@@ -93,6 +94,7 @@ export function WorkbenchShell() {
   const lastTaskView = useRef<Exclude<AppView, "repositories">>("home");
   if (appView !== "repositories") lastTaskView.current = appView;
   useTaskObserver(repositories);
+  useEffect(() => { useRepositoryContextStore.getState().retainRepositories(repositories.map(repository => repository.path)); }, [repositories]);
 
   useEffect(() => {
     // Inventory lookups only complete the navigation that requested them.

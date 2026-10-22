@@ -49,6 +49,15 @@ pub struct CliStart {
     pub(crate) workspace_root: String,
     pub(crate) harness: String,
     pub(crate) thread_id: Option<String>,
+    #[serde(default)]
+    pub(crate) context_repositories: Vec<crate::workspace_context::ContextRepository>,
+}
+
+fn require_supported_context(request: &CliStart) -> Result<(), String> {
+    if !request.context_repositories.is_empty() {
+        return Err(format!("{} does not support companion repository context in VirtualLab. Choose a Codex workspace session or Codex terminal, or remove the companion selection.", request.harness));
+    }
+    Ok(())
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,6 +170,7 @@ pub fn agent_cli_session_start(
     request: CliStart,
 ) -> Result<CliBinding, String> {
     binary(&request.harness)?;
+    require_supported_context(&request)?;
     let root = request.workspace_root.trim();
     if root.is_empty() || !std::path::Path::new(root).is_dir() {
         return Err("Agent workspace must be an existing directory.".into());
@@ -383,6 +393,18 @@ pub fn agent_cli_session_stop(app: AppHandle, state: State<'_, CliAgentManager>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_context_is_rejected_explicitly_and_context_free_requests_remain_compatible() {
+        for harness in ["claude", "opencode"] {
+            let empty: CliStart = serde_json::from_value(json!({"workspaceRoot":"/primary", "harness":harness})).unwrap();
+            assert!(empty.context_repositories.is_empty());
+            assert!(require_supported_context(&empty).is_ok());
+            let selected: CliStart = serde_json::from_value(json!({"workspaceRoot":"/primary", "harness":harness,
+                "contextRepositories":[{"repositoryRoot":"/companion", "workspaceRoot":"/companion"}]})).unwrap();
+            assert!(require_supported_context(&selected).is_err(), "unsupported providers must not silently discard selected context");
+        }
+    }
     #[test]
     fn only_known_executables_allowed() {
         assert!(binary("claude").is_ok());

@@ -9,6 +9,7 @@ The workspace is the unit of work: it owns the Git branch or worktree, execution
 - **Unified Agents Hub** — one place for isolated Codex tasks, durable execution reports, existing-workspace agent sessions and execution configuration. The application navigation is **Agents Hub / 工程仓库 / 设置**; Hub sections are **Agent 任务 / 工作区会话 / 执行配置**. Repository tabs stay focused on Overview, Changes, GitHub, Terminal and Run. Task-owned agents are controlled through their Task; saved sessions retain provider, role, skill and recovery controls.
 - **Prompt-to-report control center** — describe a task and choose **开始任务** to create an isolated worktree, start the installed Codex, follow its live output, and read the persisted result and problems. Compact task rows distinguish repeated titles by task identity, time and goal. Each task owns its **报告**, including execution results without a verification Profile; there is no separate Reports page. Failed setup preserves the task for recovery, and repeated launch requests do not create duplicate worktrees.
 - **Repository and workspace management** — inspect local Git repositories and create isolated worktrees with explicit branch and base selections. Removing a dirty worktree requires a second native **Force remove** confirmation; cancellation and stale status previews never force-delete local files.
+- **Cross-repository context** — select companion worktrees in **协作仓库** so Codex terminals, Hub sessions and new tasks can compare related code, such as a host application and device firmware. References stay fixed to the selected paths; edits and formal verification remain owned by the primary worktree. See the [collaboration guide](docs/WORKSPACE_COLLABORATION.md).
 - **Open a whole worktree in an external IDE** — launch the currently selected project, any repository, or a checked-out branch/worktree directly in Zed, VS Code or Cursor. Auto-detect respects supported VISUAL/EDITOR settings and common installations; projects open in separate windows without switching or modifying Git branches.
 - **Changes and review** — inspect worktree, staged, and base-reference changes in a read-only Monaco diff viewer; preview untracked text files and expand untracked directories without staging; save local line comments and track review state.
 - **Terminals and project workflows** — use workspace terminals, auto-detected npm/Keil/CMake/Qt one-click builds, editable repository-scoped multi-step Build/Test/Package/Deploy profiles, and streamed output with Run/Stop controls. Deploy is manual and confirmation-gated.
@@ -79,6 +80,13 @@ Profile library, with explicit links to Provider sessions and repository Run
 configuration. Changes affect new requests; accepted tasks keep their frozen
 execution inputs. Use global **设置** for the preferred IDE, notification and
 terminal preferences. Opening configuration or selecting a task does not start work.
+
+For work spanning related repositories, add each local repository and open
+**Overview → 协作仓库** in the repository you intend to modify. Select the companion
+repository and its exact worktree. **Start Codex** and **Agents Hub → 工作区会话**
+use that shared selection; new tasks snapshot it when accepted. Existing sessions
+keep their original references until stopped and reattached. Companion code is
+live read-only context; make any companion edits in a task owned by that repository.
 
 The task list shows task identity and update time alongside the goal, so tasks
 with the same title can be distinguished. Select a task to follow execution or

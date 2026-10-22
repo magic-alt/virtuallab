@@ -1,4 +1,5 @@
 import type { EvidenceArtifact, EvidenceCheck, EvidenceStatus, VerificationProfile } from './verification';
+import type { ContextRepository } from './workspaceContext';
 
 /** Task-specific controlled input/output declarations. Native validates qualification. */
 export type TaskVerificationProfile = VerificationProfile & { outputPaths?: string[]; sourcePaths?: string[]; toolchainPrograms?: string[] };
@@ -24,6 +25,7 @@ export interface TaskAttempt {
 export interface TaskReview {runId?: string | null; toolchainDigest?: string | null; headSha: string; inputDigest: string; profileDigest: string; approved: boolean; note: string; createdAtMs: number}
 export interface TaskAcceptance {runId?: string | null; toolchainDigest?: string | null; headSha: string; inputDigest: string; profileDigest: string; acceptedAtMs: number; acknowledgedWarnings: boolean}
 export interface TaskRecord {
+  contextRepositories?: ContextRepository[];
   id: string; repositoryRoot: string; title: string; goal: string; scope: string[]; baseSha: string; kind: TaskKind;
   dependencies: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean; revision: number; workspaceRoot: string | null;
   attempts: TaskAttempt[]; review: TaskReview | null; acceptance: TaskAcceptance | null; createdAtMs: number; updatedAtMs: number;
@@ -32,7 +34,7 @@ export interface TaskReadiness {
   status: 'ready' | 'warning' | 'blocked' | 'unverified'; blockers: string[]; warnings: string[];
   candidateSha: string | null; reviewCurrent: boolean; acceptanceCurrent: boolean;
 }
-export interface TaskDraft {key: string; title: string; goal: string; scope: string[]; kind: TaskKind; dependencyKeys: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean}
+export interface TaskDraft {key: string; title: string; goal: string; scope: string[]; kind: TaskKind; dependencyKeys: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean; contextRepositories?: ContextRepository[]}
 export interface TaskPlanRequest {repositoryRoot: string; expectedHeadSha: string; tasks: TaskDraft[]}
 export interface TaskLaunchRequest {requestId: string; plan: TaskPlanRequest; executablePath: string | null}
 export interface TaskLaunchResult {task: TaskRecord; launchError: string | null}

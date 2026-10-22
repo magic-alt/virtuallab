@@ -13,6 +13,8 @@ pub(crate) struct TaskRecord {
     pub(crate) base_sha: String,
     pub(crate) kind: String,
     pub(crate) dependencies: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) context_repositories: Vec<crate::workspace_context::ContextRepository>,
     pub(crate) profile: Option<Value>,
     pub(crate) auto_commit: bool,
     pub(crate) revision: u64,
@@ -113,6 +115,8 @@ pub(crate) struct TaskDraft {
     pub(crate) scope: Vec<String>,
     pub(crate) kind: String,
     pub(crate) dependency_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) context_repositories: Vec<crate::workspace_context::ContextRepository>,
     pub(crate) profile: Option<Value>,
     pub(crate) auto_commit: bool,
 }

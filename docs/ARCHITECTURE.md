@@ -13,6 +13,66 @@ VirtualLab is a **local-first AI Engineering Control Plane**, with the product p
 
 ## Workspace directory and Git identity
 
+### Related repository context
+
+An owning repository can explicitly select up to eight **context repositories**.
+Each `ContextRepository` is a `{ repositoryRoot, workspaceRoot }` pair: the second
+path is the selected registered Git worktree. The frontend persists these pairs
+per owner in `repositoryContext`; navigation never silently changes the selected
+reference worktree. Repository overview, the Hub session and the task composer
+use the same selector. Removing a repository also removes its saved links.
+
+`src-tauri/src/workspace_context.rs` validates the actual directories and Git
+worktree membership, canonicalizes paths, rejects duplicates/overlap with the
+primary writable worktree, and formats the shared context. Native process
+admission retains nonexclusive lifecycle activities for reference repositories
+and worktrees. They prevent VirtualLab removal/detach while the provider uses
+them, without acquiring writer ownership or making live files immutable.
+
+Codex session bindings pin their selected references. Changing the selection
+requires an explicit stop/reconnect; opening another repository does not
+reconfigure a live session. Each new turn receives the effective reference list.
+The process retains its primary cwd and writable scope; references are never
+passed as `--add-dir` or additional writable roots. Existing managed read
+restrictions still apply. CLI adapters without qualified context support reject
+nonempty references instead of silently ignoring them.
+
+Context-enabled Codex starts qualify merged configuration and managed permission
+requirements through read-only app-server requests before applying legacy sandbox
+settings. Named/custom permission profiles are currently rejected explicitly:
+their filesystem restrictions cannot safely be projected into a legacy sandbox.
+An existing read-only mode remains read-only. A fresh managed thread with no
+explicit mode keeps VirtualLab's existing workspace-write default after this
+qualification; resumed threads retain their saved policy. Managed turns retain
+the qualified provider policy instead of sending its legacy projection back as
+a replacement. Terminals inherit the user's sandbox and approval configuration;
+context-free terminals do not need a configuration probe.
+
+The typed `terminal_spawn_codex` command launches a selected Codex executable in
+the existing PTY manager using structured arguments, carrying context and alert
+configuration. It does not send a dynamically constructed command to a shell.
+Ordinary shell terminals remain unchanged. Existing terminals retain their
+original context; a new Codex terminal uses the current saved selection.
+
+Task drafts/records carry a default-empty `contextRepositories` snapshot. Empty
+lists are omitted from serialized requests to preserve legacy launch-receipt
+digests. Acceptance validates the live paths; stored tasks can reopen when a
+companion is offline or its former path has been retargeted; historical validation
+uses saved path strings without filesystem resolution. Execution validates again
+and rejects a changed canonical binding before starting a provider.
+Accepted references are immutable, including retries. Prepared task worktrees
+inherit this snapshot rather than current UI settings. A queued task does not
+hold an unused reference repository open; disappearance before dispatch fails
+the attempt explicitly. References do not extend task file scope, same-repository
+dependencies, candidate sealing, review or formal verification coverage.
+
+These are **live source references**, not atomic multi-repository snapshots.
+Companion edits require a separate task/session whose owner is that companion.
+External tools and manual shell commands remain outside VirtualLab lifecycle
+coordination. See [workspace collaboration](WORKSPACE_COLLABORATION.md).
+
+### Path identity and ownership
+
 Native workspace identity canonicalizes existing filesystem paths and applies
 separator/case normalization according to the host platform. POSIX literal
 backslashes, including one at the end of a directory name, remain part of the
@@ -73,8 +133,8 @@ Task notifications are an application-level observer, not a scheduler or a proce
 owner. The per-PTY byte parser recognizes only OSC 9 terminal notifications and
 BEL; OSC 9;4 progress markers are ignored. No text scraping, idle-output timers,
 shell exit heuristics or automatic retries are used. For an opt-in Codex terminal,
-the UI sends fixed Codex CLI config overrides (`tui.notification_method=osc9`,
-`tui.notification_condition=always`) through its already-authorized PTY;
+the native launcher supplies Codex CLI config overrides (`tui.notification_method=osc9`,
+`tui.notification_condition=always`) as structured arguments;
 neither global Codex preferences nor existing shell lifecycle are changed.
 
 Codex app-server/CLI structured turn completion events are consumed once at

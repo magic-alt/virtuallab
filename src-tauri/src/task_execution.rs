@@ -1608,7 +1608,7 @@ fn validate_scope(
 }
 
 fn goal(task: &TaskRecord, sources: &[String]) -> String {
-    format!("Implement the approved task in this worktree.\nTitle: {}\nGoal: {}\nApproved file scope: {}\nFixed prerequisite candidate commits (read-only context): {}\n\nStay within that scope, but never read or edit Git metadata (.git) or environment-secret files (.env and .env.*); the root scope is not permission to access secrets. Do not commit, stage, reset, clean, checkout, merge, rebase or otherwise change Git history/index. Native inspects your retained changes after you stop and seals a local candidate only when the task authorizes it. Do not fetch, pull, push, mutate remotes, open or merge PRs, perform destructive operations, publish, release, flash firmware, enable motors or power stages, or perform physical/hardware operations. Do not use or resume another workspace's agent thread. Work only in the current worktree. Report completion honestly; provider completion does not establish verification or delivery readiness.\n\nWrite the final response with these sections: 完成结果 / 发现的问题 / 验证结果 / 未解决事项. Describe actual changes, observed problems, commands you ran and their outcomes, and any remaining work. If no problem was found, say so; do not invent findings. Distinguish your own checks from native formal verification. Never claim a check ran, passed, or was accepted without observing it.",
+    format!("Implement the approved task in this worktree.\nTitle: {}\nGoal: {}\nApproved file scope: {}\nFixed prerequisite candidate commits (read-only context): {}\n\nKeep edits within that scope, and never read or edit Git metadata (.git) or environment-secret files (.env and .env.*); the root scope is not permission to access secrets. Do not commit, stage, reset, clean, checkout, merge, rebase or otherwise change Git history/index. Native inspects your retained changes after you stop and seals a local candidate only when the task authorizes it. Do not fetch, pull, push, mutate remotes, open or merge PRs, perform destructive operations, publish, release, flash firmware, enable motors or power stages, or perform physical/hardware operations. Do not use or resume another workspace's agent thread. Modify only the current worktree. You may inspect the explicitly selected companion repositories supplied by Native to compare interfaces and implementations; treat their live files as read-only reference, and report any required companion edits as follow-up work in that repository. Reference inspection does not extend the approved file scope or formal verification coverage. Report completion honestly; provider completion does not establish verification or delivery readiness.\n\nWrite the final response with these sections: 完成结果 / 发现的问题 / 验证结果 / 未解决事项. Describe actual changes, observed problems, commands you ran and their outcomes, and any remaining work. If no problem was found, say so; do not invent findings. Distinguish your own checks from native formal verification. Never claim a check ran, passed, or was accepted without observing it.",
         task.title, task.goal, task.scope.join(", "), sources.join(", "))
 }
 
@@ -1687,6 +1687,7 @@ async fn run_provider(
             harness: "codex".into(),
             thread_id: None,
             executable_path: Some(executable_path),
+            context_repositories: task.context_repositories.clone(),
             // Native must reject an existing runtime atomically under its lifecycle lock.
             require_fresh: true,
         },
@@ -2429,6 +2430,7 @@ mod review_tests {
                         scope: vec!["source.txt".into()],
                         kind: "implementation".into(),
                         dependency_keys: vec![],
+                        context_repositories: vec![],
                         profile: None,
                         auto_commit: true,
                     }],

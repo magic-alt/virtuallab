@@ -9,6 +9,10 @@ import type { RepositoryRecord, RepositorySnapshot } from '@/types/workbench';
 import type { TaskLaunchRequest, TaskPlanRequest, TaskRecord, TaskVerificationProfile } from '@/types/tasks';
 import { validateTaskPlan } from './model';
 import { quickTaskPlan } from './quickTaskPlan';
+import { RepositoryContextSelector } from '@/features/workspace/RepositoryContextSelector';
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
+import { contextRepositoriesKey, copyContextRepositories, EMPTY_CONTEXT_REPOSITORIES } from '@/lib/workspaceContext';
+import type { ContextRepository } from '@/types/workspaceContext';
 
 interface Props {
   repositories: RepositoryRecord[];
@@ -33,6 +37,9 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   const [profileId, setProfileId] = useState('');
   const [profile, setProfile] = useState<TaskVerificationProfile | null>(null);
   const [autoCommit, setAutoCommit] = useState(false);
+  const savedContext = useRepositoryContextStore(state => state.contexts[workspaceKey(root)] ?? EMPTY_CONTEXT_REPOSITORIES);
+  const [contextOverride, setContextOverride] = useState<ContextRepository[] | null>(null);
+  const contextRepositories = contextOverride ?? savedContext;
   const defaultExecutablePath = useAgentPreferences(state => state.codexExecutablePath);
   const [executableOverride, setExecutableOverride] = useState<string | null>(null);
   const executablePath = executableOverride ?? defaultExecutablePath;
@@ -45,8 +52,8 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   const sending = useRef(false);
   const submission = useRef<{intentKey:string;request:TaskLaunchRequest}|null>(null);
   const alive = useRef(true);
-  const current = useRef({ root, repositories, active });
-  current.current = { root, repositories, active };
+  const current = useRef({ root, repositories, active, referenceKey: contextRepositoriesKey(contextRepositories) });
+  current.current = { root, repositories, active, referenceKey: contextRepositoriesKey(contextRepositories) };
   const dialog = useRef<HTMLDialogElement>(null);
   const library = useTaskProfileStore();
   const tasks = useTaskStore(state => state.tasks);
@@ -90,7 +97,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   }, [root, registered, refreshKey, active]);
 
   const draft = () => quickTaskPlan({
-    repositoryRoot: root, headSha: snapshot?.headSha ?? '', description, scopeText, profile, autoCommit,
+    repositoryRoot: root, headSha: snapshot?.headSha ?? '', description, scopeText, profile, autoCommit, contextRepositories,
   });
   const close = () => { if (!sending.current && !pending) onClose(); };
   const submit = async (event: FormEvent) => {
@@ -129,10 +136,17 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         || !current.current.repositories.some(repo=>workspaceKey(repo.path)===workspaceKey(root))) {
         throw new Error('工作仓库已移除或切换，请重新选择后开始任务。');
       }
+      if (current.current.referenceKey !== contextRepositoriesKey(request.tasks[0].contextRepositories)) {
+        throw new Error('协作仓库配置已变化，请核对参考工作区后重新开始任务。');
+      }
+      if (request.tasks[0].contextRepositories?.some(reference => !current.current.repositories.some(repository => workspaceKey(repository.path) === workspaceKey(reference.repositoryRoot)))) {
+        throw new Error('参考仓库已移除，请重新选择协作仓库。');
+      }
       const launchRequest=recovery ?? {requestId:crypto.randomUUID(),plan:request,executablePath:selectedPath};
       submission.current={intentKey,request:launchRequest};
       // A changed shared default cannot change an uncertain launch's retry identity.
       setExecutableOverride(selectedPath ?? '');
+      setContextOverride(copyContextRepositories(launchRequest.plan.tasks[0].contextRepositories));
       // A transport failure retains this token and the prompt. Native returns
       // the same accepted task even if the repository HEAD moved meanwhile.
       const result=await runTaskAction(actionKey,()=>launchTask(launchRequest));
@@ -148,6 +162,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         if (inline) {
           setDescription('');
           setExecutableOverride(null);
+          setContextOverride(null);
           setError(result.launchError ? `任务已保留，请在下方继续处理：${result.launchError}` : '');
         } else if (current.current.active) onClose();
       }
@@ -180,7 +195,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
       <fieldset disabled={!active || submitting || pending}>
         <div className={inline ? 'task-quick-repository-row' : undefined}>
         <label>工作仓库
-          <select value={registered ? root : ''} onChange={event => {setRoot(event.target.value);setError('');setScopeText(null);setProfileId('');setProfile(null);setAutoCommit(false);}}>
+          <select value={registered ? root : ''} onChange={event => {setRoot(event.target.value);setError('');setScopeText(null);setProfileId('');setProfile(null);setAutoCommit(false);setContextOverride(null);}}>
             {!registered && <option value="" disabled>请选择工作仓库</option>}
             {repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name} — {repo.path}</option>)}
           </select>
@@ -193,6 +208,11 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
           <button type="button" onClick={() => {setError('');setRefreshKey(key => key + 1);}} disabled={!root || reading || !isDesktopRuntime()}>刷新</button>
         </div>
         </div>
+        <RepositoryContextSelector repositoryRoot={root} repositories={repositories} value={contextRepositories} active={active}
+          disabled={submitting || pending} onChange={references => {
+            setContextOverride(copyContextRepositories(references));
+            useRepositoryContextStore.getState().setContextRepositories(root, references);
+          }}/>
         <label className="task-quick-prompt-label">你希望 Agent 完成什么？
           <textarea className="task-quick-prompt" value={description} onChange={event => setDescription(event.target.value)}
             placeholder="例如：修复 git 提交错误，检查原因、完成修复和测试，并总结发现的问题。"

@@ -2,11 +2,13 @@ import type { HarnessAdapter } from "./agentHarness";
 import { getHarnessAdapter } from "./agentHarness";
 import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions";
 import type { AgentSessionBinding } from "@/types/agent";
+import type { ContextRepository } from '@/types/workspaceContext';
+import { copyContextRepositories } from './workspaceContext';
 
 export class WorkspaceAgentService {
   constructor(private readonly adapter: HarnessAdapter = getHarnessAdapter("codex")) {}
 
-  async attach(workspaceRoot: string, executablePath?: string): Promise<AgentSessionBinding> {
+  async attach(workspaceRoot: string, executablePath?: string, contextRepositories: ContextRepository[] = []): Promise<AgentSessionBinding> {
     const root = workspaceRoot.trim();
     if (!root) {
       throw new Error("Workspace root must not be empty.");
@@ -22,6 +24,7 @@ export class WorkspaceAgentService {
       harness: this.adapter.kind,
       threadId: saved?.harness === this.adapter.kind ? saved.threadId : null,
       executablePath: executablePath || null,
+      ...(contextRepositories.length ? { contextRepositories: copyContextRepositories(contextRepositories) } : {}),
     });
 
     if (agentWorkspaceKey(binding.workspaceRoot) !== key) {
@@ -31,6 +34,12 @@ export class WorkspaceAgentService {
     if (binding.harness !== this.adapter.kind) {
       await this.adapter.stopSession(root).catch(() => undefined);
       throw new Error("Agent harness returned an unexpected harness kind.");
+    }
+    // Native resolves filesystem aliases and validates each actual checkout.
+    // Comparing display paths here would reject a correctly canonicalized alias.
+    if ((binding.contextRepositories?.length ?? 0) !== contextRepositories.length) {
+      await this.adapter.stopSession(root).catch(() => undefined);
+      throw new Error('Agent harness returned a different reference context. Stop and reconnect with the selected repositories.');
     }
     if (saved?.harness === this.adapter.kind && saved.threadId !== binding.threadId) {
       await this.adapter.stopSession(root).catch(() => undefined);

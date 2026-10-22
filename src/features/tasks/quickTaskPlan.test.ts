@@ -31,4 +31,12 @@ describe('single-task prompt normalization', () => {
     expect(plan.tasks[0].profile?.name).toBe('Build test');
     expect(validateTaskPlan(plan)).toEqual([]);
   });
+  it('snapshots reference worktrees separately from the writable task scope', () => {
+    const contextRepositories = [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }];
+    const plan = quickTaskPlan({ repositoryRoot: '/host', headSha: 'a'.repeat(40), description: 'Check the protocol', scopeText: 'src', profile: null, autoCommit: false, contextRepositories });
+    contextRepositories[0].workspaceRoot = '/different';
+    expect(plan.tasks[0].contextRepositories).toEqual([{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }]);
+    expect(plan.tasks[0].scope).toEqual(['src']);
+    expect(plan.tasks[0].dependencyKeys).toEqual([]);
+  });
 });

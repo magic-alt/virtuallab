@@ -63,7 +63,7 @@ describe('Agents Hub workspace sessions', () => {
     render(<AgentSessionHub {...props()}/>);
     await screen.findByRole('textbox', { name: 'Agent message' });
     expect(screen.getByRole('combobox', { name: '会话仓库' })).toHaveValue('/other');
-    expect(useAgentsHubStore.getState().visibleSessionRoot).toBe('/other');
+    await waitFor(() => expect(useAgentsHubStore.getState().visibleSessionRoot).toBe('/other'));
   });
 
   it('retains one draft when the same linked workspace is also registered directly', async () => {
