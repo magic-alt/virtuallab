@@ -38,6 +38,21 @@ describe('repository collaboration context', () => {
     expect(useRepositoryContextStore.getState().contexts['/host'][0].workspaceRoot).toBe('/lib');
   });
 
+  it('preserves trailing whitespace in companion paths across persistence', async () => {
+    const references = [
+      { repositoryRoot: '/reference 仓库 ', workspaceRoot: '/linked 工作区 ' },
+      { repositoryRoot: '/reference 仓库', workspaceRoot: '/linked 工作区' },
+    ];
+    useRepositoryContextStore.getState().setContextRepositories('/host ', references);
+    expect(useRepositoryContextStore.getState().contexts['/host ']).toEqual(references);
+
+    const saved = window.localStorage.getItem('virtuallab-repository-context-v1');
+    useRepositoryContextStore.setState({ contexts: {} });
+    window.localStorage.setItem('virtuallab-repository-context-v1', saved!);
+    await useRepositoryContextStore.persist.rehydrate();
+    expect(useRepositoryContextStore.getState().contexts['/host ']).toEqual(references);
+  });
+
   it('removes inbound references when a registered repository is removed', () => {
     const records = ['host', 'firmware', 'other'].map(id => ({ id, name: id, path: '/' + id, lastOpenedAt: 1 }));
     useWorkbenchStore.setState({ repositories: records });
@@ -53,9 +68,12 @@ describe('repository collaboration context', () => {
 
   it('drops malformed persisted entries and bounds reference selection to eight', async () => {
     window.localStorage.setItem('virtuallab-repository-context-v1', JSON.stringify({ version: 1, state: { contexts: {
-      '/host': [null, {}, { repositoryRoot: 2, workspaceRoot: '/bad' }, ...Array.from({ length: 10 }, (_, i) => ({ repositoryRoot: '/repo-' + i, workspaceRoot: '/tree-' + i }))],
+      '/host': [null, {}, { repositoryRoot: 2, workspaceRoot: '/bad' },
+        { repositoryRoot: ' ', workspaceRoot: '/bad' }, { repositoryRoot: '/bad', workspaceRoot: ' ' },
+        ...Array.from({ length: 10 }, (_, i) => ({ repositoryRoot: '/repo-' + i, workspaceRoot: '/tree-' + i }))],
     } } }));
     await useRepositoryContextStore.persist.rehydrate();
     expect(useRepositoryContextStore.getState().contexts['/host']).toHaveLength(8);
+    expect(useRepositoryContextStore.getState().contexts['/host'][0].repositoryRoot).toBe('/repo-0');
   });
 });
