@@ -17,10 +17,12 @@ function sanitizeReferences(owner: string, value: unknown): ContextRepository[] 
   const seen = new Set<string>();
   for (const candidate of value) {
     if (!candidate || typeof candidate.repositoryRoot !== 'string' || typeof candidate.workspaceRoot !== 'string') continue;
-    const repositoryRoot = candidate.repositoryRoot.trim();
-    const workspaceRoot = candidate.workspaceRoot.trim();
+    // Paths come from the native inventory; whitespace can be part of a name.
+    // Keep their spelling intact so persistence cannot retarget a reference.
+    const repositoryRoot = candidate.repositoryRoot;
+    const workspaceRoot = candidate.workspaceRoot;
     const root = workspaceKey(repositoryRoot);
-    if (!repositoryRoot || !workspaceRoot || root === workspaceKey(owner) || seen.has(root)) continue;
+    if (!repositoryRoot.trim() || !workspaceRoot.trim() || root === workspaceKey(owner) || seen.has(root)) continue;
     seen.add(root);
     result.push({ repositoryRoot, workspaceRoot });
     if (result.length === MAX_CONTEXT_REPOSITORIES) break;
