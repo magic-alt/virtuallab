@@ -1294,7 +1294,7 @@ mod tests {
         if std::env::var(KEY).as_deref() == Ok(test) {
             return false;
         }
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = crate::process::background_command(std::env::current_exe().unwrap())
             .args(["--exact", test, "--nocapture"])
             .env(KEY, test)
             .env_remove("NODE_OPTIONS")
@@ -1449,7 +1449,7 @@ mod tests {
         let project = "cmake_minimum_required(VERSION 3.20)\nproject(provenance LANGUAGES C)\nadd_executable(provenance main.c)\n";
         fs::write(fixture.0.join("CMakeLists.txt"), project).unwrap();
         let configure = || {
-            let result = std::process::Command::new(&cmake.executable)
+            let result = crate::process::background_command(&cmake.executable)
                 .current_dir(&fixture.0)
                 .args(["-S", ".", "-B", "build", "-G", "Ninja"])
                 .arg(format!(
@@ -1468,7 +1468,7 @@ mod tests {
         let profile = json!({"gates":[{"executor":{"program":"cmake","args":["--build","build"]}}],
             "toolchainPrograms":[compiler.launcher], "outputPaths":["build"]});
         let before = fixture.observe(&profile, true).unwrap();
-        let built = std::process::Command::new(&cmake.executable)
+        let built = crate::process::background_command(&cmake.executable)
             .current_dir(&fixture.0)
             .args(["--build", "build"])
             .output()
@@ -1479,7 +1479,7 @@ mod tests {
             String::from_utf8_lossy(&built.stderr)
         );
         assert!(
-            std::process::Command::new(fixture.0.join("build/provenance"))
+            crate::process::background_command(fixture.0.join("build/provenance"))
                 .status()
                 .unwrap()
                 .success()
@@ -1622,7 +1622,7 @@ mod tests {
             return;
         }
         for name in ["NODE_OPTIONS", "NODE_PATH"] {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
+            let status = crate::process::background_command(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "task_evidence::tests::npm_external_node_module_injection_is_unqualified",
@@ -1658,7 +1658,7 @@ mod tests {
         fs::copy(rustup.executable, &cargo).unwrap();
         fixture.binary("rustc");
         fs::create_dir(fixture.0.join("home")).unwrap();
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = crate::process::background_command(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "task_evidence::tests::native_cargo_without_resolvable_selection_is_unqualified",

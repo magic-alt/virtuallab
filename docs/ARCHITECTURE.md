@@ -725,6 +725,18 @@ describe live activity and never establish Task verification or acceptance.
 
 ## Release gate lifecycle hardening (v0.5.0 candidate)
 
+Non-interactive native commands and their acceptance fixtures use the shared
+`background_command` adapter. On macOS, the child marks descriptors above
+stdin/stdout/stderr close-on-exec before launching the requested program. This
+prevents concurrent `pipe()`/`fcntl()` windows from leaking another workspace's
+pipe endpoints into an unrelated provider or process inspector. The descriptor
+bound comes from the child's actual Darwin table capacity, including open FDs
+above a subsequently lowered resource limit. Only successful exec closes these
+descriptors; Rust's internal spawn-error pipe remains available on failure.
+This uses fork/exec on macOS; Linux retains atomic pipe creation and Windows
+retains its existing handle/console adapter. Interactive PTYs continue through
+portable-pty's separate descriptor and session handling.
+
 `RunRegistry` is native workspace state, independent of mounted React tabs. `process_spawn` and `build_workflow_start` reserve a canonical workspace slot and a unique run ID before starting work. `list_runs(cwd)` returns bounded snapshots including profile identity, output, exit code and state. A workspace cannot start another run while its slot is `running` or `stopping`. Completed history is bounded to 100 records globally; output is bounded to 180,000 UTF-8 bytes per record. History is in memory and is not restored after application restart.
 
 `ProcessRunner` consumes structured events for live output and reconciles with native snapshots on mount and every two seconds. UI cancellation means `stopping`; only confirmed process-tree cleanup plus observed exit and drained output permit terminal status. Native startup failures release the slot through a failed record. A permanent registry close flag rejects new work during application shutdown, including delayed Agent/CLI/Terminal starts.

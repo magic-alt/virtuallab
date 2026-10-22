@@ -419,7 +419,7 @@ mod tests {
     };
     use std::{
         fs,
-        process::{Command, Stdio},
+        process::Stdio,
         sync::{atomic::AtomicU64, Arc},
         time::{Duration, Instant},
     };
@@ -430,7 +430,7 @@ mod tests {
         lane: PathBuf,
     }
     fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-        let mut cmd = Command::new("git");
+        let mut cmd = crate::process::background_command("git");
         for (key, _) in std::env::vars_os() {
             if key
                 .to_string_lossy()

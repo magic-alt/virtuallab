@@ -128,7 +128,7 @@ fn accepted_launch_replay_does_not_revalidate_a_later_repository_head() {
     let m = f.manager();
     let request = f.request(vec![draft("quick", &[])]);
     let original = m.accept_launch("fixed-request", request.clone(), None).unwrap();
-    assert!(Command::new("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","later commit"]).current_dir(&f.repo).status().unwrap().success());
+    assert!(crate::process::background_command("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","later commit"]).current_dir(&f.repo).status().unwrap().success());
     let replay = m.accept_launch("fixed-request", request, None).unwrap();
     assert!(!replay.created);
     assert_eq!(replay.task.id, original.task.id);
@@ -176,13 +176,13 @@ fn rejected_launch_token_stays_closed_after_head_restoration_and_restart() {
     let f = Fixture::new();
     let m = f.manager();
     let request = f.request(vec![draft("quick", &[])]);
-    assert!(Command::new("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","moved HEAD"]).current_dir(&f.repo).status().unwrap().success());
+    assert!(crate::process::background_command("git").args(["-c","user.name=Fixture","-c","user.email=fixture@invalid","commit","--allow-empty","-qm","moved HEAD"]).current_dir(&f.repo).status().unwrap().success());
     let failure = m.accept_launch("rejected-token", request.clone(), None).err().unwrap();
     assert_eq!(failure.acceptance, "rejected");
     assert_eq!(failure.request_id, "rejected-token");
     assert!(failure.message.contains("HEAD"));
     assert!(m.all().unwrap().is_empty());
-    assert!(Command::new("git").args(["checkout","--detach", &f.head]).current_dir(&f.repo).status().unwrap().success());
+    assert!(crate::process::background_command("git").args(["checkout","--detach", &f.head]).current_dir(&f.repo).status().unwrap().success());
     drop(m);
     let reopened = f.manager();
     let late_original = reopened.accept_launch("rejected-token", request.clone(), None).err().unwrap();
@@ -932,7 +932,7 @@ fn terminal_attempts_remain_historical_when_retry_is_appended() {
         .is_err());
     assert_eq!(m.get(&t.id).unwrap().attempts[0].state, "failed");
 }
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 struct Fixture {
     dir: PathBuf,
@@ -957,14 +957,14 @@ impl Fixture {
                 "initial",
             ],
         ] {
-            assert!(Command::new("git")
+            assert!(crate::process::background_command("git")
                 .args(args)
                 .current_dir(&repo)
                 .status()
                 .unwrap()
                 .success());
         }
-        let output = Command::new("git")
+        let output = crate::process::background_command("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&repo)
             .output()

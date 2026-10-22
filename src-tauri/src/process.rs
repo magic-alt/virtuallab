@@ -9,6 +9,10 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
+#[cfg(any(target_os = "macos", all(test, unix)))]
+#[path = "process_inheritance.rs"]
+mod inheritance;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -55,9 +59,13 @@ mod tests {
             ("agent", include_str!("agent.rs")),
             ("agent_cli", include_str!("agent_cli.rs")),
             ("verification", include_str!("verification.rs")),
+            ("task_evidence", include_str!("task_evidence.rs")),
+            ("task_git_watch", include_str!("task_git_watch.rs")),
+            ("task fixtures", include_str!("tasks/tests.rs")),
+            ("terminal_process", include_str!("terminal_process.rs")),
         ] {
             assert!(!source.contains("Command::new("),
-                "{name} bypassed background_command and may flash a console on Windows");
+                "{name} bypassed background_command and its platform process isolation");
         }
     }
 
@@ -210,6 +218,8 @@ fn command_in_gui_paths(program: &OsStr, directories: &[std::path::PathBuf]) -> 
     // CLI scripts commonly use /usr/bin/env node. Supply the same search path
     // to interpreters, without mutating the application's process environment.
     if let Ok(path) = std::env::join_paths(&directories) { command.env("PATH", path); }
+    #[cfg(target_os = "macos")]
+    inheritance::prevent_inheritance(&mut command);
     command
 }
 #[cfg(all(test, unix))]

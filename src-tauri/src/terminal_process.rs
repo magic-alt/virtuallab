@@ -363,7 +363,7 @@ mod tests {
         }
     }
     fn live(pid: i32) -> bool {
-        let result = std::process::Command::new("/bin/ps")
+        let result = crate::process::background_command("/bin/ps")
             .args(["-p", &pid.to_string(), "-o", "stat="])
             .output()
             .unwrap();
