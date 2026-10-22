@@ -14,6 +14,9 @@ import { agentWorkspaceKey, useAgentSessionStore } from "@/stores/agentSessions"
 import { useAgentPreferences } from "@/stores/agentPreferences";
 import { useAgentTimeline } from "@/stores/agentTimeline";
 import { BUILTIN_ROLES, buildAgentPrompt, useAgentConfiguration } from "@/stores/agentConfiguration";
+import { contextRepositoriesKey, EMPTY_CONTEXT_REPOSITORIES } from '@/lib/workspaceContext';
+import { ContextRepositoryList } from '@/features/workspace/RepositoryContextSelector';
+import type { ContextRepository } from '@/types/workspaceContext';
 import type {
   AgentEvent, AgentHarnessCapabilities, AgentHarnessKind,
 } from "@/types/agent";
@@ -24,6 +27,7 @@ interface Props {
   visible?: boolean;
   disabledReason?: string;
   validateWorkspace?: () => Promise<void>;
+  contextRepositories?: ContextRepository[];
 }
 const HARNESS: Array<{ id: AgentHarnessKind; name: string; detail: string }> = [
   { id: "codex", name: "Codex", detail: "App-server JSON-RPC" },
@@ -59,7 +63,7 @@ function eventTitle(event: AgentEvent): string {
   return event.method ?? event.eventType.replace(/^agent\./, "");
 }
 
-export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disabledReason, validateWorkspace }: Props) {
+export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disabledReason, validateWorkspace, contextRepositories = EMPTY_CONTEXT_REPOSITORIES }: Props) {
   const key = agentWorkspaceKey(workspaceRoot);
   const binding = useAgentSessionStore((s) => s.bindings[key]);
   const setBinding = useAgentSessionStore((s) => s.setBinding);
@@ -78,6 +82,7 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
   const codexPath = useAgentPreferences((s) => s.codexExecutablePath);
   const setCodexPath = useAgentPreferences((s) => s.setCodexExecutablePath);
   const [attached, setAttached] = useState(false);
+  const [attachedReferenceKey, setAttachedReferenceKey] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -96,8 +101,9 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
   const broker = useRef(new AgentApprovalBroker());
   const alive = useRef(true);
   const requesting = useRef(false);
-  const context = useRef({ key, enabled, visible });
-  context.current = { key, enabled, visible };
+  const referenceKey = contextRepositoriesKey(contextRepositories);
+  const context = useRef({ key, enabled, visible, referenceKey });
+  context.current = { key, enabled, visible, referenceKey };
   const interactive = enabled && visible;
   const adapter = useMemo(() => getHarnessAdapter(harness), [harness]);
   const latestAnswer = useMemo(() => latestCodexAnswer(events), [events]);
@@ -109,11 +115,11 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
 
   useEffect(() => {
     setHarness(useAgentSessionStore.getState().bindings[agentWorkspaceKey(workspaceRoot)]?.harness ?? "codex");
-    setAttached(false); setCapabilities(null); setError(""); setJournal([]); setRecovery(null);
+    setAttached(false); setAttachedReferenceKey(null); setCapabilities(null); setError(""); setJournal([]); setRecovery(null);
   }, [workspaceRoot]);
 
   useEffect(() => {
-    if (session?.stopped) setAttached(false);
+    if (session?.stopped) { setAttached(false); setAttachedReferenceKey(null); }
   }, [session]);
 
   // Hydrate native metadata separately from live, unredacted session events.
@@ -136,9 +142,14 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
 
   const unresolved = unverifiedRecoveredTurns(recovery);
   const nativeRuntimeRegistered = recovery?.nativeSessionRegistered ?? false;
+  const runtimePresent = attached || nativeRuntimeRegistered || !!turn;
+  // Keep requested identity separate from Native's canonical effective paths.
+  // Reattachment after reload lets Native compare aliases and active bindings.
+  const referenceContextChanged = attached && attachedReferenceKey !== referenceKey;
+  const unsupportedReferenceContext = contextRepositories.length > 0 && !isCodexHarness(harness);
 
   function assertActiveContext() {
-    if (!alive.current || context.current.key !== key || !context.current.enabled || !context.current.visible) {
+    if (!alive.current || context.current.key !== key || !context.current.enabled || !context.current.visible || context.current.referenceKey !== referenceKey) {
       throw new Error("Return to this workspace session before continuing the request.");
     }
   }
@@ -159,6 +170,8 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
   // returned by the capability probe so check and app-server cannot diverge.
   async function ensureAttached() {
     assertActiveContext();
+    if (referenceContextChanged) throw new Error('参考配置已变化；先停止当前会话，再重新连接以应用新的工作区。');
+    if (unsupportedReferenceContext) throw new Error('此 Provider 暂不支持协作仓库。请选择 Codex / DeepSeek，或移除参考配置。');
     await validateWorkspace?.();
     assertActiveContext();
     const current = useAgentSessionStore.getState().bindings[key];
@@ -172,9 +185,10 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
     if (!status.available) throw new Error(status.detail);
     const result = await new WorkspaceAgentService(adapter).attach(
       workspaceRoot, isCodexHarness(harness) ? status.executablePath ?? codexPath.trim() : undefined,
+      contextRepositories,
     );
     setBinding(result);
-    if (alive.current && context.current.key === key) setAttached(true);
+    if (alive.current && context.current.key === key) { setAttachedReferenceKey(referenceKey); setAttached(true); }
     return result;
   }
   const attach = () => run(async () => { await ensureAttached(); });
@@ -223,7 +237,7 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
     // Tabs unmount this pane. The native runtime can still be alive when
     // attached=false; stop the saved owner rather than the selected dropdown.
     await getHarnessAdapter(binding?.harness ?? harness).stopSession(workspaceRoot);
-    setAttached(false); setActiveTurn(workspaceRoot, null); setRecovery(null);
+    setAttached(false); setAttachedReferenceKey(null); setActiveTurn(workspaceRoot, null); setRecovery(null);
     setJournalRevision((value) => value + 1);
   });
   const forget = () => run(async () => {
@@ -242,7 +256,7 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
     await getHarnessAdapter(expected.harness).stopSession(workspaceRoot);
     assertOriginalBinding();
     useAgentSessionStore.getState().clearBinding(workspaceRoot);
-    setAttached(false); setActiveTurn(workspaceRoot, null); setRecovery(null);
+    setAttached(false); setAttachedReferenceKey(null); setActiveTurn(workspaceRoot, null); setRecovery(null);
     setJournalRevision((value) => value + 1);
   });
   const changeHarness = (value: AgentHarnessKind) => {
@@ -328,6 +342,9 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
         {binding && <p className="mt-2 break-all text-xs text-stone-500">
           Saved thread: {binding.harness} · {binding.threadId}
         </p>}
+        <ContextRepositoryList references={binding?.contextRepositories} label={runtimePresent ? '当前会话参考工作区' : '上次会话参考工作区'}/>
+        {referenceContextChanged && <p role="status" className="mt-2 text-xs text-amber-300">参考配置已变化；先停止当前会话，再重新连接以应用新的工作区。</p>}
+        {unsupportedReferenceContext && <p role="status" className="mt-2 text-xs text-amber-300">此 Provider 暂不支持协作仓库。请选择 Codex / DeepSeek，或移除参考配置。</p>}
         {binding && binding.harness !== harness && <p className="mt-2 text-xs text-amber-300">
           A thread from {binding.harness} is saved here. Stop and forget it before using {harness}.
         </p>}
@@ -348,16 +365,16 @@ export function AgentWorkspace({ workspaceRoot, enabled, visible = true, disable
         </label>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => void send()}
-            disabled={!interactive || busy || !prompt.trim() || !!turn || !!(binding && binding.harness !== harness)}
+            disabled={!interactive || busy || !prompt.trim() || !!turn || referenceContextChanged || unsupportedReferenceContext || !!(binding && binding.harness !== harness)}
             className="flex items-center gap-2 rounded bg-orange-500 px-4 py-2 text-xs font-semibold text-black">
             <Play size={14}/>{attached ? "Send message" : "Connect & send"}
           </button>
           <button type="button" onClick={() => void attach()}
-            disabled={!interactive || busy || attached || !!(binding && binding.harness !== harness)}
+            disabled={!interactive || busy || attached || referenceContextChanged || unsupportedReferenceContext || !!(binding && binding.harness !== harness)}
             className="rounded border border-white/20 px-3 py-2 text-xs">Attach / resume</button>
           {turn && capabilities?.features.steering && (
             <button type="button" onClick={() => void steer()}
-              disabled={!interactive || busy || !prompt.trim()}
+              disabled={!interactive || busy || !prompt.trim() || referenceContextChanged}
               className="rounded border border-white/20 px-3 py-2 text-xs">
               Steer running turn
             </button>

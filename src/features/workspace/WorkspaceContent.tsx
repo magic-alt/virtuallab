@@ -17,6 +17,7 @@ import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
 import { WorkspaceTerminals } from "@/features/terminal/WorkspaceTerminals";
+import { RepositoryContextSelector } from './RepositoryContextSelector';
 import { isDesktopRuntime } from "@/lib/backend";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { cn, compactPath, formatCommitTime } from "@/lib/utils";
@@ -130,7 +131,11 @@ export function WorkspaceContent({
             : "overflow-x-auto overflow-y-auto",
         )}
       >
-        {tab === "overview" && <Overview snapshot={snapshot} isPreview={isPreview} />}
+        {tab === "overview" && <>
+          <div className="mx-auto max-w-[1320px]"><RepositoryContextSelector repositoryRoot={profileRepositoryRoot}
+            primaryWorkspaceRoot={snapshot.root} disabled={isPreview} active={visible}/></div>
+          <Overview snapshot={snapshot} isPreview={isPreview} />
+        </>}
         {tab === "changes" && (
           <ChangesReview
             key={workspaceKey(snapshot.root)}
@@ -161,6 +166,7 @@ export function WorkspaceContent({
           enabled={!isPreview && isDesktopRuntime()}
           visible={visible && tab === "terminal"}
           repositoryId={terminalRepositoryId}
+          repositoryRoot={profileRepositoryRoot}
           registeredRepositoryIds={registeredRepositoryIds}
           retiredWorkspace={retiredTerminal}
         />

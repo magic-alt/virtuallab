@@ -8,6 +8,7 @@ interface WorkspaceTerminal {
   cwd: string;
   enabled: boolean;
   repositoryId: string | null;
+  repositoryRoot?: string;
 }
 
 /**
@@ -17,12 +18,14 @@ interface WorkspaceTerminal {
  */
 export function WorkspaceTerminals({
   cwd, enabled, visible, repositoryId = null,
+  repositoryRoot,
   registeredRepositoryIds = [], retiredWorkspace = null,
 }: {
   cwd: string;
   enabled: boolean;
   visible: boolean;
   repositoryId?: string | null;
+  repositoryRoot?: string;
   registeredRepositoryIds?: string[];
   retiredWorkspace?: { path: string; sequence: number } | null;
 }) {
@@ -39,8 +42,8 @@ export function WorkspaceTerminals({
     if (!visible) return;
     setWorkspaces((current) => current.some((item) => item.key === key)
       ? current
-      : [...current, { key, cwd, enabled, repositoryId }]);
-  }, [key, cwd, enabled, visible, repositoryId]);
+      : [...current, { key, cwd, enabled, repositoryId, repositoryRoot }]);
+  }, [key, cwd, enabled, visible, repositoryId, repositoryRoot]);
 
   useEffect(() => {
     const registered = new Set(registeredRepositoryIds);
@@ -67,7 +70,7 @@ export function WorkspaceTerminals({
         data-testid="terminal-pane"
       >
         <TerminalWorkspace cwd={workspace.cwd} enabled={workspace.enabled} visible={active}
-          repositoryId={workspace.repositoryId} />
+          repositoryId={workspace.repositoryId} repositoryRoot={workspace.repositoryRoot} />
       </div>
     );
   });

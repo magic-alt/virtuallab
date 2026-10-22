@@ -8,6 +8,7 @@ import { TaskQuickCreate } from './TaskQuickCreate';
 import { selectTask, useTaskStore } from '@/stores/tasks';
 import { useTaskProfileStore } from '@/stores/taskProfiles';
 import { useAgentPreferences } from '@/stores/agentPreferences';
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
 import { taskFixture } from './fixtures';
 import type { RepositoryRecord } from '@/types/workbench';
 
@@ -27,6 +28,7 @@ const opening = () => ({
 beforeEach(() => {
   Object.defineProperty(window, '__TAURI_INTERNALS__', {value:{}, configurable:true});
   useAgentPreferences.getState().setCodexExecutablePath('');
+  useRepositoryContextStore.setState({ contexts: {} });
   native.invoke.mockReset();
   native.invoke.mockImplementation(async (command, args) => {
     if (command === 'inspect_repository') return snapshot(args.path, args.path === b.path ? headB : headA);
@@ -40,6 +42,59 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window,'__TAURI_INTERNALS__'); });
 
 describe('natural-language task creation', () => {
+  it('retains the original companion worktree on an uncertain launch retry after the repository default changes', async () => {
+    const originalRefs = [{ repositoryRoot: b.path, workspaceRoot: '/linked companion' }];
+    useRepositoryContextStore.getState().setContextRepositories(a.path, originalRefs);
+    const original = native.invoke.getMockImplementation()!;
+    const requests: any[] = [];
+    native.invoke.mockImplementation(async (command, args) => {
+      if (command === 'task_launch') {
+        requests.push(structuredClone(args.request));
+        if (requests.length === 1) throw new Error('launch reply lost');
+      }
+      return original(command, args);
+    });
+    render(<TaskQuickCreate {...opening()} inline/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), 'Inspect the companion protocol');
+    await userEvent.click(screen.getByRole('button', { name: '开始任务' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('launch reply lost');
+    act(() => useRepositoryContextStore.getState().setContextRepositories(a.path, [{ repositoryRoot: b.path, workspaceRoot: b.path }]));
+    await userEvent.click(screen.getByRole('button', { name: '开始任务' }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0].plan.tasks[0].contextRepositories).toEqual(originalRefs);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[0].plan.tasks[0].scope).toEqual(['.']);
+  });
+
+  it('keeps reference context when opening the advanced task editor', async () => {
+    const contextRepositories = [{ repositoryRoot: b.path, workspaceRoot: '/linked companion' }];
+    useRepositoryContextStore.getState().setContextRepositories(a.path, contextRepositories);
+    const props = opening();
+    render(<TaskQuickCreate {...props}/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), 'Inspect both codebases');
+    await userEvent.click(screen.getByRole('button', { name: '高级任务图 / JSON' }));
+    expect(props.onAdvanced).toHaveBeenCalledWith(expect.objectContaining({ tasks: [expect.objectContaining({ contextRepositories })] }));
+  });
+
+  it('revokes a pending launch if its companion selection changes during final inspection', async () => {
+    const original = native.invoke.getMockImplementation()!;
+    let reads = 0;
+    let finish!: (value: ReturnType<typeof snapshot>) => void;
+    native.invoke.mockImplementation((command, args) => command === 'inspect_repository' && ++reads === 2
+      ? new Promise(resolve => { finish = resolve; }) : original(command, args));
+    useRepositoryContextStore.getState().setContextRepositories(a.path, [{ repositoryRoot: b.path, workspaceRoot: '/companion-review' }]);
+    render(<TaskQuickCreate {...opening()} inline/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), 'Inspect reference code');
+    await userEvent.click(screen.getByRole('button', { name: '开始任务' }));
+    act(() => useRepositoryContextStore.getState().setContextRepositories(a.path, [{ repositoryRoot: b.path, workspaceRoot: b.path }]));
+    await act(async () => finish(snapshot(a.path, headA)));
+    expect(native.invoke.mock.calls.some(([command]) => command === 'task_launch')).toBe(false);
+    expect(await screen.findByRole('alert')).toHaveTextContent('协作仓库配置已变化');
+  });
+
   it('keeps an uncertain launch executable and receipt when the shared default changes', async () => {
     useAgentPreferences.getState().setCodexExecutablePath('/tools/original-codex');
     const original = native.invoke.getMockImplementation()!;

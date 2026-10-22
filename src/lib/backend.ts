@@ -5,6 +5,7 @@ import { confirm, open } from "@tauri-apps/plugin-dialog";
 import type {
   BuildSuggestion,
   BuildWorkflowSpec,
+  CodexTerminalSpawnRequest,
   DiffRequest,
   DiffResponse,
   LocalChangesRequest,
@@ -397,6 +398,12 @@ export async function terminalSpawn(
 export async function terminalWrite(id: string, data: Uint8Array): Promise<void> {
   requireDesktop();
   return invoke("terminal_write", { id, data: Array.from(data) });
+}
+
+/** Start Codex directly with a validated executable and structured context; no shell input. */
+export async function terminalSpawnCodex(request: CodexTerminalSpawnRequest): Promise<void> {
+  requireDesktop();
+  return invoke('terminal_spawn_codex', { request });
 }
 
 export async function terminalResize(

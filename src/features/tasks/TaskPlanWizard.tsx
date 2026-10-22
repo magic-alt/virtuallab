@@ -7,17 +7,21 @@ import { runTaskAction, useTaskStore, selectTask } from '@/stores/tasks';
 import type { RepositoryRecord } from '@/types/workbench';
 import type { TaskDraft, TaskKind, TaskPlanRequest, TaskRecord } from '@/types/tasks';
 import { parseTaskProfile, validateTaskPlan } from './model';
+import { RepositoryContextSelector } from '@/features/workspace/RepositoryContextSelector';
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
+import { copyContextRepositories } from '@/lib/workspaceContext';
+import type { ContextRepository } from '@/types/workspaceContext';
 
 const lines = (text: string) => text.split(/\r?\n/).map(value => value.trim().replaceAll('\\','/').replace(/\/+$/, '')).filter(Boolean);
 const profileHelp = 'Profile JSON 支持 outputPaths（相对生成输出，不可掩盖已跟踪源码）、sourcePaths（显式包含忽略的源码；空表示全部已跟踪及未忽略的新文件）、toolchainPrograms（命令名或绝对可执行路径，不含参数）。CMake 须先通过探索性 Run 配置 Ninja；正式验证支持默认目标与直接原生 C/C++ 编译器，使用 build/test Profile。未知 launcher、自定义目标或间接调用不能取得资格。';
-interface NodeEditor {localId: number; key: string; title: string; goal: string; scopeText: string; kind: TaskKind; dependenciesText: string; profileJson: string; autoCommit: boolean}
+interface NodeEditor {localId: number; key: string; title: string; goal: string; scopeText: string; kind: TaskKind; dependenciesText: string; profileJson: string; autoCommit: boolean; contextRepositories: ContextRepository[]}
 export function TaskPlanWizard({repositories, activeRepository, onClose, prefill = null}: {repositories: RepositoryRecord[]; activeRepository: RepositoryRecord | null; onClose: () => void; prefill?: TaskPlanRequest | null}) {
   const [root, setRoot] = useState(prefill?.repositoryRoot ?? activeRepository?.path ?? repositories[0]?.path ?? '');
   const [head, setHead] = useState(prefill?.expectedHeadSha ?? '');
   const [step, setStep] = useState(0);
   const [nodes, setNodes] = useState<NodeEditor[]>(() => prefill?.tasks.length
-    ? prefill.tasks.map((node, index) => ({localId:index + 1,key:node.key,title:node.title,goal:node.goal,scopeText:node.scope.join('\n'),kind:node.kind,dependenciesText:node.dependencyKeys.join(', '),profileJson:JSON.stringify(node.profile,null,2),autoCommit:node.autoCommit}))
-    : [{localId:1,key:'impl-1',title:'',goal:'',scopeText:'',kind:'implementation',dependenciesText:'',profileJson:'null',autoCommit:false}]);
+    ? prefill.tasks.map((node, index) => ({localId:index + 1,key:node.key,title:node.title,goal:node.goal,scopeText:node.scope.join('\n'),kind:node.kind,dependenciesText:node.dependencyKeys.join(', '),profileJson:JSON.stringify(node.profile,null,2),autoCommit:node.autoCommit,contextRepositories:copyContextRepositories(node.contextRepositories)}))
+    : [{localId:1,key:'impl-1',title:'',goal:'',scopeText:'',kind:'implementation',dependenciesText:'',profileJson:'null',autoCommit:false,contextRepositories:copyContextRepositories(useRepositoryContextStore.getState().contexts[workspaceKey(root)])}]);
   const nextId = useRef((prefill?.tasks.length ?? 1) + 1);
   const liveContext=useRef({root,repositories});liveContext.current={root,repositories};
   const [error, setError] = useState(''); const [reading, setReading] = useState(false);
@@ -38,6 +42,7 @@ export function TaskPlanWizard({repositories, activeRepository, onClose, prefill
   const plan = (): TaskPlanRequest => ({repositoryRoot:root,expectedHeadSha:head.trim(),tasks:nodes.map(node => ({
     key:node.key.trim(),title:node.title.trim(),goal:node.goal.trim(),scope:lines(node.scopeText),kind:node.kind,
     dependencyKeys:node.dependenciesText.split(/[\s,]+/).filter(Boolean),profile:parseTaskProfile(node.profileJson),autoCommit:node.autoCommit,
+    ...(node.contextRepositories.length ? { contextRepositories: copyContextRepositories(node.contextRepositories) } : {}),
   } satisfies TaskDraft))});
   const next = () => {
     try {
@@ -49,7 +54,7 @@ export function TaskPlanWizard({repositories, activeRepository, onClose, prefill
   };
   const add = (kind: TaskKind) => {
     const id = nextId.current++;
-    setNodes(current => [...current,{localId:id,key:`${kind === 'integration' ? 'integration' : 'impl'}-${id}`,title:'',goal:'',kind,scopeText:current[0].scopeText,profileJson:current[0].profileJson,autoCommit:false,dependenciesText:''}]);
+    setNodes(current => [...current,{localId:id,key:`${kind === 'integration' ? 'integration' : 'impl'}-${id}`,title:'',goal:'',kind,scopeText:current[0].scopeText,profileJson:current[0].profileJson,autoCommit:false,dependenciesText:'',contextRepositories:copyContextRepositories(current[0].contextRepositories)}]);
   };
   const submit = async () => {
     try {
@@ -67,7 +72,13 @@ export function TaskPlanWizard({repositories, activeRepository, onClose, prefill
     {error && <p className="task-error" role="alert">{error}</p>}
     <fieldset disabled={pending}>
       {step === 0 && <>
-        <label>仓库<select value={root} onChange={event => setRoot(event.target.value)}>{repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name} — {repo.path}</option>)}</select></label>
+        <label>仓库<select value={root} onChange={event => {
+          const nextRoot = event.target.value;
+          setRoot(nextRoot);
+          setNodes(current => current.map(node => ({ ...node, contextRepositories: copyContextRepositories(useRepositoryContextStore.getState().contexts[workspaceKey(nextRoot)]) })));
+        }}>{repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name} — {repo.path}</option>)}</select></label>
+        <RepositoryContextSelector repositoryRoot={root} repositories={repositories} value={nodes[0].contextRepositories}
+          disabled={pending} onChange={references => update(0, { contextRepositories: copyContextRepositories(references) })}/>
         <label>计划标题<input value={nodes[0].title} onChange={event => update(0,{title:event.target.value})}/></label>
         <label>目标<textarea value={nodes[0].goal} onChange={event => update(0,{goal:event.target.value})}/></label>
         <label>基线 HEAD<input value={head} onChange={event => {++readGeneration.current;setReading(false);setHead(event.target.value);}}/></label>
@@ -100,6 +111,8 @@ export function TaskPlanWizard({repositories, activeRepository, onClose, prefill
           <label>节点 {index + 1} 依赖键<input value={node.dependenciesText} onChange={event => update(index,{dependenciesText:event.target.value})}/></label>
           <label>节点 {index + 1} 范围<textarea value={node.scopeText} onChange={event => update(index,{scopeText:event.target.value})}/></label>
           <label>节点 {index + 1} Profile JSON<textarea className="task-code" value={node.profileJson} onChange={event => update(index,{profileJson:event.target.value})}/></label>
+          <RepositoryContextSelector repositoryRoot={root} repositories={repositories} value={node.contextRepositories}
+            disabled={pending} onChange={references => update(index, { contextRepositories: copyContextRepositories(references) })}/>
           <label className="task-checkbox"><input type="checkbox" checked={node.autoCommit} onChange={event => update(index,{autoCommit:event.target.checked})}/>允许封存本地提交</label>
           {index > 0 && <button onClick={() => setNodes(current => current.filter(item => item.localId !== node.localId))}>移除节点 {index + 1}</button>}
         </section>)}

@@ -62,6 +62,31 @@ describe("WorkspaceAgentService", () => {
     });
   });
 
+  it('passes selected companion worktrees to native attachment and preserves the returned effective context', async () => {
+    const contextRepositories = [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }];
+    const startOrResumeSession = vi.fn().mockResolvedValue({ workspaceRoot: '/host', harness: 'codex', threadId: 'context-thread', createdAtMs: 1, updatedAtMs: 1, contextRepositories });
+    const binding = await new WorkspaceAgentService(adapter({ startOrResumeSession })).attach('/host', '/tools/codex', contextRepositories);
+    expect(startOrResumeSession).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: '/host', contextRepositories }));
+    expect(binding.contextRepositories).toEqual(contextRepositories);
+  });
+
+  it('refuses a successful attach that omitted the selected context', async () => {
+    const stopSession = vi.fn().mockResolvedValue(undefined);
+    const startOrResumeSession = vi.fn().mockResolvedValue({ workspaceRoot: '/host', harness: 'codex', threadId: 'context-thread', createdAtMs: 1, updatedAtMs: 1 });
+    await expect(new WorkspaceAgentService(adapter({ startOrResumeSession, stopSession })).attach('/host', undefined,
+      [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware' }])).rejects.toThrow(/context/i);
+    expect(useAgentSessionStore.getState().bindings['/host']).toBeUndefined();
+    expect(stopSession).toHaveBeenCalledWith('/host');
+  });
+
+  it('accepts native canonicalization of a selected reference alias', async () => {
+    const contextRepositories = [{ repositoryRoot: '/real/firmware', workspaceRoot: '/real/firmware-review' }];
+    const startOrResumeSession = vi.fn().mockResolvedValue({ workspaceRoot: '/host', harness: 'codex', threadId: 'canonical-thread', createdAtMs: 1, updatedAtMs: 1, contextRepositories });
+    const binding = await new WorkspaceAgentService(adapter({ startOrResumeSession })).attach('/host', undefined,
+      [{ repositoryRoot: '/alias/firmware', workspaceRoot: '/alias/firmware-review' }]);
+    expect(binding.contextRepositories).toEqual(contextRepositories);
+  });
+
   it("resumes the persisted thread instead of creating a second workspace thread", async () => {
     const root = "D:/Project/virtuallab";
     useAgentSessionStore.getState().setBinding({

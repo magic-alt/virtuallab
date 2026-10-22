@@ -491,6 +491,7 @@ pub(super) fn mutation(old: &TaskRecord, new: &TaskRecord) -> Result<(), String>
         || old.kind != new.kind
         || old.scope != new.scope
         || old.dependencies != new.dependencies
+        || old.context_repositories != new.context_repositories
         || old.profile != new.profile
         || old.auto_commit != new.auto_commit
         || old.created_at_ms != new.created_at_ms
@@ -521,6 +522,34 @@ fn absolute(path: &str) -> Result<(), String> {
     if !Path::new(path).is_absolute() {
         return Err("Stored workspace/repository paths must be absolute.".into());
     }
+    Ok(())
+}
+
+fn stored_context_repositories(references: &[crate::workspace_context::ContextRepository]) -> Result<(), String> {
+    if references.len() > 8 {
+        return Err("A task can reference at most eight repositories.".into());
+    }
+    let mut seen = HashSet::new();
+    for reference in references {
+        for path in [&reference.repository_root, &reference.workspace_root] {
+            absolute(path)?;
+            if path.chars().any(char::is_control) {
+                return Err("Stored reference paths must not contain control characters.".into());
+            }
+        }
+        // Accepted references already contain canonical paths. Historical
+        // validation must not resolve those paths against today's filesystem:
+        // a moved/retargeted peer is an execution error, not corrupt history.
+        #[cfg(windows)]
+        let identity = reference.workspace_root.replace('\\', "/").to_lowercase();
+        #[cfg(not(windows))]
+        let identity = reference.workspace_root.clone();
+        if !seen.insert(identity) {
+            return Err("Duplicate stored context workspace.".into());
+        }
+    }
+    // Do not touch the filesystem when opening historical task data. Offline
+    // peers are an execution error, not a reason to quarantine valid history.
     Ok(())
 }
 fn status(value: &str) -> Result<(), String> {
@@ -643,6 +672,7 @@ pub(super) fn generation(g: &Generation) -> Result<(), String> {
         text(&task.title, 256, true)?;
         text(&task.goal, 8192, true)?;
         paths(&task.scope, true, None, true)?;
+        stored_context_repositories(&task.context_repositories)?;
         if !matches!(task.kind.as_str(), "implementation" | "integration")
             || task.revision == 0
             || task.updated_at_ms < task.created_at_ms

@@ -6,11 +6,14 @@ import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
 import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { setTerminalFontSize, setTerminalScrollback, setTerminalCursorBlink } from "./terminalAppearance";
 import { useTaskNotifications } from "@/stores/taskNotifications";
-import { MONITORED_CODEX_COMMAND } from "@/lib/terminalAlerts";
+import { useRepositoryContextStore } from "@/stores/repositoryContext";
+import { useWorkbenchStore } from "@/stores/workbench";
+import { useAgentPreferences } from "@/stores/agentPreferences";
 
 const backend = vi.hoisted(() => ({
   isDesktopRuntime: vi.fn(() => true),
   terminalSpawn: vi.fn().mockResolvedValue(undefined),
+  terminalSpawnCodex: vi.fn().mockResolvedValue(undefined),
   terminalStop: vi.fn().mockResolvedValue(undefined),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),
@@ -86,6 +89,9 @@ beforeEach(() => {
   for (const method of Object.values(backend)) method.mockReset().mockResolvedValue(undefined);
   backend.isDesktopRuntime.mockReset().mockReturnValue(true);
   useTaskNotifications.setState({ notices: [], desktopEnabled: true, desktopError: null, terminalTarget: null });
+  useRepositoryContextStore.setState({ contexts: {} });
+  useWorkbenchStore.setState({ repositories: [] });
+  useAgentPreferences.setState({ codexExecutablePath: '' });
 });
 
 async function startTerminal(user: ReturnType<typeof userEvent.setup>) {
@@ -117,16 +123,15 @@ describe("TerminalWorkspace native PTY lifecycle", () => {
     await user.click(screen.getByRole('button',{name:/new terminal/i}));
     await waitFor(() => expect(xterm.instances[1]?.options).toMatchObject({scrollback:32000,cursorBlink:false}));
   });
-  it("launches monitored Codex with scoped CLI flags and alerts on completed turns in a hidden terminal", async () => {
+  it("launches monitored Codex natively and alerts on completed turns in a hidden terminal", async () => {
     const user = userEvent.setup();
     render(<TerminalWorkspace cwd="D:/workspace" enabled visible={false} repositoryId="repo-owner" />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Start Codex with alerts" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Start Codex with alerts" }));
-    await waitFor(() => expect(backend.terminalSpawn).toHaveBeenCalledTimes(1));
-    const id = backend.terminalSpawn.mock.calls[0][0];
-    await waitFor(() => expect(backend.terminalWrite).toHaveBeenCalledWith(
-      id, new TextEncoder().encode(MONITORED_CODEX_COMMAND),
-    ));
+    await waitFor(() => expect(backend.terminalSpawnCodex).toHaveBeenCalledTimes(1));
+    const { id } = backend.terminalSpawnCodex.mock.calls[0][0];
+    expect(backend.terminalSpawn).not.toHaveBeenCalled();
+    expect(backend.terminalWrite).not.toHaveBeenCalled();
     act(() => {
       events.callbacks["terminal://output"]({ payload: {
         id, data: Array.from(new TextEncoder().encode("\x1b]9;Changes implemented\x07")),
@@ -136,6 +141,29 @@ describe("TerminalWorkspace native PTY lifecycle", () => {
     expect(useTaskNotifications.getState().notices[0].repositoryId).toBe("repo-owner");
     await waitFor(() => expect(backend.desktopNotify).toHaveBeenCalledTimes(1));
     expect(backend.desktopNotify.mock.calls[0].join(" ")).not.toContain("Changes implemented");
+  });
+
+  it('uses current companion references and the shared executable only for newly launched Codex terminals', async () => {
+    const host = { id: 'host', name: 'Host', path: '/host', lastOpenedAt: 1 };
+    useWorkbenchStore.setState({ repositories: [host] });
+    useRepositoryContextStore.getState().setContextRepositories('/host', [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }]);
+    useAgentPreferences.getState().setCodexExecutablePath('C:/工具/Codex & tools/codex.cmd');
+    render(<TerminalWorkspace cwd="/host-worktree" enabled repositoryId="host"/>);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start Codex with alerts' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Start Codex with alerts' }));
+    await waitFor(() => expect(backend.terminalSpawnCodex).toHaveBeenCalledWith(expect.objectContaining({
+      cwd: '/host-worktree', executablePath: 'C:/工具/Codex & tools/codex.cmd',
+      contextRepositories: [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-review' }],
+    })));
+    const first = backend.terminalSpawnCodex.mock.calls[0][0];
+    act(() => useRepositoryContextStore.getState().setContextRepositories('/host', [{ repositoryRoot: '/firmware', workspaceRoot: '/firmware-main' }]));
+    expect(backend.terminalStop).not.toHaveBeenCalled();
+    expect(backend.terminalSpawnCodex).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Start Codex' }));
+    await waitFor(() => expect(backend.terminalSpawnCodex).toHaveBeenCalledTimes(2));
+    expect(backend.terminalSpawnCodex.mock.calls[1][0].contextRepositories[0].workspaceRoot).toBe('/firmware-main');
+    expect(first.contextRepositories[0].workspaceRoot).toBe('/firmware-review');
+    expect(backend.terminalWrite).not.toHaveBeenCalled();
   });
 
   it("treats a regular BEL as attention, never proof of a completed task", async () => {

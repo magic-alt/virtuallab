@@ -2,6 +2,7 @@ use crate::bounded_lines::{bounded_lines, MAX_AGENT_LINE_BYTES};
 use crate::managed_process::ManagedChild as Child;
 use crate::agent_ownership::AgentOwnership;
 use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
+use crate::workspace_context::ContextRepository;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -55,6 +56,8 @@ pub struct AgentSessionBinding {
     pub(crate) thread_id: String,
     pub(crate) created_at_ms: u128,
     pub(crate) updated_at_ms: u128,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) context_repositories: Vec<ContextRepository>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,6 +67,8 @@ pub struct AgentSessionStartRequest {
     pub(crate) harness: String,
     pub(crate) thread_id: Option<String>,
     pub(crate) executable_path: Option<String>,
+    #[serde(default)]
+    pub(crate) context_repositories: Vec<ContextRepository>,
     // This authority is set only by the native task controller. Public IPC
     // cannot turn an ordinary workspace attachment into a task-owned runtime.
     #[serde(skip)]
@@ -163,6 +168,9 @@ struct CodexProcess {
     child: Mutex<Child>,
     pending: Pending,
     next_id: AtomicU64,
+    // Drop context leases before the primary writer claim, including failed
+    // startup paths where the process monitor owns the final Arc.
+    _context_activities: Mutex<Vec<Arc<crate::workspace_lifecycle::RepositoryActivity>>>,
     _reservation: Mutex<Option<WorkspaceReservation>>,
 }
 
@@ -244,6 +252,7 @@ impl CodexProcess {
         }
         // A synchronous, confirmed stop permits immediate candidate sealing.
         // Errors leave the claim intact for the runtime/monitor to retry.
+        self._context_activities.lock().map_err(lock_error)?.clear();
         self._reservation.lock().map_err(lock_error)?.take();
         Ok(())
     }
@@ -260,6 +269,206 @@ struct AgentRuntime {
     binding: AgentSessionBinding,
     executable_path: String,
     owner: AgentRuntimeOwner,
+    canonical_root: String,
+}
+
+struct AgentWorkspacePaths {
+    display_root: String,
+    canonical_root: String,
+}
+
+fn agent_workspace_paths(requested_root: &str, canonical_root: &str) -> AgentWorkspacePaths {
+    // UI workspace keys cannot resolve filesystem aliases or Windows verbatim
+    // prefixes. Keep their requested identity, while native execution uses the
+    // separately pinned canonical directory.
+    AgentWorkspacePaths { display_root: requested_root.into(), canonical_root: canonical_root.into() }
+}
+
+fn require_same_context(pinned: &[ContextRepository], requested: &[ContextRepository]) -> Result<(), String> {
+    if context_selection(pinned) != context_selection(requested) {
+        return Err("Companion repository selection changed while this workspace runtime is attached. Stop the runtime, then reconnect to apply the selection.".into());
+    }
+    Ok(())
+}
+
+fn context_selection(references: &[ContextRepository]) -> Vec<(&str, &str)> {
+    let mut selection: Vec<_> = references.iter()
+        .map(|reference| (reference.repository_root.as_str(), reference.workspace_root.as_str())).collect();
+    selection.sort_unstable();
+    selection
+}
+
+fn require_task_context_snapshot(require_fresh: bool, requested: &[ContextRepository], resolved: &[ContextRepository]) -> Result<(), String> {
+    // Accepted task snapshots already contain canonical paths. Do not
+    // recanonicalize their strings for comparison: a replaced path or symlink
+    // must fail, not silently redirect the accepted context.
+    if require_fresh && context_selection(requested) != context_selection(resolved) {
+        return Err("Accepted task companion context changed on disk. Restore the accepted paths or create a new task plan.".into());
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CodexContextSandbox {
+    Inherit,
+    ReadOnly,
+    WorkspaceWrite,
+}
+
+#[derive(Debug)]
+pub(crate) struct CodexContextConfiguration {
+    pub(crate) sandbox: CodexContextSandbox,
+    pub(crate) developer_instructions: Option<String>,
+}
+
+fn qualify_codex_context_configuration(config: &Value, requirements: &Value) -> Result<CodexContextConfiguration, String> {
+    let config = config.get("config").and_then(Value::as_object)
+        .ok_or("Codex did not return a supported configuration; companion context cannot be qualified.")?;
+    let requirements = requirements.get("requirements")
+        .ok_or("Codex did not return permission requirements; companion context cannot be qualified.")?;
+    let non_null = |value: Option<&Value>| value.is_some_and(|value| !value.is_null());
+    let custom_catalog = config.get("permissions").is_some_and(|value|
+        !value.is_null() && !value.as_object().is_some_and(serde_json::Map::is_empty));
+    if non_null(config.get("default_permissions")) || custom_catalog || non_null(config.get("profile")) {
+        return Err("Companion context is not yet qualified for named or custom Codex permission profiles. Use a context-free session, or select a supported legacy configuration explicitly.".into());
+    }
+    if !requirements.is_null() {
+        let requirements = requirements.as_object()
+            .ok_or("Codex returned unsupported permission requirements; companion context cannot be qualified.")?;
+        if non_null(requirements.get("defaultPermissions")) || non_null(requirements.get("allowedPermissionProfiles")) {
+            return Err("Companion context is not yet qualified for managed Codex permission profiles. Use a context-free session without changing the managed restrictions.".into());
+        }
+    }
+    let sandbox = match config.get("sandbox_mode") {
+        None | Some(Value::Null) => CodexContextSandbox::Inherit,
+        Some(Value::String(mode)) if mode == "read-only" => CodexContextSandbox::ReadOnly,
+        Some(Value::String(mode)) if mode == "workspace-write" => CodexContextSandbox::WorkspaceWrite,
+        _ => return Err("Companion context requires an inherited, read-only, or workspace-write Codex sandbox. Select a supported sandbox explicitly and retry.".into()),
+    };
+    let developer_instructions = match config.get("developer_instructions") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(instructions)) => Some(instructions.clone()),
+        _ => return Err("Codex developer instructions have an unsupported shape; companion context cannot be qualified.".into()),
+    };
+    Ok(CodexContextConfiguration { sandbox, developer_instructions })
+}
+
+pub(crate) fn probe_codex_context_configuration(executable: &str, cwd: &str) -> Result<CodexContextConfiguration, String> {
+    // Query the selected executable before applying any permission override.
+    // This starts no thread/model turn and retains no raw configuration.
+    let mut command = crate::execution::process_command(executable);
+    command.args(["app-server", "--listen", "stdio://"]).current_dir(cwd)
+        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = crate::managed_process::spawn(&mut command)
+        .map_err(|error| format!("Codex permission probe could not start (kind={:?}, code={:?})", error.kind(), error.raw_os_error()))?;
+    let Some(stdin) = child.stdin.take() else {
+        stop_version_probe(&mut child);
+        return Err("Codex permission probe stdin is unavailable".into());
+    };
+    let Some(stdout) = child.stdout.take() else {
+        stop_version_probe(&mut child);
+        return Err("Codex permission probe stdout is unavailable".into());
+    };
+    let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+    let replies = pending.clone();
+    let reader = thread::spawn(move || {
+        for line in bounded_lines(stdout, MAX_AGENT_LINE_BYTES) {
+            let Ok(line) = line else { break; };
+            let Ok(message) = serde_json::from_str::<Value>(&line) else { break; };
+            if let Some(id) = message.get("id").and_then(Value::as_u64) {
+                if let Some(sender) = replies.lock().ok().and_then(|mut map| map.remove(&id)) {
+                    let response = if message.get("error").is_some() {
+                        Err("Codex rejected permission introspection".into())
+                    } else {
+                        message.get("result").cloned().ok_or("Codex permission response is incomplete".into())
+                    };
+                    let _ = sender.send(response);
+                }
+            }
+        }
+        if let Ok(mut replies) = replies.lock() {
+            for (_, sender) in replies.drain() {
+                let _ = sender.send(Err("Codex permission probe output closed".into()));
+            }
+        }
+    });
+    let process = CodexProcess {
+        stdin: Arc::new(Mutex::new(stdin)), child: Mutex::new(child), pending,
+        next_id: AtomicU64::new(1), _context_activities: Mutex::new(Vec::new()), _reservation: Mutex::new(None),
+    };
+    let result = initialize_codex(&process)
+        .map_err(|_| "Codex cannot initialize permission introspection. Update Codex or use a context-free session.".to_string())
+        .and_then(|_| read_codex_context_configuration(&process, cwd));
+    // Keep the caller's reference leases until the owned process tree and its
+    // pipe observer have stopped, including rejection and timeout paths.
+    while process.stop().is_err() { thread::sleep(Duration::from_millis(20)); }
+    reader.join().map_err(|_| "Codex permission probe observer failed".to_string())?;
+    result
+}
+
+fn read_codex_context_configuration(process: &CodexProcess, cwd: &str) -> Result<CodexContextConfiguration, String> {
+    // Configuration may contain private instructions or provider settings.
+    // Consume it in memory only; never journal it or return raw RPC diagnostics.
+    let unavailable = || "Codex cannot verify companion-context permissions. Update Codex or use a context-free session.".to_string();
+    let config = process.request("config/read", json!({"cwd":cwd, "includeLayers":false}))
+        .map_err(|_| unavailable())?;
+    let requirements = process.request("configRequirements/read", json!({}))
+        .map_err(|_| unavailable())?;
+    qualify_codex_context_configuration(&config, &requirements)
+}
+
+fn validate_context_sandbox(root: &str, result: &Value) -> Result<(), String> {
+    // This legacy response is only a qualification check. Sending it back as
+    // turn/start sandboxPolicy could discard a richer effective permission
+    // profile. Keep the provider's full state intact.
+    let policy = result.get("sandbox")
+        .ok_or("Codex did not return its effective sandbox policy; companion context cannot start safely")?;
+    match policy.get("type").and_then(Value::as_str) {
+        Some("workspaceWrite") => {
+            let roots = policy.get("writableRoots").and_then(Value::as_array)
+                .ok_or("Codex did not report writable roots for companion context.")?;
+            if roots.iter().any(|candidate| candidate.as_str().is_none_or(|candidate| workspace_key(candidate) != workspace_key(root)))
+                || policy.get("networkAccess").and_then(Value::as_bool) != Some(false)
+                || policy.get("excludeTmpdirEnvVar").and_then(Value::as_bool) != Some(true)
+                || policy.get("excludeSlashTmp").and_then(Value::as_bool) != Some(true)
+            {
+                return Err("Codex did not preserve the primary-only write boundary for companion context. Start a new session with a supported workspace-write configuration.".into());
+            }
+        }
+        Some("readOnly") => {},
+        _ => return Err("Codex returned an unsupported sandbox for companion context. Select a workspace-write or read-only sandbox and reconnect.".into()),
+    }
+    Ok(())
+}
+
+fn validate_qualified_context_sandbox(root: &str, result: &Value, configured: CodexContextSandbox) -> Result<(), String> {
+    if configured == CodexContextSandbox::ReadOnly
+        && result.get("sandbox").and_then(|policy| policy.get("type")).and_then(Value::as_str) != Some("readOnly") {
+        return Err("The saved Codex thread is broader than the current read-only configuration. Start a new session without changing the read restriction.".into());
+    }
+    validate_context_sandbox(root, result)
+}
+
+fn context_thread_sandbox(is_resume: bool, configured: CodexContextSandbox) -> Option<&'static str> {
+    // Preserve the established writable-primary default for fresh managed
+    // tasks when no explicit user mode/profile was configured. Resumes and
+    // explicit modes retain the provider's existing permissions.
+    if !is_resume && configured == CodexContextSandbox::Inherit { Some("workspace-write") } else { None }
+}
+
+fn turn_start_parameters(
+    root: &str,
+    thread: &str,
+    text: &str,
+    references: &[ContextRepository],
+) -> Value {
+    let input = format!("{}\n\nUser request:\n{text}", crate::workspace_context::context_instructions(references));
+    json!({
+        "threadId": thread,
+        "cwd": root,
+        "approvalPolicy": "never",
+        "input": [{"type":"text", "text":input, "text_elements":[]}],
+    })
 }
 
 #[derive(Clone, Default)]
@@ -623,15 +832,26 @@ fn start_session(
     if request.harness != "codex" && request.harness != "deepseek" {
         return Err(format!("Unsupported agent harness: {}", request.harness));
     }
-    let root = request.workspace_root.trim();
-    if root.is_empty() || !std::path::Path::new(root).is_dir() {
+    let requested_root = request.workspace_root.trim();
+    if requested_root.is_empty() || !std::path::Path::new(requested_root).is_dir() {
         return Err(format!("Agent workspace is not a directory: {}", request.workspace_root));
     }
+    let canonical_root = std::fs::canonicalize(requested_root)
+        .map_err(|_| "Agent workspace is unavailable; refresh and reconnect")?;
+    let paths = agent_workspace_paths(requested_root,
+        canonical_root.to_str().ok_or("Agent workspace path is not valid Unicode")?);
+    let root = paths.canonical_root.as_str();
+    let display_root = paths.display_root.as_str();
+    let (context_repositories, context_activities) = crate::workspace_context::acquire_context_repositories(
+        root, &request.context_repositories, app.state::<WorkspaceLifecycle>().inner(),
+    )?;
+    require_task_context_snapshot(request.require_fresh, &request.context_repositories, &context_repositories)?;
     let key = workspace_key(root);
     let selected_executable = selected_codex_executable(request.executable_path.as_deref())?;
     let existing = manager.existing_for_start(root, request.require_fresh)?;
     if let Some(existing) = existing {
         if existing.process.is_running()? {
+            require_same_context(&existing.binding.context_repositories, &context_repositories)?;
             if request
                 .thread_id
                 .as_deref()
@@ -655,18 +875,27 @@ fn start_session(
     }
 
     let reservation = app.state::<WorkspaceLifecycle>().reserve(root, &format!("agent {}", request.harness))?;
-    let process = spawn_codex(&app, root, &request.harness, &selected_executable, reservation, manager.completions.clone(), manager.reports.clone())?;
+    let process = spawn_codex(&app, root, display_root, &request.harness, &selected_executable, reservation, context_activities,
+        !context_repositories.is_empty(), manager.completions.clone(), manager.reports.clone())?;
     if let Err(error) = initialize_codex(&process) {
         let _ = process.stop();
         return Err(error);
     }
+    let context_configuration = if context_repositories.is_empty() { None } else {
+        match read_codex_context_configuration(&process, root) {
+            Ok(configuration) => Some(configuration),
+            Err(error) => { let _ = process.stop(); return Err(error); }
+        }
+    };
+    let sandbox = context_configuration.as_ref()
+        .map_or(Some("workspace-write"), |configuration| context_thread_sandbox(request.thread_id.is_some(), configuration.sandbox));
     let result = if let Some(thread_id) = request.thread_id.as_deref() {
         process.request(
             "thread/resume",
             json!({
                 "threadId": thread_id,
                 "cwd": root,
-                "sandbox": "workspace-write",
+                "sandbox": sandbox,
                 "approvalPolicy": "never",
                 "excludeTurns": true,
                 "model": if request.harness == "deepseek" { Some("deepseek-flash") } else { None },
@@ -678,7 +907,7 @@ fn start_session(
             "thread/start",
             json!({
                 "cwd": root,
-                "sandbox": "workspace-write",
+                "sandbox": sandbox,
                 "approvalPolicy": "never",
                 "ephemeral": false,
                 "serviceName": "virtuallab",
@@ -698,13 +927,21 @@ fn start_session(
         Some(id) => id,
         None => { let _ = process.stop(); return Err("Codex response missing thread.id".into()); }
     };
+    if let Some(configuration) = context_configuration {
+        let qualified = result.get("cwd").and_then(Value::as_str)
+            .filter(|cwd| workspace_key(cwd) == workspace_key(root))
+            .ok_or_else(|| "Codex returned a different or missing primary working directory".to_string())
+            .and_then(|_| validate_qualified_context_sandbox(root, &result, configuration.sandbox));
+        if let Err(error) = qualified { let _ = process.stop(); return Err(error); }
+    }
     let timestamp = now_ms();
     let binding = AgentSessionBinding {
-        workspace_root: root.into(),
+        workspace_root: display_root.into(),
         harness: request.harness.clone(),
         thread_id: thread_id.clone(),
         created_at_ms: timestamp,
         updated_at_ms: timestamp,
+        context_repositories,
     };
     manager.runtimes.lock().map_err(lock_error)?.insert(
         key,
@@ -713,10 +950,11 @@ fn start_session(
             binding: binding.clone(),
             executable_path: selected_executable,
             owner: if request.require_fresh { AgentRuntimeOwner::Task } else { AgentRuntimeOwner::Workspace },
+            canonical_root: root.into(),
         }),
     );
     crate::agent_journal::emit_agent_event(&app, Some(&request.harness),
-        AgentEvent::lifecycle("agent.session_started", root, Some(thread_id)),
+        AgentEvent::lifecycle("agent.session_started", display_root, Some(thread_id)),
     );
     Ok(binding)
 }
@@ -752,12 +990,14 @@ async fn start_turn(
             return Err("Agent turn text must not be empty".into());
         }
         let runtime = runtime_for_owner(&manager, &request.workspace_root, &request.thread_id, owner)?;
+        let current_context = crate::workspace_context::validate_context_repositories(
+            &runtime.canonical_root, &runtime.binding.context_repositories,
+        )?;
+        require_same_context(&runtime.binding.context_repositories, &current_context)?;
         let result = runtime.process.request(
             "turn/start",
-            json!({
-                "threadId": request.thread_id,
-                "input": [{ "type": "text", "text": request.text, "text_elements": [] }]
-            }),
+            turn_start_parameters(&runtime.canonical_root, &request.thread_id, &request.text,
+                &current_context),
         )?;
         let turn_id = nested_id(&result, "turn")
             .ok_or_else(|| "Codex response missing turn.id".to_string())?;
@@ -906,9 +1146,22 @@ fn initialize_codex(process: &CodexProcess) -> Result<(), String> {
     process.notify("initialized")
 }
 
-fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str, reservation: WorkspaceReservation, completions: CompletionObservers, reports: ReportObservers) -> Result<Arc<CodexProcess>, String> {
+fn spawn_codex(app: &AppHandle, root: &str, display_root: &str, harness: &str, executable_path: &str,
+    reservation: WorkspaceReservation, context_activities: Vec<Arc<crate::workspace_lifecycle::RepositoryActivity>>,
+    has_context: bool, completions: CompletionObservers, reports: ReportObservers,
+) -> Result<Arc<CodexProcess>, String> {
     let mut command = crate::execution::process_command(executable_path);
     command.arg("app-server").arg("--listen").arg("stdio://");
+    if has_context {
+        // Narrow workspace-write settings before any thread starts or resumes.
+        // Never add companion paths to writable roots or override read access.
+        for entry in [
+            "sandbox_workspace_write.writable_roots=[]",
+            "sandbox_workspace_write.network_access=false",
+            "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+            "sandbox_workspace_write.exclude_slash_tmp=true",
+        ] { command.arg("-c").arg(entry); }
+    }
     if harness == "deepseek" {
         if std::env::var("DEEPSEEK_API_KEY").map_or(true, |key| key.trim().is_empty()) {
             return Err("DEEPSEEK_API_KEY is required for DeepSeek; no credentials are stored by VirtualLab.".into());
@@ -950,15 +1203,16 @@ fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     spawn_stdout(
         app.clone(),
-        root.into(),
+        display_root.into(),
         stdout,
         pending.clone(),
         stdin.clone(),
         completions,
         reports,
     );
-    spawn_stderr(app.clone(), root.into(), stderr);
+    spawn_stderr(app.clone(), display_root.into(), stderr);
     let process = Arc::new(CodexProcess {
+        _context_activities: Mutex::new(context_activities),
         _reservation: Mutex::new(Some(reservation)),
         stdin,
         child: Mutex::new(child),
@@ -969,7 +1223,7 @@ fn spawn_codex(app: &AppHandle, root: &str, harness: &str, executable_path: &str
     // closure, stop errors and descendant cleanup, not merely through spawn.
     let observed = process.clone();
     let monitor_app = app.clone();
-    let monitor_root = root.to_string();
+    let monitor_root = display_root.to_string();
     thread::spawn(move || {
         loop {
             let exited = observed.child.lock().map_err(lock_error).and_then(|mut child| {
@@ -1164,7 +1418,7 @@ fn now_ms() -> u128 {
 
 /// An operator-chosen Codex executable is an absolute, existing local launcher;
 /// it is never interpreted by a shell or substituted with an arbitrary command.
-fn selected_codex_executable(override_path: Option<&str>) -> Result<String, String> {
+pub(crate) fn selected_codex_executable(override_path: Option<&str>) -> Result<String, String> {
     if let Some(value) = override_path.map(str::trim).filter(|value| !value.is_empty()) {
         let path = std::path::Path::new(value);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -1439,13 +1693,15 @@ mod tests {
         command.args(["-e", "setInterval(()=>{},1000)"]).stdin(Stdio::piped());
         let mut child = crate::managed_process::spawn(&mut command).unwrap();
         let process = Arc::new(CodexProcess {
+            _context_activities: Mutex::new(Vec::new()),
             _reservation: Mutex::new(Some(claim)),
             stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
             child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), next_id: AtomicU64::new(1),
         });
         let runtime = Arc::new(AgentRuntime { process, executable_path: "codex".into(), owner,
+            canonical_root: root.to_string_lossy().into_owned(),
             binding: AgentSessionBinding { workspace_root: root.to_string_lossy().into_owned(), harness: "codex".into(),
-                thread_id: "current-thread".into(), created_at_ms: now_ms(), updated_at_ms: now_ms() } });
+                thread_id: "current-thread".into(), created_at_ms: now_ms(), updated_at_ms: now_ms(), context_repositories: Vec::new() } });
         manager.runtimes.lock().unwrap().insert(workspace_key(root.to_str().unwrap()), runtime.clone());
         runtime
     }
@@ -1485,6 +1741,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
             let mut child = crate::managed_process::spawn(&mut command).unwrap();
             let stdout = child.stdout.take().unwrap();
             let process = Arc::new(CodexProcess {
+                _context_activities: Mutex::new(Vec::new()),
                 _reservation: Mutex::new(Some(claim)),
                 stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
                 child: Mutex::new(child),
@@ -1514,12 +1771,14 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
                 thread_id: nested_id(&result, "thread").unwrap(),
                 created_at_ms: now_ms(),
                 updated_at_ms: now_ms(),
+                context_repositories: Vec::new(),
             };
             let runtime = Arc::new(AgentRuntime {
                 process,
                 binding,
                 executable_path: "node fixture".into(),
                 owner: AgentRuntimeOwner::Task,
+                canonical_root: root.to_string_lossy().into_owned(),
             });
             let manager = AgentManager::default();
             manager
@@ -1677,6 +1936,280 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         assert!(!request.require_fresh);
         let request: AgentSessionStartRequest = serde_json::from_value(json!({"workspaceRoot":"/workspace", "harness":"codex", "requireFresh":true})).unwrap();
         assert!(!request.require_fresh, "only the native task controller may request task runtime ownership");
+    }
+
+    fn selected_context() -> Vec<ContextRepository> {
+        vec![ContextRepository { repository_root: "/companion repository".into(), workspace_root: "/companion worktree 工作区".into() }]
+    }
+
+    #[test]
+    fn managed_context_request_defaults_empty_without_changing_old_binding_serialization() {
+        let request: AgentSessionStartRequest = serde_json::from_value(json!({"workspaceRoot":"/workspace", "harness":"codex"})).unwrap();
+        assert!(request.context_repositories.is_empty());
+        let request: AgentSessionStartRequest = serde_json::from_value(json!({"workspaceRoot":"/workspace", "harness":"codex", "contextRepositories":selected_context()})).unwrap();
+        assert_eq!(request.context_repositories, selected_context());
+        let binding = AgentSessionBinding { workspace_root:"/workspace".into(), harness:"codex".into(), thread_id:"thread".into(), created_at_ms:1, updated_at_ms:1, context_repositories:vec![] };
+        assert!(serde_json::to_value(binding).unwrap().get("contextRepositories").is_none());
+    }
+
+    #[test]
+    fn managed_workspace_paths_preserve_ui_identity_and_pin_native_identity() {
+        for (requested, canonical) in [
+            (r"C:\Project Space\工作区", r"\\?\C:\Project Space\工作区"),
+            (r"\\server\share\Project Space\工作区", r"\\?\UNC\server\share\Project Space\工作区"),
+            ("/workspace/link", "/workspace/actual"),
+            (r"/workspace/literal\name", r"/workspace/literal\name"),
+        ] {
+            let paths = agent_workspace_paths(requested, canonical);
+            assert_eq!(paths.display_root, requested, "bindings and events must retain the requested UI identity");
+            assert_eq!(paths.canonical_root, canonical, "native CWD and sandbox scope must remain pinned to the canonical location");
+        }
+    }
+
+    #[test]
+    fn managed_context_selection_cannot_change_while_a_runtime_is_attached() {
+        let selected = selected_context();
+        assert!(require_same_context(&selected, &selected).is_ok());
+        assert!(require_same_context(&[], &[]).is_ok());
+        assert!(require_same_context(&selected, &[]).is_err());
+        let mut changed = selected.clone();
+        changed[0].workspace_root = "/different worktree".into();
+        assert!(require_same_context(&selected, &changed).is_err());
+        let mut two = selected.clone();
+        two.extend(changed);
+        let reversed = two.iter().rev().cloned().collect::<Vec<_>>();
+        assert!(require_same_context(&two, &reversed).is_ok(), "reordering an unchanged set does not change context");
+    }
+
+    #[test]
+    fn managed_task_context_cannot_follow_a_retargeted_accepted_snapshot() {
+        let accepted = selected_context();
+        let mut retargeted = accepted.clone();
+        retargeted[0].workspace_root = "/replacement-worktree".into();
+        assert!(require_task_context_snapshot(true, &accepted, &retargeted).is_err());
+        assert!(require_task_context_snapshot(true, &accepted, &accepted).is_ok());
+        assert!(require_task_context_snapshot(false, &accepted, &retargeted).is_ok(), "interactive selections may resolve their current aliases before pinning");
+    }
+
+    #[test]
+    fn codex_context_configuration_preserves_legacy_modes_and_rejects_profile_projection() {
+        let requirements = json!({"requirements":null});
+        for (config, expected) in [
+            (json!({"sandbox_mode":null}), CodexContextSandbox::Inherit),
+            (json!({"sandbox_mode":"read-only"}), CodexContextSandbox::ReadOnly),
+            (json!({"sandbox_mode":"workspace-write"}), CodexContextSandbox::WorkspaceWrite),
+        ] {
+            assert_eq!(qualify_codex_context_configuration(&json!({"config":config}), &requirements).unwrap().sandbox, expected);
+        }
+        for config in [
+            json!({"default_permissions":"restricted"}),
+            json!({"permissions":{"restricted":{"extends":":read-only"}}}),
+            json!({"profile":"custom", "profiles":{"custom":{"default_permissions":"restricted"}}}),
+            json!({"sandbox_mode":"danger-full-access"}),
+            json!({"sandbox_mode":"unknown"}),
+        ] {
+            assert!(qualify_codex_context_configuration(&json!({"config":config}), &requirements).is_err());
+        }
+        for requirements in [
+            json!({"requirements":{"defaultPermissions":":read-only"}}),
+            json!({"requirements":{"allowedPermissionProfiles":{":workspace":true}}}),
+            json!({}),
+        ] {
+            assert!(qualify_codex_context_configuration(&json!({"config":{}}), &requirements).is_err());
+        }
+        assert!(qualify_codex_context_configuration(&json!({}), &json!({"requirements":null})).is_err());
+    }
+
+    struct ContextProbeFixture {
+        root: std::path::PathBuf,
+        executable: std::path::PathBuf,
+    }
+
+    impl ContextProbeFixture {
+        fn new(config: Value, requirements: Value, reject_method: bool) -> Self {
+            let root = std::env::temp_dir().join(format!("vl-context-probe-{}-{}", std::process::id(), crate::tasks::new_id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let script = format!(r#"
+const fs = require('fs'), path = require('path');
+fs.writeFileSync(path.join(__dirname, 'parent.pid'), String(process.pid));
+fs.writeFileSync(path.join(__dirname, 'argv.json'), JSON.stringify(process.argv.slice(2)));
+const configuration = {config}, requirements = {requirements};
+require('readline').createInterface({{input:process.stdin}}).on('line', line => {{
+  const message = JSON.parse(line);
+  fs.appendFileSync(path.join(__dirname, 'calls.jsonl'), JSON.stringify({{method:message.method, params:message.params}})+'\n');
+  if (message.id === undefined) return;
+  let result;
+  if (message.method === 'initialize') result = {{userAgent:'context-probe-fixture'}};
+  else if (message.method === 'config/read' && !{reject_method}) result = {{config:configuration}};
+  else if (message.method === 'configRequirements/read') result = {{requirements}};
+  else return process.stdout.write(JSON.stringify({{id:message.id,error:{{code:-32601,message:'private diagnostic must not escape'}}}})+'\n');
+  process.stdout.write(JSON.stringify({{id:message.id,result}})+'\n');
+}});
+"#);
+            std::fs::write(root.join("fixture.cjs"), &script).unwrap();
+            #[cfg(unix)]
+            let executable = {
+                use std::os::unix::fs::PermissionsExt;
+                let file = root.join("codex");
+                std::fs::write(&file, format!("#!/usr/bin/env node\n{script}")).unwrap();
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+                file
+            };
+            #[cfg(windows)]
+            let executable = {
+                let file = root.join("codex.cmd");
+                std::fs::write(&file, "@echo off\r\nnode \"%~dp0fixture.cjs\" %*\r\n").unwrap();
+                file
+            };
+            Self { root, executable }
+        }
+        fn probe(&self) -> Result<CodexContextConfiguration, String> {
+            let root = std::fs::canonicalize(&self.root).unwrap();
+            probe_codex_context_configuration(self.executable.to_str().unwrap(), root.to_str().unwrap())
+        }
+        fn assert_stopped(&self) {
+            #[cfg(unix)]
+            {
+                let pid = std::fs::read_to_string(self.root.join("parent.pid")).unwrap().parse::<u32>().unwrap();
+                assert!(crate::process::group_exited(pid).unwrap(), "configuration probe must stop its complete owned tree before returning");
+            }
+        }
+    }
+    impl Drop for ContextProbeFixture {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); }
+    }
+
+    #[test]
+    fn codex_context_probe_queries_configuration_without_permission_overrides_or_model_turns() {
+        let fixture = ContextProbeFixture::new(json!({"sandbox_mode":"read-only", "developer_instructions":"Retain user's instructions."}), Value::Null, false);
+        let configuration = fixture.probe().unwrap();
+        assert_eq!(configuration.sandbox, CodexContextSandbox::ReadOnly);
+        assert_eq!(configuration.developer_instructions.as_deref(), Some("Retain user's instructions."));
+        fixture.assert_stopped();
+        let args: Value = serde_json::from_str(&std::fs::read_to_string(fixture.root.join("argv.json")).unwrap()).unwrap();
+        assert_eq!(args, json!(["app-server", "--listen", "stdio://"]));
+        let calls = std::fs::read_to_string(fixture.root.join("calls.jsonl")).unwrap();
+        let calls: Vec<Value> = calls.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        let methods: Vec<_> = calls.iter().map(|call| call["method"].as_str().unwrap()).collect();
+        assert_eq!(methods, ["initialize", "initialized", "config/read", "configRequirements/read"]);
+        assert_eq!(calls[2]["params"]["cwd"], std::fs::canonicalize(&fixture.root).unwrap().to_str().unwrap());
+        assert_eq!(calls[2]["params"]["includeLayers"], false);
+    }
+
+    #[test]
+    fn codex_context_probe_rejects_custom_profiles_and_unsupported_introspection_without_leaking_config() {
+        for (config, reject_method) in [
+            (json!({"default_permissions":"private-profile", "developer_instructions":"private instructions"}), false),
+            (json!({}), true),
+        ] {
+            let fixture = ContextProbeFixture::new(config, Value::Null, reject_method);
+            let error = fixture.probe().unwrap_err();
+            fixture.assert_stopped();
+            assert!(!error.contains("private"), "errors must report qualification reasons, never raw provider configuration or diagnostics");
+        }
+    }
+
+    #[test]
+    fn managed_context_requires_an_effective_primary_only_sandbox_without_rewriting_it() {
+        let observed = json!({"sandbox":{
+            "type":"workspaceWrite", "writableRoots":["/primary"],
+            "readOnlyAccess":{"type":"restricted", "readableRoots":["/primary", "/companion"]},
+            "networkAccess":false, "excludeTmpdirEnvVar":true, "excludeSlashTmp":true,
+        }});
+        assert!(validate_context_sandbox("/primary", &observed).is_ok());
+        for (field, value) in [
+            ("writableRoots", json!(["/primary", "/companion"])),
+            ("excludeTmpdirEnvVar", json!(false)),
+            ("excludeSlashTmp", json!(false)),
+            ("networkAccess", json!(true)),
+        ] {
+            let mut broader = observed.clone();
+            broader["sandbox"][field] = value;
+            assert!(validate_context_sandbox("/primary", &broader).is_err(), "unqualified {field} must fail before a turn");
+        }
+        assert!(validate_context_sandbox("/primary", &json!({"sandbox":{"type":"readOnly", "networkAccess":false}})).is_ok());
+    }
+
+    #[test]
+    fn managed_context_resume_cannot_promote_the_current_read_only_configuration() {
+        let writable = json!({"sandbox":{
+            "type":"workspaceWrite", "writableRoots":["/primary"], "networkAccess":false,
+            "excludeTmpdirEnvVar":true, "excludeSlashTmp":true,
+        }});
+        assert!(validate_qualified_context_sandbox("/primary", &writable, CodexContextSandbox::ReadOnly).is_err());
+        assert!(validate_qualified_context_sandbox("/primary", &writable, CodexContextSandbox::WorkspaceWrite).is_ok());
+        let readonly = json!({"sandbox":{"type":"readOnly", "networkAccess":false}});
+        assert!(validate_qualified_context_sandbox("/primary", &readonly, CodexContextSandbox::ReadOnly).is_ok());
+        assert!(validate_qualified_context_sandbox("/primary", &readonly, CodexContextSandbox::WorkspaceWrite).is_ok());
+    }
+
+    #[test]
+    fn managed_context_new_thread_keeps_workspace_write_default_without_overriding_explicit_or_resumed_modes() {
+        assert_eq!(context_thread_sandbox(false, CodexContextSandbox::Inherit), Some("workspace-write"));
+        for mode in [CodexContextSandbox::Inherit, CodexContextSandbox::ReadOnly, CodexContextSandbox::WorkspaceWrite] {
+            assert_eq!(context_thread_sandbox(true, mode), None, "resumes preserve the saved effective permissions");
+        }
+        assert_eq!(context_thread_sandbox(false, CodexContextSandbox::ReadOnly), None);
+        assert_eq!(context_thread_sandbox(false, CodexContextSandbox::WorkspaceWrite), None);
+    }
+
+    #[test]
+    fn managed_context_sandbox_never_rewrites_effective_read_restrictions() {
+        let read_access = json!({"type":"restricted", "includePlatformDefaults":false, "readableRoots":["/allowed-only"]});
+        let observed = json!({"sandbox":{
+            "type":"workspaceWrite", "writableRoots":["/primary"],
+            "readOnlyAccess":read_access, "networkAccess":false,
+            "excludeTmpdirEnvVar":true, "excludeSlashTmp":true,
+        }});
+        let snapshot = observed.clone();
+        validate_context_sandbox("/primary", &observed).unwrap();
+        assert_eq!(observed, snapshot);
+    }
+
+    #[test]
+    fn managed_context_never_promotes_read_only_or_unqualified_sandboxes() {
+        let policy = json!({"type":"readOnly", "access":{"type":"restricted", "readableRoots":["/limited"]}, "networkAccess":false});
+        assert!(validate_context_sandbox("/primary", &json!({"sandbox":policy})).is_ok());
+        for policy in [json!({"type":"dangerFullAccess"}), json!({"type":"externalSandbox"}), json!({"type":"unknown"})] {
+            assert!(validate_context_sandbox("/primary", &json!({"sandbox":policy})).is_err());
+        }
+        assert!(validate_context_sandbox("/primary", &json!({})).is_err());
+    }
+
+    #[test]
+    fn managed_context_turn_carries_current_paths_and_primary_scope() {
+        let request = turn_start_parameters("/primary", "thread", "Inspect the interface", &selected_context());
+        assert_eq!(request["cwd"], "/primary");
+        assert_eq!(request["approvalPolicy"], "never");
+        assert!(request.get("sandboxPolicy").is_none(), "turns must preserve the provider's full permission profile instead of round-tripping its legacy projection");
+        let text = request["input"][0]["text"].as_str().unwrap();
+        assert!(text.contains("/companion worktree 工作区"));
+        assert!(text.contains("Keep all edits in the primary worktree"));
+        assert!(text.ends_with("Inspect the interface"));
+        assert!(request.get("additionalDirectories").is_none());
+    }
+
+    #[test]
+    fn managed_context_empty_selection_supersedes_a_resumed_threads_old_references() {
+        let request = turn_start_parameters("/primary", "resumed-thread", "Continue", &[]);
+        let text = request["input"][0]["text"].as_str().unwrap();
+        assert!(text.contains("No companion repositories are selected"));
+        assert!(text.contains("supersedes any earlier companion repository list"));
+        assert!(request.get("sandboxPolicy").is_none(), "ordinary sessions retain their existing provider policy");
+    }
+
+    #[test]
+    fn managed_context_leases_release_on_confirmed_stop_even_with_a_retained_runtime_arc() {
+        let (root, lifecycle, manager, runtime) = runtime_fixture("context-stop");
+        let companion = root.join("companion");
+        std::fs::create_dir(&companion).unwrap();
+        runtime.process._context_activities.lock().unwrap().push(lifecycle.begin_repository_activity(companion.to_str().unwrap()).unwrap());
+        assert!(lifecycle.begin_removal(companion.to_str().unwrap()).is_err());
+        manager.stop_runtime(root.to_str().unwrap(), None).unwrap();
+        let released = lifecycle.begin_removal(companion.to_str().unwrap()).is_ok();
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(released, "confirmed stop must release secondary leases before returning, regardless of stale runtime Arcs");
     }
 
     #[test]
@@ -1846,6 +2379,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         command.args(["-e", "setInterval(()=>{},1000)"]).stdin(Stdio::piped());
         let mut child = crate::managed_process::spawn(&mut command).unwrap();
         let process = CodexProcess {
+            _context_activities: Mutex::new(Vec::new()),
             _reservation: Mutex::new(Some(claim)),
             stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
             child: Mutex::new(child), pending: Arc::new(Mutex::new(HashMap::new())), next_id: AtomicU64::new(1),

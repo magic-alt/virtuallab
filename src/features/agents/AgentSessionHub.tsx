@@ -6,6 +6,9 @@ import { useAgentSessionStore } from '@/stores/agentSessions';
 import { useTaskStore } from '@/stores/tasks';
 import type { RepositoryRecord, RepositorySnapshot, WorkspaceTab, WorktreeSummary } from '@/types/workbench';
 import { AgentWorkspace } from './AgentWorkspace';
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
+import { EMPTY_CONTEXT_REPOSITORIES } from '@/lib/workspaceContext';
+import { RepositoryContextSelector } from '@/features/workspace/RepositoryContextSelector';
 import './agentsHub.css';
 
 export interface AgentSessionHubProps {
@@ -69,6 +72,7 @@ export function AgentSessionHub({ repositories, activeRepository, visible, onOpe
   const showSession = useAgentsHubStore(state => state.showSession);
   const setVisibleSessionRoot = useAgentsHubStore(state => state.setVisibleSessionRoot);
   const bindings = useAgentSessionStore(state => state.bindings);
+  const repositoryContexts = useRepositoryContextStore(state => state.contexts);
   const taskState = useTaskStore();
   const native = isDesktopRuntime();
   const [revision, setRevision] = useState(0);
@@ -230,6 +234,8 @@ export function AgentSessionHub({ repositories, activeRepository, visible, onOpe
       <h3>任务工作区</h3><p>此工作区已关联任务。请从任务详情管理执行、结果和历史记录。</p>
       {boundTasks.map(task => <button key={task.id} type="button" onClick={() => onOpenTask(task.id)}>打开任务 · {task.title}</button>)}
     </section>}
+    {validWorkspace && !boundTasks.length && repository && workspace && <RepositoryContextSelector repositoryRoot={repository.path}
+      primaryWorkspaceRoot={workspace.path} repositories={repositories} active={visible} disabled={!actionsEnabled}/>}
     {validWorkspace && !boundTasks.length && !taskSourceAvailable && !manualVisible && <p role="status" className="agent-session-notice">
       {taskState.loading ? '正在读取任务归属，暂时无法开启手动会话。' : `任务来源暂不可用，无法确认此工作区是否已关联任务。${taskState.error || repositoryTaskError || '请等待任务来源恢复后重试。'}`}
     </p>}
@@ -239,6 +245,7 @@ export function AgentSessionHub({ repositories, activeRepository, visible, onOpe
       const selected = manualKey === targetKey(item);
       return <div className="agent-session-panel" key={workspaceKey(item.workspaceRoot)} hidden={!selected} aria-hidden={!selected}>
         <AgentWorkspace key={workspaceKey(item.workspaceRoot)} workspaceRoot={item.workspaceRoot} enabled={selected && actionsEnabled} visible={selected}
+          contextRepositories={repositoryContexts[workspaceKey(item.repositoryRoot)] ?? EMPTY_CONTEXT_REPOSITORIES}
           disabledReason={reading ? '正在更新工作区归属，确认完成后可继续操作。' : '正在更新任务归属，确认完成后可继续操作。'}
           validateWorkspace={() => validateSessionTarget(item)}/>
       </div>;

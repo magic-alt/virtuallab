@@ -1,0 +1,18 @@
+.repository-context { margin: 14px 0; padding: 14px 16px; border: 1px solid rgba(251,146,60,.2); border-radius: 12px; background: rgba(251,146,60,.035); color: #d6d3d1; font-size: 12px; min-width: 0; }
+.repository-context summary { cursor: pointer; color: #fed7aa; font-weight: 600; }
+.repository-context summary span { margin-left: 8px; color: #a8a29e; font-weight: 400; }
+.repository-context p { margin: 10px 0; line-height: 1.65; }
+.repository-context-primary, .repository-context-root { color: #a8a29e; overflow-wrap: anywhere; }
+.repository-context-row { display: grid; gap: 7px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.07); }
+.repository-context .repository-context-check { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
+.repository-context .repository-context-check input { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
+.repository-context .repository-context-worktree { display: grid; gap: 5px; margin: 0; }
+.repository-context-worktree select { min-width: 0; width: 100%; padding: 7px 9px; border: 1px solid rgba(255,255,255,.15); border-radius: 6px; background: #1c1917; color: #e7e5e4; }
+.repository-context-error { color: #fdba74; overflow-wrap: anywhere; }
+.repository-context button { padding: 6px 10px; border: 1px solid rgba(255,255,255,.15); border-radius: 6px; }
+.repository-context-refresh { margin-top: 12px; }
+.repository-context button:disabled { opacity: .45; }
+.repository-context-list { margin: 10px 0; font-size: 12px; color: #d6d3d1; }
+.repository-context-list ul { margin: 6px 0 0; padding-left: 18px; }
+.repository-context-list li { margin: 5px 0; overflow-wrap: anywhere; }
+.repository-context-list li span { display: block; margin-top: 3px; color: #a8a29e; font-size: 11px; }

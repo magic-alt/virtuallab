@@ -1,4 +1,5 @@
-use crate::workspace_lifecycle::{WorkspaceLifecycle, WorkspaceReservation};
+use crate::workspace_lifecycle::{RepositoryActivity, WorkspaceLifecycle, WorkspaceReservation};
+use crate::workspace_context::{acquire_context_repositories, context_instructions, ContextRepository};
 use crate::process::background_command;
 use crate::output_decode::Utf8StreamDecoder;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -16,6 +17,10 @@ use crate::run_registry::RunRegistry;
 #[cfg(all(test, windows))]
 #[path = "terminal_qualification.rs"]
 mod qualification;
+
+#[cfg(test)]
+#[path = "execution_codex_tests.rs"]
+mod codex_tests;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +104,9 @@ struct TerminalSession {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: TerminalWriter,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    // Declaration order matters: references release before the primary
+    // reservation's release observer can acknowledge terminal completion.
+    _context_activities: Vec<Arc<RepositoryActivity>>,
     _reservation: WorkspaceReservation,
 }
 
@@ -151,6 +159,180 @@ pub struct ProcessSpec {
     args: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TerminalSpawnCodexRequest {
+    id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    executable_path: Option<String>,
+    #[serde(default)]
+    context_repositories: Vec<ContextRepository>,
+}
+
+enum TerminalLaunch {
+    Shell,
+    Codex {
+        executable_path: Option<String>,
+        context_repositories: Vec<ContextRepository>,
+    },
+}
+
+fn prepare_terminal_command(
+    launch: TerminalLaunch,
+    cwd: &str,
+    lifecycle: &WorkspaceLifecycle,
+) -> Result<(CommandBuilder, Vec<Arc<RepositoryActivity>>), String> {
+    prepare_terminal_command_with_configuration_probe(launch, cwd, lifecycle, crate::agent::probe_codex_context_configuration)
+}
+
+fn prepare_terminal_command_with_configuration_probe<F>(
+    launch: TerminalLaunch,
+    cwd: &str,
+    lifecycle: &WorkspaceLifecycle,
+    probe: F,
+) -> Result<(CommandBuilder, Vec<Arc<RepositoryActivity>>), String>
+where
+    F: FnOnce(&str, &str) -> Result<crate::agent::CodexContextConfiguration, String>,
+{
+    match launch {
+        TerminalLaunch::Shell => {
+            let (shell, args) = default_shell();
+            let mut command = CommandBuilder::new(shell);
+            command.args(args);
+            configure_terminal_command(&mut command, cwd);
+            Ok((command, Vec::new()))
+        }
+        TerminalLaunch::Codex { executable_path, context_repositories } => {
+            let (references, activities) = acquire_context_repositories(cwd, &context_repositories, lifecycle)?;
+            let executable = crate::agent::selected_codex_executable(executable_path.as_deref())?;
+            #[cfg(windows)]
+            let executable = resolve_windows_codex_pty_program(&executable, std::env::consts::ARCH)?;
+            // Inspect the same executable/cwd that the PTY will use, while
+            // references remain leased. Context-free terminals retain the
+            // original launch behavior and do not need a configuration probe.
+            let configuration = if references.is_empty() { None } else { Some(probe(&executable, cwd)?) };
+            let command = codex_terminal_command(&executable, cwd, &references, configuration.as_ref())?;
+            Ok((command, activities))
+        }
+    }
+}
+
+fn codex_terminal_command(
+    executable_path: &str,
+    cwd: &str,
+    references: &[ContextRepository],
+    configuration: Option<&crate::agent::CodexContextConfiguration>,
+) -> Result<CommandBuilder, String> {
+    let configuration = if references.is_empty() {
+        None
+    } else {
+        Some(configuration.ok_or("Codex companion context requires a qualified configuration before launch")?)
+    };
+    let launcher = background_command(&executable_path);
+    let mut command = CommandBuilder::new(executable_path);
+    configure_codex_pty_environment(&mut command, &launcher);
+    if configuration.is_some() {
+        // Do not override sandbox mode or approvals: a --sandbox flag can
+        // discard configured read restrictions. These settings only narrow
+        // writes when Codex's inherited mode uses workspace-write; inherited
+        // read-only mode remains read-only. The probe rejects configurations
+        // whose restrictions this legacy settings surface cannot preserve.
+        command.args([
+            "-c", "sandbox_workspace_write.writable_roots=[]",
+            "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+            "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+        ]);
+    }
+    command.args([
+        "-c", "tui.notifications=true",
+        "-c", "tui.notification_method=osc9",
+        "-c", "tui.notification_condition=always",
+    ]);
+    if let Some(configuration) = configuration {
+        // JSON string escaping is also valid for this TOML basic-string value.
+        // Keep the whole override in one argv element; no shell parses paths
+        // or instruction text. With no positional prompt the TUI waits for the
+        // user's task instead of starting work merely because it was opened.
+        let context = context_instructions(references);
+        let instructions = match configuration.developer_instructions.as_deref().filter(|text| !text.is_empty()) {
+            Some(existing) => format!("{existing}\n\n{context}"),
+            None => context,
+        };
+        let instructions = serde_json::to_string(&instructions)
+            .map_err(|error| format!("Cannot encode Codex repository instructions: {error}"))?;
+        command.arg("-c");
+        command.arg(format!("developer_instructions={instructions}"));
+    }
+    configure_terminal_command(&mut command, cwd);
+    Ok(command)
+}
+
+fn configure_codex_pty_environment(command: &mut CommandBuilder, launcher: &Command) {
+    // Preserve the existing native adapter's GUI interpreter PATH repair
+    // (e.g. /usr/bin/env node on macOS), without copying its Windows hidden
+    // process flags into an explicitly interactive terminal.
+    for (key, value) in launcher.get_envs() {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn resolve_windows_codex_pty_program(program: &str, architecture: &str) -> Result<String, String> {
+    use std::path::Path;
+    let lower = program.to_ascii_lowercase();
+    if !lower.ends_with(".cmd") && !lower.ends_with(".bat") { return Ok(program.to_owned()); }
+    let unavailable = || format!("Cannot resolve this Codex batch launcher to a native executable: {program}. Choose the installed codex.exe in the Codex executable setting, or reinstall the standard @openai/codex npm launcher.");
+    let (triple, platform_package) = match architecture {
+        "x86_64" => ("x86_64-pc-windows-msvc", "codex-win32-x64"),
+        "aarch64" => ("aarch64-pc-windows-msvc", "codex-win32-arm64"),
+        _ => return Err(unavailable()),
+    };
+    let parent = Path::new(program).parent().ok_or_else(unavailable)?;
+    let shim = std::fs::read_to_string(program).map_err(|_| unavailable())?
+        .replace('\\', "/").to_ascii_lowercase();
+    // portable-pty uses CreateProcessW's native argv encoding. It cannot use
+    // std::process::Command's reviewed .cmd escaping, so never pass cmd /c
+    // an interpolated command. Recognize the standard global/local npm target
+    // and run only its architecture-matched native binary directly.
+    let package_root = if shim.contains("node_modules/@openai/codex/bin/codex.js\"") {
+        parent.join("node_modules/@openai/codex")
+    } else if parent.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.eq_ignore_ascii_case(".bin"))
+        && shim.contains("../@openai/codex/bin/codex.js\"") {
+        parent.parent().ok_or_else(unavailable)?.join("@openai/codex")
+    } else {
+        return Err(unavailable());
+    };
+    let package_root = std::fs::canonicalize(package_root).map_err(|_| unavailable())?;
+    let package: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(package_root.join("package.json")).map_err(|_| unavailable())?
+    ).map_err(|_| unavailable())?;
+    if package.get("name").and_then(serde_json::Value::as_str) != Some("@openai/codex")
+        || package.get("bin").and_then(|bin| bin.get("codex")).and_then(serde_json::Value::as_str) != Some("bin/codex.js")
+        || !package_root.join("bin/codex.js").is_file() {
+        return Err(unavailable());
+    }
+    let mut package_candidates = vec![package_root.join("node_modules/@openai").join(platform_package)];
+    if let Some(scope) = package_root.parent() { package_candidates.push(scope.join(platform_package)); }
+    package_candidates.push(package_root);
+    for package in package_candidates {
+        // Current npm packages use vendor/<target>/bin. Earlier releases
+        // bundled the same native binary under vendor/<target>/codex.
+        for directory in ["bin", "codex"] {
+            let binary = package.join("vendor").join(triple).join(directory).join("codex.exe");
+            if binary.is_file() {
+                let binary = std::fs::canonicalize(binary).map_err(|_| unavailable())?;
+                return binary.into_os_string().into_string().map_err(|_| unavailable());
+            }
+        }
+    }
+    Err(unavailable())
+}
+
 #[tauri::command]
 pub async fn terminal_spawn(
     app: AppHandle,
@@ -160,7 +342,28 @@ pub async fn terminal_spawn(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let manager = state.inner().clone();
+    terminal_spawn_with_launch(app, state.inner().clone(), id, cwd, cols, rows, TerminalLaunch::Shell).await
+}
+
+#[tauri::command]
+pub async fn terminal_spawn_codex(
+    app: AppHandle,
+    state: State<'_, TerminalManager>,
+    request: TerminalSpawnCodexRequest,
+) -> Result<(), String> {
+    terminal_spawn_with_launch(app, state.inner().clone(), request.id, request.cwd, request.cols, request.rows,
+        TerminalLaunch::Codex { executable_path: request.executable_path, context_repositories: request.context_repositories }).await
+}
+
+async fn terminal_spawn_with_launch(
+    app: AppHandle,
+    manager: TerminalManager,
+    id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    launch: TerminalLaunch,
+) -> Result<(), String> {
     let reservation = app.state::<WorkspaceLifecycle>().reserve_terminal(&cwd)?;
     {
         let mut pending = manager.reservations.lock().map_err(|_| "Terminal reservation lock poisoned")?;
@@ -174,7 +377,7 @@ pub async fn terminal_spawn(
     let published = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let startup_published = published.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        terminal_spawn_blocking(app, manager, id, cwd, cols, rows, reservation, startup_published)
+        terminal_spawn_blocking(app, manager, id, cwd, cols, rows, reservation, startup_published, launch)
     }).await.map_err(|error| format!("Terminal startup task failed: {error}"))
         .and_then(|result| result);
     if result.is_err() {
@@ -200,11 +403,13 @@ fn terminal_spawn_blocking(
     rows: u16,
     reservation: WorkspaceReservation,
     published: Arc<std::sync::atomic::AtomicBool>,
+    launch: TerminalLaunch,
 ) -> Result<(), String> {
     let cwd_path = std::path::Path::new(&cwd);
     if !cwd_path.is_dir() {
         return Err(format!("Terminal working directory does not exist: {cwd}"));
     }
+    let (command, context_activities) = prepare_terminal_command(launch, &cwd, app.state::<WorkspaceLifecycle>().inner())?;
 
     let mut sessions = state.sessions.lock().map_err(|_| "Terminal manager lock poisoned")?;
     if sessions.contains_key(&id) { return Err("Terminal session already exists".into()); }
@@ -220,13 +425,6 @@ fn terminal_spawn_blocking(
         })
         .map_err(|error| format!("Failed to open PTY: {error}"))?;
 
-    let (shell, shell_args) = default_shell();
-    let mut command = CommandBuilder::new(shell);
-    for arg in shell_args {
-        command.arg(arg);
-    }
-    configure_terminal_command(&mut command, &cwd);
-
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -241,7 +439,7 @@ fn terminal_spawn_blocking(
     let child = pair
         .slave
         .spawn_command(command)
-        .map_err(|error| format!("Failed to start terminal shell: {error}"))?;
+        .map_err(|error| format!("Failed to start terminal process: {error}"))?;
 
     #[allow(unused_mut)] // Unix capture failure must kill and reap the child.
     let mut child = child;
@@ -255,6 +453,7 @@ fn terminal_spawn_blocking(
         .map(|pending| pending.get(&id).copied().unwrap_or(true)).unwrap_or(true);
     let released = reservation.release_observer();
     let session = Arc::new(Mutex::new(TerminalSession {
+        _context_activities: context_activities,
         _reservation: reservation,
         cwd: cwd.clone(),
         #[cfg(unix)]
@@ -1122,7 +1321,7 @@ mod worktree_terminal_stop_tests {
                 cwd: cwd.to_string_lossy().into_owned(),
                 #[cfg(unix)]
                 process,
-                master: Some(pair.master), writer: writer.clone(), child, _reservation: reservation,
+                master: Some(pair.master), writer: writer.clone(), child, _context_activities: Vec::new(), _reservation: reservation,
             }));
             self.manager.sessions.lock().unwrap().insert(id.into(), session.clone());
             self.manager.reservations.lock().unwrap().insert(id.into(), false);

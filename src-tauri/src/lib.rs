@@ -8,6 +8,7 @@ mod task_runtime;
 mod task_execution;
 mod task_reports;
 mod workspace_lifecycle;
+mod workspace_context;
 #[cfg(test)]
 #[path = "../build_metadata_test.rs"]
 mod build_metadata_tests;
@@ -49,7 +50,7 @@ use agent_journal::{agent_journal_recent, agent_journal_recover, agent_journal_p
 use agent_cli::{agent_cli_capabilities, agent_cli_session_start, agent_cli_session_stop, agent_cli_turn_start, agent_cli_turn_interrupt, CliAgentManager};
 use build_workflows::{build_workflow_cancel, build_workflow_discover, build_workflow_import_script, build_workflow_self_update_available, build_workflow_start, BuildWorkflowManager};
 use execution::{
-    process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_stop,
+    process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_spawn_codex, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
 };
 use git::{git_cleanup_preview, git_cleanup_merged, create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, inspect_worktree_status, open_workspace_directory, repository_detach, repository_restore, remove_worktree, stop_worktree_terminals};
@@ -154,6 +155,7 @@ pub fn run() {
             stop_worktree_terminals,
             desktop_notifications::desktop_notify,
             terminal_spawn,
+            terminal_spawn_codex,
             terminal_write,
             terminal_resize,
             terminal_stop,

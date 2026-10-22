@@ -15,12 +15,19 @@ import { Button } from "@/components/ui/Button";
 import {
   terminalResize,
   terminalSpawn,
+  terminalSpawnCodex,
   terminalStop,
   terminalWrite,
 } from "@/lib/backend";
 import { cn } from "@/lib/utils";
 import { workspaceKey } from "@/lib/workspaceKey";
-import { TerminalAlertParser, classifyOsc9, MONITORED_CODEX_COMMAND } from "@/lib/terminalAlerts";
+import { TerminalAlertParser, classifyOsc9 } from "@/lib/terminalAlerts";
+import { copyContextRepositories, EMPTY_CONTEXT_REPOSITORIES } from '@/lib/workspaceContext';
+import { useRepositoryContextStore } from '@/stores/repositoryContext';
+import { useWorkbenchStore } from '@/stores/workbench';
+import { useAgentPreferences } from '@/stores/agentPreferences';
+import { ContextRepositoryList } from '@/features/workspace/RepositoryContextSelector';
+import type { ContextRepository } from '@/types/workspaceContext';
 import { publishTaskNotice, useTaskNotifications } from "@/stores/taskNotifications";
 import {
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -38,6 +45,7 @@ interface Session {
   title: string;
   status: "starting" | "running" | "stopped" | "error";
   monitoredAgent?: "codex";
+  contextRepositories?: ContextRepository[];
 }
 
 interface TerminalHandle {
@@ -50,17 +58,22 @@ export function TerminalWorkspace({
   enabled,
   visible = true,
   repositoryId = null,
+  repositoryRoot,
 }: {
   cwd: string;
   enabled: boolean;
   visible?: boolean;
   repositoryId?: string | null;
+  repositoryRoot?: string;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
   const scope = workspaceKey(cwd);
+  const ownerRoot = useWorkbenchStore(state => state.repositories.find(repository => repository.id === repositoryId)?.path ?? repositoryRoot ?? cwd);
+  const contextRepositories = useRepositoryContextStore(state => state.contexts[workspaceKey(ownerRoot)] ?? EMPTY_CONTEXT_REPOSITORIES);
+  const executablePath = useAgentPreferences(state => state.codexExecutablePath);
   const fontSize = useTerminalFontSize();
   const scrollback = useTerminalScrollback();
   const cursorBlink = useTerminalCursorBlink();
@@ -226,9 +239,11 @@ export function TerminalWorkspace({
       globalThis.crypto?.randomUUID?.() ??
       `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const title = `Terminal ${sessions.length + 1}`;
+    const selectedContext = copyContextRepositories(contextRepositories);
 
     const next: Session[] = [...sessionsRef.current, {
       id, title, status: "starting", monitoredAgent: monitoredAgent ?? undefined,
+      ...(monitoredAgent === 'codex' ? { contextRepositories: selectedContext } : {}),
     }];
     sessionsRef.current = next;
     setSessions(next);
@@ -238,7 +253,9 @@ export function TerminalWorkspace({
     setError(null);
 
     try {
-      await terminalSpawn(id, cwd, 120, 32);
+      if (monitoredAgent === 'codex') {
+        await terminalSpawnCodex({ id, cwd, cols: 120, rows: 32, executablePath: executablePath.trim() || null, contextRepositories: selectedContext });
+      } else await terminalSpawn(id, cwd, 120, 32);
       // Invoke success is an additional acknowledgement; a late reply must
       // never revive a session already stopped by a native exit event.
       setSessions((items) =>
@@ -247,10 +264,6 @@ export function TerminalWorkspace({
             ? { ...item, status: "running" } : item,
         ),
       );
-      if (monitoredAgent === "codex" &&
-          sessionsRef.current.some((item) => item.id === id && item.status !== "stopped")) {
-        await terminalWrite(id, new TextEncoder().encode(MONITORED_CODEX_COMMAND));
-      }
     } catch (err) {
       if (!sessionsRef.current.some((item) => item.id === id)) return;
       setSessions((items) =>
@@ -391,6 +404,13 @@ export function TerminalWorkspace({
         )}
       </div>
 
+      {contextRepositories.length > 0 && <div className="shrink-0 border-b border-orange-400/10 px-3 py-2 text-xs text-stone-400">
+        新 Codex 终端将引用 {contextRepositories.length} 个协作仓库；现有终端保持启动时的配置。
+      </div>}
+      {!!sessions.find(session => session.id === activeId)?.contextRepositories?.length && <details className="shrink-0 border-b border-orange-400/10 px-3 py-2 text-xs text-stone-400">
+        <summary className="cursor-pointer">当前 Codex 终端的参考工作区</summary>
+        <ContextRepositoryList references={sessions.find(session => session.id === activeId)?.contextRepositories}/>
+      </details>}
       <div className="relative min-h-0 flex-1 bg-[#090704]">
         {sessions.length === 0 ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center">

@@ -1,3 +1,5 @@
+import type { ContextRepository } from './workspaceContext';
+
 export type AgentHarnessKind = "codex" | "deepseek" | "claude" | "opencode";
 
 export interface AgentHarnessFeatures {
@@ -20,6 +22,7 @@ export interface AgentHarnessCapabilities {
 
 export interface AgentSessionBinding {
   workspaceRoot: string;
+  contextRepositories?: ContextRepository[];
   harness: AgentHarnessKind;
   threadId: string;
   createdAtMs: number;
@@ -28,6 +31,7 @@ export interface AgentSessionBinding {
 
 export interface AgentSessionStartRequest {
   workspaceRoot: string;
+  contextRepositories?: ContextRepository[];
   harness: AgentHarnessKind;
   threadId?: string | null;
   executablePath?: string | null;

@@ -59,7 +59,7 @@ impl Fixture {
             let _ = done.send(());
         });
         Self { session: TerminalSession { cwd: cwd.to_string_lossy().into_owned(), master: Some(pair.master),
-            writer, child, _reservation: reservation }, lifecycle, drained, bytes, markers, output }
+            writer, child, _context_activities: Vec::new(), _reservation: reservation }, lifecycle, drained, bytes, markers, output }
     }
     fn stop(&mut self) {
         self.session.terminate().unwrap();
