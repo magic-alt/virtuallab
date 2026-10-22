@@ -2083,7 +2083,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn integration_cancellation_stops_hook_descendants_and_preserves_partial_worktree() {
-        use std::{os::unix::fs::PermissionsExt, time::Instant};
+        use std::{cell::Cell, os::unix::fs::PermissionsExt, time::Instant};
         let repo = Fixture::new();
         let expected = head(&repo.0);
         git(&repo.0, &["switch", "-c", "integration-source"]).unwrap();
@@ -2095,16 +2095,23 @@ mod tests {
         let hook = repo.0.join(".git/hooks/pre-merge-commit");
         fs::write(&hook, "#!/bin/sh\nnode -e 'const fs=require(\"fs\");require(\"child_process\").spawn(process.execPath,[\"-e\",\"setInterval(()=>{},1000)\"],{stdio:[\"ignore\",1,2]});fs.writeFileSync(\".hook-ready\",\"ready\");setInterval(()=>{},1000)'\n").unwrap();
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-        let begin = Instant::now();
+        // Measure shutdown after cancellation is requested, excluding Git
+        // preflight and hook startup, which can be slow on a loaded runner.
+        let cancelled_at: Cell<Option<Instant>> = Cell::new(None);
         let result = integrate_candidates(&repo.0, &expected, &[source], || {
             if repo.0.join(".hook-ready").exists() {
+                if cancelled_at.get().is_none() {
+                    cancelled_at.set(Some(Instant::now()));
+                }
                 Err("cancel".into())
             } else {
                 Ok(())
             }
         });
-        assert!(result.is_err());
-        assert!(begin.elapsed().as_secs() < 15);
+        let cleanup_elapsed = cancelled_at.get().expect("hook cancellation was never requested").elapsed();
+        let error = result.expect_err("hook integration must be cancelled");
+        assert!(error.contains("Git integration cancelled"), "unexpected integration failure: {error}");
+        assert!(cleanup_elapsed < Duration::from_secs(15), "hook cancellation and descendant cleanup took {cleanup_elapsed:?}");
         assert_eq!(head(&repo.0), expected);
         assert_eq!(
             fs::read_to_string(repo.0.join("source.cpp")).unwrap(),
