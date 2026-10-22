@@ -1888,16 +1888,20 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
         }
         let writer_was_blocked = fixture.runtime.process.stdin.try_lock().is_err();
         let capacity_held_before_cancel = execution.claim("third-task").is_err();
+        // Tree-exit confirmation can itself wait three seconds, with retries
+        // under runner load. Stay well below the RPC's own deadline so a
+        // missing cancellation observer still fails, without racing cleanup.
+        let cancellation_budget = RPC_TIMEOUT / 2;
         let start = Instant::now();
         cancelled.store(true, Ordering::Release);
-        let outcome = rx.recv_timeout(Duration::from_secs(3));
+        let outcome = rx.recv_timeout(cancellation_budget);
+        let elapsed = start.elapsed();
         // Unconditionally clean up/join before assertions, including a failed
         // regression, so the test cannot leave an occupied slot or live writer.
         fixture.runtime.process.stop().unwrap();
         observer.finish().unwrap();
         let capacity_held_until_join = execution.claim("third-task").is_err();
         let stdin_released = fixture.runtime.process.stdin.try_lock().is_ok();
-        let elapsed = start.elapsed();
         release_tx.send(()).unwrap();
         writer.join().unwrap();
         assert!(
@@ -1910,7 +1914,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
             "cancel must wake a blocked RPC independently of its await"
         );
         assert!(outcome.unwrap().is_err());
-        assert!(elapsed < Duration::from_secs(3));
+        assert!(elapsed < cancellation_budget);
         assert!(stdin_released);
         assert!(!fixture.runtime.process.is_running().unwrap());
         assert!(!fixture
