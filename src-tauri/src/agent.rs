@@ -354,9 +354,12 @@ fn qualify_codex_context_configuration(config: &Value, requirements: &Value) -> 
 }
 
 pub(crate) fn probe_codex_context_configuration(executable: &str, cwd: &str) -> Result<CodexContextConfiguration, String> {
+    probe_codex_context_configuration_command(crate::execution::process_command(executable), cwd)
+}
+
+fn probe_codex_context_configuration_command(mut command: std::process::Command, cwd: &str) -> Result<CodexContextConfiguration, String> {
     // Query the selected executable before applying any permission override.
     // This starts no thread/model turn and retains no raw configuration.
-    let mut command = crate::execution::process_command(executable);
     command.args(["app-server", "--listen", "stdio://"]).current_dir(cwd)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     let mut child = crate::managed_process::spawn(&mut command)
@@ -2022,7 +2025,7 @@ reply(q,{thread:{id:'blocked-thread'}});setInterval(()=>{},1000);
 
     struct ContextProbeFixture {
         root: std::path::PathBuf,
-        executable: std::path::PathBuf,
+        node: std::path::PathBuf,
     }
 
     impl ContextProbeFixture {
@@ -2047,25 +2050,25 @@ require('readline').createInterface({{input:process.stdin}}).on('line', line => 
 }});
 "#);
             std::fs::write(root.join("fixture.cjs"), &script).unwrap();
-            #[cfg(unix)]
-            let executable = {
-                use std::os::unix::fs::PermissionsExt;
-                let file = root.join("codex");
-                std::fs::write(&file, format!("#!/usr/bin/env node\n{script}")).unwrap();
-                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
-                file
+            // Execute the installed interpreter and let it read the fixture as
+            // data. A freshly written executable can return ETXTBSY on Linux
+            // while a parallel spawn still holds an inherited write handle.
+            #[cfg(target_os = "macos")]
+            let node = crate::process::macos_cli_path("node").expect("Node fixture interpreter");
+            #[cfg(not(target_os = "macos"))]
+            let node = {
+                let directories: Vec<_> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+                let name = if cfg!(windows) { "node.exe" } else { "node" };
+                crate::cli_path::find_executable(std::path::Path::new(name), &directories)
+                    .expect("Node fixture interpreter")
             };
-            #[cfg(windows)]
-            let executable = {
-                let file = root.join("codex.cmd");
-                std::fs::write(&file, "@echo off\r\nnode \"%~dp0fixture.cjs\" %*\r\n").unwrap();
-                file
-            };
-            Self { root, executable }
+            Self { root, node: std::fs::canonicalize(node).unwrap() }
         }
         fn probe(&self) -> Result<CodexContextConfiguration, String> {
             let root = std::fs::canonicalize(&self.root).unwrap();
-            probe_codex_context_configuration(self.executable.to_str().unwrap(), root.to_str().unwrap())
+            let mut command = crate::execution::process_command(self.node.to_str().unwrap());
+            command.arg(root.join("fixture.cjs"));
+            probe_codex_context_configuration_command(command, root.to_str().unwrap())
         }
         fn assert_stopped(&self) {
             #[cfg(unix)]
@@ -2077,6 +2080,26 @@ require('readline').createInterface({{input:process.stdin}}).on('line', line => 
     }
     impl Drop for ContextProbeFixture {
         fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn codex_context_probe_fixture_tolerates_inherited_script_write_handles() {
+        let fixture = ContextProbeFixture::new(json!({"sandbox_mode":"read-only"}), Value::Null, false);
+        // A parallel spawn can inherit a fixture writer until its own exec
+        // closes CLOEXEC descriptors. Retaining writers here deterministically
+        // reproduces Linux's ETXTBSY check without scheduling-dependent forks.
+        let writers: Vec<_> = std::fs::read_dir(&fixture.root).unwrap()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_type().unwrap().is_file())
+            .map(|entry| std::fs::OpenOptions::new().write(true).open(entry.path()).unwrap())
+            .collect();
+        assert!(!writers.is_empty());
+        let result = fixture.probe();
+        drop(writers);
+        let configuration = result.expect("probe fixture scripts must be read as data, not executed from writable inodes");
+        assert_eq!(configuration.sandbox, CodexContextSandbox::ReadOnly);
+        fixture.assert_stopped();
     }
 
     #[test]
@@ -2098,12 +2121,21 @@ require('readline').createInterface({{input:process.stdin}}).on('line', line => 
 
     #[test]
     fn codex_context_probe_rejects_custom_profiles_and_unsupported_introspection_without_leaking_config() {
-        for (config, reject_method) in [
-            (json!({"default_permissions":"private-profile", "developer_instructions":"private instructions"}), false),
-            (json!({}), true),
+        for (config, reject_method, expected_error) in [
+            (
+                json!({"default_permissions":"private-profile", "developer_instructions":"private instructions"}),
+                false,
+                "Companion context is not yet qualified for named or custom Codex permission profiles. Use a context-free session, or select a supported legacy configuration explicitly.",
+            ),
+            (
+                json!({}),
+                true,
+                "Codex cannot verify companion-context permissions. Update Codex or use a context-free session.",
+            ),
         ] {
             let fixture = ContextProbeFixture::new(config, Value::Null, reject_method);
             let error = fixture.probe().unwrap_err();
+            assert_eq!(error, expected_error, "fixture must reach the intended permission rejection");
             fixture.assert_stopped();
             assert!(!error.contains("private"), "errors must report qualification reasons, never raw provider configuration or diagnostics");
         }
