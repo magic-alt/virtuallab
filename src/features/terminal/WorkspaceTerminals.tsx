@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { TerminalWorkspace } from "./TerminalWorkspace";
+import { TerminalWorkspace, type TerminalOpenRequest } from "./TerminalWorkspace";
 import { workspaceKey } from "@/lib/workspaceKey";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ interface WorkspaceTerminal {
 export function WorkspaceTerminals({
   cwd, enabled, visible, repositoryId = null,
   repositoryRoot,
+  openRequest = null,
   registeredRepositoryIds = [], retiredWorkspace = null,
 }: {
   cwd: string;
@@ -26,6 +27,7 @@ export function WorkspaceTerminals({
   visible: boolean;
   repositoryId?: string | null;
   repositoryRoot?: string;
+  openRequest?: TerminalOpenRequest | null;
   registeredRepositoryIds?: string[];
   retiredWorkspace?: { path: string; sequence: number } | null;
 }) {
@@ -40,9 +42,14 @@ export function WorkspaceTerminals({
     // Do not install two native event listeners for every workspace merely
     // visited in the sidebar. A PTY pane is created on first Terminal visit.
     if (!visible) return;
-    setWorkspaces((current) => current.some((item) => item.key === key)
-      ? current
-      : [...current, { key, cwd, enabled, repositoryId, repositoryRoot }]);
+    setWorkspaces((current) => {
+      const existing = current.find(item => item.key === key);
+      if (!existing) return [...current, { key, cwd, enabled, repositoryId, repositoryRoot }];
+      // A worktree can also be registered as a repository row. Keep its PTYs
+      // while updating the selected owner used by task actions and notices.
+      if (existing.repositoryId === repositoryId && existing.repositoryRoot === repositoryRoot) return current;
+      return current.map(item => item.key === key ? { ...item, repositoryId, repositoryRoot } : item);
+    });
   }, [key, cwd, enabled, visible, repositoryId, repositoryRoot]);
 
   useEffect(() => {
@@ -70,7 +77,8 @@ export function WorkspaceTerminals({
         data-testid="terminal-pane"
       >
         <TerminalWorkspace cwd={workspace.cwd} enabled={workspace.enabled} visible={active}
-          repositoryId={workspace.repositoryId} repositoryRoot={workspace.repositoryRoot} />
+          repositoryId={workspace.repositoryId} repositoryRoot={workspace.repositoryRoot}
+          openRequest={active ? openRequest : null} />
       </div>
     );
   });

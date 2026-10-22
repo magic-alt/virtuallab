@@ -75,6 +75,16 @@ local auto-commit, edits remain in the task worktree; without a verification Pro
 execution completion is explicitly unverified. See the [control center guide](docs/TASK_FIRST_CONTROL_CENTER.md)
 for optional verification, report history, recovery, and manual review.
 
+New task branches include a readable title and a short identity suffix. The task's
+**打开终端** action opens or focuses a terminal in that exact task worktree.
+Enable **完成后自动创建 Draft PR** when creating a task to commit, push its sealed
+candidate and open a draft after successful execution and configured checks.
+This requires authenticated GitHub CLI and Git push access; publication errors
+can be retried from the task without rerunning Codex. PR creation is opt-in and
+does not merge or grant human acceptance. **流程模板** and **高级任务** also offer
+repository-specific build, test, CI, documentation and bug investigation
+recommendations derived from actual manifests, paths and supported commands.
+
 Use **Agents Hub → 执行配置** for the shared Codex executable and Verification
 Profile library, with explicit links to Provider sessions and repository Run
 configuration. Changes affect new requests; accepted tasks keep their frozen

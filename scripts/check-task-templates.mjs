@@ -23,7 +23,9 @@ try {
   const demo = await import(pathToFileURL(join(temp,'demoContract.mjs')).href);
   const launch = await import(pathToFileURL(join(temp,'launch.mjs')).href);
   const stages = await import(pathToFileURL(join(temp,'stages.mjs')).href);
-  await check('three discoverable workflow templates', () => assert.equal(catalog.TASK_TEMPLATES.length, 3));
+  await check('repository workflows preserve generic templates and the optional example', () => {
+    assert.deepEqual(catalog.TASK_TEMPLATES.map(template => template.id), ['feature','bugfix','build','test','ci','docs','node-demo']);
+  });
   await check('every referenced skill exists', () => {
     for (const template of catalog.TASK_TEMPLATES) for(const id of template.skills) assert.ok(catalog.WORKFLOW_SKILLS.some(skill=>skill.id===id));
   });

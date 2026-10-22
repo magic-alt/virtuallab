@@ -146,7 +146,11 @@ export function observeTasks(roots: string[]): () => void {
     if (disposed || generation!==epoch) return;
     const state=useTaskStore.getState();
     if (state.observerError || state.tasks.some(task=>{
-      const attempt=task.attempts.at(-1);return !!attempt && activeAttempt(attempt.state);
+      const attempt=task.attempts.at(-1);
+      return (!!attempt && activeAttempt(attempt.state))
+        || (!!task.autoDraftPr && attempt?.state === 'succeeded' && (!task.delivery || ['pending','running'].includes(task.delivery.status)
+          || (task.delivery.status !== 'delivered' && (task.delivery.stage === 'preflight' || task.delivery.candidateSha === attempt.candidateSha)
+            && (task.delivery.attemptId !== attempt.id || task.delivery.candidateSha !== attempt.candidateSha))));
     })) void refreshTasks();
   },5000);
   void refreshTasks();

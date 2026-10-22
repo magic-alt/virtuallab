@@ -13,6 +13,8 @@ import { RepositoryContextSelector } from '@/features/workspace/RepositoryContex
 import { useRepositoryContextStore } from '@/stores/repositoryContext';
 import { contextRepositoriesKey, copyContextRepositories, EMPTY_CONTEXT_REPOSITORIES } from '@/lib/workspaceContext';
 import type { ContextRepository } from '@/types/workspaceContext';
+import { TaskDeliveryOptions } from './TaskDeliveryOptions';
+import { suggestTaskBranch } from './taskBranch';
 
 interface Props {
   repositories: RepositoryRecord[];
@@ -37,6 +39,8 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   const [profileId, setProfileId] = useState('');
   const [profile, setProfile] = useState<TaskVerificationProfile | null>(null);
   const [autoCommit, setAutoCommit] = useState(false);
+  const [autoDraftPr, setAutoDraftPr] = useState(false);
+  const [prBaseBranch, setPrBaseBranch] = useState('');
   const savedContext = useRepositoryContextStore(state => state.contexts[workspaceKey(root)] ?? EMPTY_CONTEXT_REPOSITORIES);
   const [contextOverride, setContextOverride] = useState<ContextRepository[] | null>(null);
   const contextRepositories = contextOverride ?? savedContext;
@@ -97,7 +101,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
   }, [root, registered, refreshKey, active]);
 
   const draft = () => quickTaskPlan({
-    repositoryRoot: root, headSha: snapshot?.headSha ?? '', description, scopeText, profile, autoCommit, contextRepositories,
+    repositoryRoot: root, headSha: snapshot?.headSha ?? '', description, scopeText, profile, autoCommit, autoDraftPr, prBaseBranch, contextRepositories,
   });
   const close = () => { if (!sending.current && !pending) onClose(); };
   const submit = async (event: FormEvent) => {
@@ -185,7 +189,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
     <strong>开始后自动执行</strong>
     <span>独立 Worktree · Codex · {scopeText === null ? '整个仓库' : '限定目录'}</span>
     <span>{profile ? '验证：' + profile.name : '未配置独立验证'}</span>
-    <span>{autoCommit ? '完成后本地提交' : '修改保留在任务工作区'}</span>
+    <span>{autoDraftPr ? '完成后提交并创建 Draft PR' : autoCommit ? '完成后本地提交' : '修改保留在任务工作区'}</span>
   </div>;
   const advancedButton=<button type="button" onClick={()=>onAdvanced(draft())} disabled={submitting || pending}>高级任务图 / JSON</button>;
   const content=<>
@@ -195,7 +199,7 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
       <fieldset disabled={!active || submitting || pending}>
         <div className={inline ? 'task-quick-repository-row' : undefined}>
         <label>工作仓库
-          <select value={registered ? root : ''} onChange={event => {setRoot(event.target.value);setError('');setScopeText(null);setProfileId('');setProfile(null);setAutoCommit(false);setContextOverride(null);}}>
+          <select value={registered ? root : ''} onChange={event => {setRoot(event.target.value);setError('');setScopeText(null);setProfileId('');setProfile(null);setAutoCommit(false);setAutoDraftPr(false);setPrBaseBranch('');setContextOverride(null);}}>
             {!registered && <option value="" disabled>请选择工作仓库</option>}
             {repositories.map(repo => <option key={repo.id} value={repo.path}>{repo.name} — {repo.path}</option>)}
           </select>
@@ -226,9 +230,12 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
         <div className="task-quick-suggestions" aria-label="描述示例">
           {suggestions.map(item => <button key={item} type="button" onClick={() => setDescription(item)}>{item}</button>)}
         </div>
-        <p className="task-quick-hint">自动创建 Worktree → Codex 执行 → 完成报告。Ctrl / ⌘ + Enter 开始 · {descriptionBytes} / 8192 字节{descriptionBytes > 8192 ? ' · 描述过长，请缩短' : ''}</p>
+        <p className="task-quick-hint">自动创建 Worktree → Codex 执行 → 完成报告{autoDraftPr ? ' → Draft PR' : ''}。Ctrl / ⌘ + Enter 开始 · {descriptionBytes} / 8192 字节{descriptionBytes > 8192 ? ' · 描述过长，请缩短' : ''}</p>
+        {description.trim() && <p className="task-quick-hint">任务分支：<code>{suggestTaskBranch(draft().tasks[0].title, 'preview').replace(/-[a-f0-9]{12}$/, '-…')}</code>（短后缀用于区分同名任务）</p>}
+        <TaskDeliveryOptions autoCommit={autoCommit} autoDraftPr={autoDraftPr} baseBranch={prBaseBranch}
+          onChange={value => {setAutoCommit(value.autoCommit);setAutoDraftPr(value.autoDraftPr);setPrBaseBranch(value.baseBranch);}}/>
         <details className="task-quick-advanced">
-          <summary>可选设置 · 修改范围、验证 Profile、本地提交</summary>
+          <summary>可选设置 · 修改范围、验证 Profile、执行程序</summary>
           <label>允许修改范围
             <select value={scopeText === null ? 'all' : 'custom'} onChange={event => setScopeText(event.target.value === 'all' ? null : '')}>
               <option value="all">整个仓库（默认）</option><option value="custom">只允许指定文件或目录</option>
@@ -254,8 +261,6 @@ export function TaskQuickCreate({ repositories, activeRepository, onClose, onAdv
             <input value={executablePath} onChange={event=>setExecutableOverride(event.target.value)} placeholder="自动检测本机 Codex；也可指定完整路径"/>
           </label>
           {executableOverride !== null && <button type="button" onClick={() => setExecutableOverride(null)}>使用 Hub 默认路径</button>}
-          <label className="task-checkbox"><input type="checkbox" checked={autoCommit} onChange={event => setAutoCommit(event.target.checked)}/>
-            完成后创建本地提交（不推送）</label>
           {inline && <>{preview}<div className="task-row task-quick-advanced-action">{advancedButton}</div></>}
         </details>
         {!inline && preview}

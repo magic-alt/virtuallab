@@ -233,10 +233,27 @@ fn is_merged(root: &str, sha: &str, base: &str) -> Result<bool, String> {
 }
 
 // get-url has already expanded origin's rewrite. Applying a matching rule to
-// that result again could redirect deletion to another repository.
+// that result again could redirect a native remote operation to another repository.
 fn require_unrewritten_destination(root: &str, destination: &str) -> Result<(), String> {
-    let output = background_command("git")
-        .arg("-C")
+    inspect_unrewritten_destination(root, destination, false)
+}
+
+pub(crate) fn require_unrewritten_task_destination(root: &str, destination: &str) -> Result<(), String> {
+    inspect_unrewritten_destination(root, destination, true)
+}
+
+fn inspect_unrewritten_destination(root: &str, destination: &str, isolated_task_git: bool) -> Result<(), String> {
+    let mut command = background_command("git");
+    // Match task-native Git's environment isolation. Ambient GIT_CONFIG_* or
+    // GIT_DIR must not make this qualification inspect a different rule set.
+    if isolated_task_git {
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().to_ascii_uppercase().starts_with("GIT_") {
+                command.env_remove(name);
+            }
+        }
+    }
+    let output = command.env("GIT_TERMINAL_PROMPT", "0").arg("-C")
         .arg(root)
         .args([
             "config",
@@ -249,15 +266,16 @@ fn require_unrewritten_destination(root: &str, destination: &str) -> Result<(), 
     match output.status.code() {
         Some(1) => return Ok(()),
         Some(0) => {}
-        _ => return Err("Cannot inspect Git URL rewrite configuration; refusing cleanup".into()),
+        _ => return Err("Cannot inspect Git URL rewrite configuration; refusing the remote operation".into()),
     }
+    if output.stdout.len() > 2 * 1024 * 1024 { return Err("Git URL rewrite configuration exceeds its qualification bound".into()); }
     let rules = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
     for entry in rules.split('\0').filter(|entry| !entry.is_empty()) {
         let (_, prefix) = entry
             .split_once('\n')
             .ok_or("Cannot parse Git URL rewrite configuration")?;
         if destination.starts_with(prefix) {
-            return Err("Origin destination would be rewritten again by Git; use an unambiguous origin URL before cleanup.".into());
+            return Err("Origin destination would be rewritten again by Git; use an unambiguous origin URL before the remote operation.".into());
         }
     }
     Ok(())

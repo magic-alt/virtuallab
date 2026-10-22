@@ -32,6 +32,9 @@ mod probe;
 const MAX_STEPS: usize = 12;
 const MAX_ARGS: usize = 64;
 const MAX_DISCOVERY_DIRS: usize = 180;
+const MAX_DISCOVERY_ENTRIES_PER_DIR: usize = 256;
+const MAX_DISCOVERY_ENTRIES: usize = 4096;
+const MAX_DISCOVERY_QUEUE: usize = 180;
 const MAX_CMAKE_PRESETS: usize = 16;
 const MAX_CMAKE_PRESET_FILE_BYTES: u64 = 1_048_576;
 const DEFAULT_CMAKE_BUILD_DIR: &str = "build/auto";
@@ -349,7 +352,7 @@ fn is_qt_cmake_project(root: &Path) -> bool {
     }
     // Common Qt repositories include cmake/Qt*.cmake from the root file.
     fs::read_dir(root.join("cmake")).ok().map(|entries| {
-        entries.flatten().take(24).any(|entry| {
+        entries.take(24).flatten().any(|entry| {
             entry.file_type().map(|kind| kind.is_file()).unwrap_or(false)
                 && entry.path().extension().and_then(|ext| ext.to_str()) == Some("cmake")
                 && cmake_file_uses_qt(&entry.path())
@@ -358,6 +361,17 @@ fn is_qt_cmake_project(root: &Path) -> bool {
 }
 
 fn discover(root: &Path) -> Vec<BuildSuggestion> {
+    discover_with_status(root).suggestions
+}
+
+pub(crate) struct BuildDiscovery {
+    pub(crate) suggestions: Vec<BuildSuggestion>,
+    pub(crate) limited: bool,
+}
+
+/// Shared read-only discovery; the public Run command keeps its existing array
+/// contract while automatic recommendation callers can report a partial scan.
+pub(crate) fn discover_with_status(root: &Path) -> BuildDiscovery {
     let mut found = Vec::new();
 
     let package = root.join("package.json");
@@ -394,7 +408,7 @@ fn discover(root: &Path) -> Vec<BuildSuggestion> {
         }
     }
 
-    let keil_projects = find_keil_projects(root);
+    let (keil_projects, limited) = find_keil_projects(root);
     let has_keil = !keil_projects.is_empty();
     let keil_program = if has_keil { inputs::keil_program() } else { String::new() };
     for relative in keil_projects {
@@ -441,22 +455,36 @@ fn discover(root: &Path) -> Vec<BuildSuggestion> {
         });
     }
 
-    found
+    BuildDiscovery { suggestions: found, limited }
 }
 
-fn find_keil_projects(root: &Path) -> Vec<String> {
+fn find_keil_projects(root: &Path) -> (Vec<String>, bool) {
     let mut queue = VecDeque::from([(root.to_path_buf(), 0usize)]);
     let mut projects = Vec::new();
     let mut visited = 0;
+    let mut observed_entries = 0usize;
+    let mut limited = false;
     while let Some((dir, depth)) = queue.pop_front() {
-        visited += 1;
-        if visited > MAX_DISCOVERY_DIRS || projects.len() >= 8 {
+        if visited >= MAX_DISCOVERY_DIRS || observed_entries >= MAX_DISCOVERY_ENTRIES || projects.len() >= 8 {
+            limited = true;
             break;
         }
+        visited += 1;
         let Ok(entries) = fs::read_dir(&dir) else { continue };
-        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        // Limit iterator consumption BEFORE allocation/sorting. Failed entries
+        // also consume budget; a huge or unreadable directory cannot bypass it.
+        let allowance = MAX_DISCOVERY_ENTRIES_PER_DIR.min(MAX_DISCOVERY_ENTRIES - observed_entries);
+        let mut count = 0usize;
+        let mut entries: Vec<_> = entries.take(allowance).filter_map(|entry| {
+            count += 1;
+            entry.ok()
+        }).collect();
+        observed_entries += count;
+        if count == allowance { limited = true; }
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.starts_with(".env") { continue; }
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_symlink() { continue; }
             let path = entry.path();
@@ -469,17 +497,20 @@ fn find_keil_projects(root: &Path) -> Vec<String> {
                     projects.push(relative.to_string_lossy().replace('\\', "/"));
                 }
             } else if kind.is_dir() && depth < 3 {
-                let name = entry.file_name().to_string_lossy().to_lowercase();
                 if !matches!(name.as_str(), ".git" | ".worktrees" | ".virtuallab" | "node_modules" |
                     "target" | "build" | "dist" | "vendor" | ".venv")
                 {
-                    queue.push_back((path, depth + 1));
+                    // Bound both pending memory and total admitted directories.
+                    // All callers share this policy, including background tasks.
+                    if queue.len() < MAX_DISCOVERY_QUEUE && visited + queue.len() < MAX_DISCOVERY_DIRS {
+                        queue.push_back((path, depth + 1));
+                    } else { limited = true; }
                 }
             }
-            if projects.len() >= 8 { break; }
+            if projects.len() >= 8 { limited = true; break; }
         }
     }
-    projects
+    (projects, limited)
 }
 
 fn validate_spec(spec: &BuildWorkflowSpec) -> Result<PathBuf, String> {
@@ -947,6 +978,31 @@ mod tests {
         assert_eq!(suggestions[0].name, "Keil · Firmware.uvprojx");
         assert_eq!(suggestions.len(), 1, "Keil firmware must not get a guessed host compiler");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn build_discovery_reports_directory_queue_and_cumulative_entry_limits() {
+        let directories = fixture();
+        // Below the per-directory entry limit; admitting all children would
+        // exceed the separate queue/directory allowance.
+        for index in 0..200 { fs::create_dir(directories.join(format!("child-{index:03}"))).unwrap(); }
+        let discovery = discover_with_status(&directories);
+        assert!(discovery.limited);
+        assert!(discovery.suggestions.is_empty());
+        fs::remove_dir_all(directories).unwrap();
+
+        let cumulative = fixture();
+        // Each directory remains below 256 entries and fewer than 180
+        // directories exist; only the aggregate 4096-entry budget can stop it.
+        for directory in 0..18 {
+            let child = cumulative.join(format!("child-{directory:02}"));
+            fs::create_dir(&child).unwrap();
+            for entry in 0..240 { fs::write(child.join(format!("entry-{entry:03}.txt")), "").unwrap(); }
+        }
+        let discovery = discover_with_status(&cumulative);
+        assert!(discovery.limited);
+        assert!(discovery.suggestions.is_empty());
+        fs::remove_dir_all(cumulative).unwrap();
     }
 
     #[test]

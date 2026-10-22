@@ -27,6 +27,8 @@ export function quickTaskPlan(options: {
   scopeText: string | null;
   profile: TaskVerificationProfile | null;
   autoCommit: boolean;
+  autoDraftPr?: boolean;
+  prBaseBranch?: string | null;
   contextRepositories?: ContextRepository[];
 }): TaskPlanRequest {
   const goal = options.description.trim();
@@ -42,6 +44,7 @@ export function quickTaskPlan(options: {
       dependencyKeys: [],
       profile: options.profile ? structuredClone(options.profile) : null,
       autoCommit: options.autoCommit,
+      ...(options.autoDraftPr ? { autoDraftPr: true, prBaseBranch: options.prBaseBranch?.trim() || null } : {}),
       ...(options.contextRepositories?.length ? { contextRepositories: copyContextRepositories(options.contextRepositories) } : {}),
     }],
   };

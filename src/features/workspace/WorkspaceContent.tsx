@@ -17,6 +17,7 @@ import { ProcessRunner } from "@/features/execution/ProcessRunner";
 import { ChangesReview } from "@/features/review/ChangesReview";
 import { GithubPanel } from "@/features/github/GithubPanel";
 import { WorkspaceTerminals } from "@/features/terminal/WorkspaceTerminals";
+import type { TerminalOpenRequest } from "@/features/terminal/TerminalWorkspace";
 import { RepositoryContextSelector } from './RepositoryContextSelector';
 import { isDesktopRuntime } from "@/lib/backend";
 import { workspaceKey } from "@/lib/workspaceKey";
@@ -34,6 +35,7 @@ interface Props {
   terminalRepositoryId?: string | null;
   registeredRepositoryIds?: string[];
   retiredTerminal?: { path: string; sequence: number } | null;
+  terminalOpenRequest?: TerminalOpenRequest | null;
   tab: WorkspaceTab;
   visible?: boolean;
   isPreview: boolean;
@@ -69,6 +71,7 @@ export function WorkspaceContent({
   terminalRepositoryId = null,
   registeredRepositoryIds = [],
   retiredTerminal = null,
+  terminalOpenRequest = null,
   tab,
   visible = true,
   isPreview,
@@ -169,6 +172,7 @@ export function WorkspaceContent({
           repositoryRoot={profileRepositoryRoot}
           registeredRepositoryIds={registeredRepositoryIds}
           retiredWorkspace={retiredTerminal}
+          openRequest={terminalOpenRequest}
         />
         {tab === "run" && (
           <ProcessRunner

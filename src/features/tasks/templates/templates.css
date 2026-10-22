@@ -7,6 +7,11 @@
 .task-center .task-template-notice {border-left:3px solid var(--task-accent);padding:2px 16px;background:#242a32;margin:16px 0;}
 .task-center .task-template-footnote,.task-center .task-template-validation {color:var(--task-muted);font-size:12px;margin-top:16px;}
 .task-center .task-template-library code {overflow-wrap:anywhere;}
+.task-center .task-template-card h4 {margin:0 0 8px;font-size:15px;}
+.task-center .task-template-card small {display:block;color:var(--task-muted);overflow-wrap:anywhere;}
+.task-center .task-recommendation-commands {width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;}
+.task-center .task-repository-recommendations {margin:18px 0;}
+.task-center .task-repository-recommendations h3 {margin:0;}
 .task-center .task-workflow-stages {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr));gap:10px;list-style:none;padding:0;margin:12px 0;}
 .task-center .task-workflow-stages li {min-width:0;border:1px solid var(--task-border);border-radius:8px;padding:12px;}
 .task-center .task-workflow-stages button {width:100%;display:flex;flex-direction:column;align-items:flex-start;text-align:left;background:transparent;padding:0;border:0;gap:4px;}

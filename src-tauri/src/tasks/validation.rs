@@ -454,6 +454,7 @@ pub(super) fn draft(task: &TaskDraft, root: &str) -> Result<(), String> {
     if let Some(p) = &task.profile {
         profile(p, Some(root))?;
     }
+    crate::task_delivery::validate_policy(task.auto_draft_pr, task.auto_commit, &task.kind, task.pr_base_branch.as_deref())?;
     Ok(())
 }
 pub(super) fn event_kind(kind: &str) -> Result<(), String> {
@@ -479,6 +480,7 @@ pub(super) fn event_kind(kind: &str) -> Result<(), String> {
             | "integration.confirmed"
             | "integration.failed"
             | "candidate.sealed"
+            | "delivery.updated"
     ) {
         return Err("Unknown structural task event kind.".into());
     }
@@ -494,10 +496,14 @@ pub(super) fn mutation(old: &TaskRecord, new: &TaskRecord) -> Result<(), String>
         || old.context_repositories != new.context_repositories
         || old.profile != new.profile
         || old.auto_commit != new.auto_commit
+        || old.auto_draft_pr != new.auto_draft_pr
+        || old.pr_base_branch != new.pr_base_branch
+        || old.pr_repository != new.pr_repository
         || old.created_at_ms != new.created_at_ms
     {
         return Err("Accepted plan identity and inputs are immutable.".into());
     }
+    crate::task_delivery::validate_delivery_mutation(old.delivery.as_ref(), new.delivery.as_ref())?;
     if new.attempts.len() < old.attempts.len()
         || old
             .attempts
@@ -687,6 +693,8 @@ pub(super) fn generation(g: &Generation) -> Result<(), String> {
         if let Some(p) = &task.profile {
             profile(p, None)?;
         }
+        crate::task_delivery::validate_policy(task.auto_draft_pr, task.auto_commit, &task.kind, task.pr_base_branch.as_deref())?;
+        crate::task_delivery::validate_record(task)?;
         let mut active = 0;
         for attempt in &task.attempts {
             id(&attempt.id)?;

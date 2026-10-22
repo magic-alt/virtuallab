@@ -43,6 +43,44 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window, '__TAURI_INTERNALS__'); });
 
 describe('task execution output and result report', () => {
+  it('shows PR publication failure separately and retries delivery without rerunning the agent', async () => {
+    const task = taskFixture({autoCommit:true,autoDraftPr:true,attempts:[attempt({state:'succeeded',phase:'review',candidateSha:'a'.repeat(40),endedAtMs:5})],
+      delivery:{status:'failed',attemptId:'attempt-1',candidateSha:'a'.repeat(40),repository:'owner/repo',branch:'task/fix-terminal',baseBranch:'main',pullRequestUrl:null,pullRequestNumber:null,error:'GitHub authentication required',updatedAtMs:6}});
+    select(task, '证据');
+    native.invoke.mockImplementation(async command => command === 'task_attempt_report' ? report : command === 'task_deliver_pull_request' ? task : command === 'task_list' ? [task] : command === 'task_events' ? [] : null);
+    render(<TaskDetail task={task} onOpenWorkspace={vi.fn()}/>);
+    const delivery = screen.getByRole('region', {name:'PR 提交'});
+    expect(within(delivery).getByText('GitHub authentication required')).toBeVisible();
+    expect(within(delivery).getByText('PR 提交失败')).toBeVisible();
+    await userEvent.click(within(delivery).getByRole('button', {name:'重试提交 PR'}));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith('task_deliver_pull_request', {request:{taskId:task.id}}));
+    expect(native.invoke.mock.calls.some(([name]) => ['task_start','task_retry'].includes(name))).toBe(false);
+  });
+
+  it('links the delivered PR without representing it as human acceptance', () => {
+    const task = taskFixture({autoCommit:true,autoDraftPr:true,attempts:[attempt({state:'succeeded',phase:'review',candidateSha:'a'.repeat(40),endedAtMs:5})],
+      delivery:{status:'delivered',attemptId:'attempt-1',candidateSha:'a'.repeat(40),repository:'owner/repo',branch:'task/fix-terminal',baseBranch:'main',pullRequestUrl:'https://github.com/owner/repo/pull/17',pullRequestNumber:17,error:null,updatedAtMs:6}});
+    select(task, '证据');
+    render(<TaskDetail task={task} onOpenWorkspace={vi.fn()}/>);
+    const delivery = screen.getByRole('region', {name:'PR 提交'});
+    expect(within(delivery).getByRole('link', {name:'打开 PR #17'})).toHaveAttribute('href','https://github.com/owner/repo/pull/17');
+    expect(within(delivery).queryByText('当前修订已验收')).not.toBeInTheDocument();
+    expect(within(delivery).queryByRole('button',{name:'重试提交 PR'})).not.toBeInTheDocument();
+    expect(native.invoke.mock.calls.some(([name]) => name === 'task_deliver_pull_request')).toBe(false);
+  });
+  it.each([['a'.repeat(40), '已创建草稿 PR'], ['b'.repeat(40), '先前版本已创建草稿 PR']])('keeps a completed PR receipt after a later attempt for candidate %s', (candidateSha, label) => {
+    const task = taskFixture({autoCommit:true,autoDraftPr:true,
+      attempts:[attempt({state:'succeeded',candidateSha:'a'.repeat(40)}), attempt({id:'verify-2',state:'succeeded',phase:'verification',candidateSha,endedAtMs:7})],
+      delivery:{status:'delivered',attemptId:'attempt-1',candidateSha:'a'.repeat(40),repository:'owner/repo',branch:'task/fix-terminal',baseBranch:'main',pullRequestUrl:'https://github.com/owner/repo/pull/17',pullRequestNumber:17,error:null,updatedAtMs:6}});
+    select(task, '证据');
+    render(<TaskDetail task={task} onOpenWorkspace={vi.fn()}/>);
+    const delivery = screen.getByRole('region', {name:'PR 提交'});
+    expect(within(delivery).getByText(label)).toBeVisible();
+    expect(within(delivery).getByRole('link', {name:'打开 PR #17'})).toBeVisible();
+    expect(within(delivery).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(delivery).queryByText('等待提交 PR')).not.toBeInTheDocument();
+    if (candidateSha !== 'a'.repeat(40)) expect(within(delivery).getByText(/当前结果尚未发布.*新建后续任务/)).toBeVisible();
+  });
   it('shows observed Codex output and refreshes only for the selected task and attempt', async () => {
     const task = taskFixture({ attempts: [attempt()] }); select(task);
     render(<TaskDetail task={task} onOpenWorkspace={vi.fn()} />);

@@ -24,7 +24,16 @@ export interface TaskAttempt {
 }
 export interface TaskReview {runId?: string | null; toolchainDigest?: string | null; headSha: string; inputDigest: string; profileDigest: string; approved: boolean; note: string; createdAtMs: number}
 export interface TaskAcceptance {runId?: string | null; toolchainDigest?: string | null; headSha: string; inputDigest: string; profileDigest: string; acceptedAtMs: number; acknowledgedWarnings: boolean}
+export interface TaskPrDelivery {
+  status: 'pending' | 'running' | 'failed' | 'reconcile_required' | 'delivered';
+  stage?: 'preflight' | 'push' | 'create_pr' | 'complete';
+  attemptId: string; candidateSha: string; repository: string | null;
+  branch: string | null; baseBranch: string | null; remoteBaseSha?: string | null;
+  pullRequestUrl: string | null; pullRequestNumber: number | null;
+  error: string | null; updatedAtMs: number;
+}
 export interface TaskRecord {
+  autoDraftPr?: boolean; prBaseBranch?: string | null; prRepository?: string | null; delivery?: TaskPrDelivery | null;
   contextRepositories?: ContextRepository[];
   id: string; repositoryRoot: string; title: string; goal: string; scope: string[]; baseSha: string; kind: TaskKind;
   dependencies: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean; revision: number; workspaceRoot: string | null;
@@ -34,7 +43,7 @@ export interface TaskReadiness {
   status: 'ready' | 'warning' | 'blocked' | 'unverified'; blockers: string[]; warnings: string[];
   candidateSha: string | null; reviewCurrent: boolean; acceptanceCurrent: boolean;
 }
-export interface TaskDraft {key: string; title: string; goal: string; scope: string[]; kind: TaskKind; dependencyKeys: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean; contextRepositories?: ContextRepository[]}
+export interface TaskDraft {key: string; title: string; goal: string; scope: string[]; kind: TaskKind; dependencyKeys: string[]; profile: TaskVerificationProfile | null; autoCommit: boolean; autoDraftPr?: boolean; prBaseBranch?: string | null; contextRepositories?: ContextRepository[]}
 export interface TaskPlanRequest {repositoryRoot: string; expectedHeadSha: string; tasks: TaskDraft[]}
 export interface TaskLaunchRequest {requestId: string; plan: TaskPlanRequest; executablePath: string | null}
 export interface TaskLaunchResult {task: TaskRecord; launchError: string | null}

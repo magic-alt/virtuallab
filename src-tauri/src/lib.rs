@@ -6,6 +6,9 @@ mod tasks;
 mod task_profiles;
 mod task_runtime;
 mod task_execution;
+mod task_delivery;
+mod task_naming;
+mod task_recommendations;
 mod task_reports;
 mod workspace_lifecycle;
 mod workspace_context;
@@ -115,6 +118,8 @@ pub fn run() {
             tasks::task_events,
             tasks::task_accept_plan,
             task_execution::task_launch,
+            task_delivery::task_deliver_pull_request,
+            task_recommendations::task_recommendation_context,
             task_reports::task_attempt_report,
             task_execution::task_prepare_workspace,
             task_execution::task_reconcile_workspace,

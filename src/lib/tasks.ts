@@ -30,6 +30,7 @@ export const startTask = (taskId: string, executablePath: string | null = null) 
 export const cancelTask = (taskId: string) => query<TaskRecord>('task_cancel', { request: { taskId } });
 export const retryTask = (taskId: string, executablePath: string | null = null) => query<TaskRecord>('task_retry', { request: { taskId, executablePath } });
 export const verifyTask = (taskId: string) => query<TaskRecord>('task_verify', { request: { taskId } });
+export const deliverTaskPullRequest = (taskId: string) => query<TaskRecord>('task_deliver_pull_request', { request: { taskId } });
 export const reviewTask = (request: TaskReviewRequest) => query<TaskRecord>('task_review', { request });
 export const acceptTaskResult = (request: TaskAcceptanceRequest) => query<TaskRecord>('task_accept_result', { request });
 export const previewTaskIntegration = (taskId: string) => query<IntegrationPreview>('task_integration_preview', { request: { taskId } });

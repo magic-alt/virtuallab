@@ -53,18 +53,28 @@ interface TerminalHandle {
   fit: FitAddon;
 }
 
+/** A user action requests one live shell; ordinary tab visits remain passive. */
+export interface TerminalOpenRequest {
+  sequence: number;
+  workspaceRoot: string;
+  repositoryId: string;
+  isCurrent: () => boolean;
+}
+
 export function TerminalWorkspace({
   cwd,
   enabled,
   visible = true,
   repositoryId = null,
   repositoryRoot,
+  openRequest = null,
 }: {
   cwd: string;
   enabled: boolean;
   visible?: boolean;
   repositoryId?: string | null;
   repositoryRoot?: string;
+  openRequest?: TerminalOpenRequest | null;
 }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -82,15 +92,18 @@ export function TerminalWorkspace({
   const sessionsRef = useRef<Session[]>([]);
   const visibleRef = useRef(visible);
   const activeIdRef = useRef(activeId);
+  const notificationOwner = useRef({ workspaceRoot: cwd, repositoryId });
   const parsers = useRef(new Map<string, TerminalAlertParser>());
   const lastBellAt = useRef(new Map<string, number>());
   const lastOsc = useRef(new Map<string, { message: string; at: number }>());
   const alertSequence = useRef(0);
+  const handledOpenRequest = useRef<number | null>(null);
   const target = useTaskNotifications((state) => state.terminalTarget);
   const consumeTarget = useTaskNotifications((state) => state.consumeTerminalTarget);
   sessionsRef.current = sessions;
   visibleRef.current = visible;
   activeIdRef.current = activeId;
+  notificationOwner.current = { workspaceRoot: cwd, repositoryId };
 
   useEffect(() => {
     if (!visible || !target || workspaceKey(target.workspaceRoot) !== scope) return;
@@ -126,7 +139,7 @@ export function TerminalWorkspace({
                 lastBellAt.current.set(payload.id, now);
                 publishTaskNotice({
                   id: "terminal:" + payload.id + ":bell:" + (++alertSequence.current),
-                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd, repositoryId,
+                  source: "terminal", terminalId: payload.id, ...notificationOwner.current,
                   title: "Terminal needs attention",
                   detail: session.title + " sent an alert. Open Terminal to review.",
                   severity: "attention",
@@ -140,7 +153,7 @@ export function TerminalWorkspace({
                 const kind = session.monitoredAgent ? classifyOsc9(signal.message) : "attention";
                 publishTaskNotice({
                   id: "terminal:" + payload.id + ":osc9:" + (++alertSequence.current),
-                  source: "terminal", terminalId: payload.id, workspaceRoot: cwd, repositoryId,
+                  source: "terminal", terminalId: payload.id, ...notificationOwner.current,
                   title: session.monitoredAgent === "codex"
                     ? (kind === "complete" ? "Codex task completed" : "Codex needs attention")
                     : "Terminal notification",
@@ -227,18 +240,19 @@ export function TerminalWorkspace({
     parsers.current.clear();
     lastBellAt.current.clear();
     lastOsc.current.clear();
+    sessionsRef.current = [];
     setSessions([]);
     setActiveId(null);
     setError(null);
   }, [scope]);
 
-  const start = async (monitoredAgent: "codex" | null = null) => {
+  const start = useCallback(async (monitoredAgent: "codex" | null = null) => {
     if (!enabled || !listenersReady || sessionsRef.current.length >= 8) return;
 
     const id =
       globalThis.crypto?.randomUUID?.() ??
       `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const title = `Terminal ${sessions.length + 1}`;
+    const title = `Terminal ${sessionsRef.current.length + 1}`;
     const selectedContext = copyContextRepositories(contextRepositories);
 
     const next: Session[] = [...sessionsRef.current, {
@@ -274,7 +288,27 @@ export function TerminalWorkspace({
       );
       setError(err instanceof Error ? err.message : String(err));
     }
-  };
+  }, [enabled, listenersReady, contextRepositories, executablePath, cwd]);
+
+  useEffect(() => {
+    if (!visible || !enabled || !listenersReady || !openRequest ||
+        handledOpenRequest.current === openRequest.sequence ||
+        openRequest.repositoryId !== repositoryId || workspaceKey(openRequest.workspaceRoot) !== scope) return;
+    // Claim before starting: listener readiness and React rerenders can revisit
+    // this effect while terminal_spawn is still awaiting its acknowledgement.
+    handledOpenRequest.current = openRequest.sequence;
+    if (!openRequest.isCurrent()) return;
+    const live = sessionsRef.current.filter(session => session.status === "running" || session.status === "starting");
+    const existing = live.find(session => session.id === activeIdRef.current) ?? live[0];
+    if (existing) {
+      setActiveId(existing.id);
+      handles.current.get(existing.id)?.terminal.focus();
+    } else if (sessionsRef.current.length >= 8) {
+      setError("Close a stopped terminal before opening another shell (maximum 8 terminal tabs).");
+    } else {
+      void start();
+    }
+  }, [visible, enabled, listenersReady, openRequest, repositoryId, scope, start]);
 
   const stop = async (id: string) => {
     try {

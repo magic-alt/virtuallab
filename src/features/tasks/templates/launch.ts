@@ -20,7 +20,7 @@ export async function launchTemplate(request: TaskPlanRequest, options: Template
   };
   guard();
   if (request.tasks.length !== 1) throw new Error('模板启动只接受一个已确认的任务。');
-  if (options.run && (!options.branch.trim() || !request.tasks[0].profile)) throw new Error('运行前需要分支名和验证 Profile。');
+  if (options.run && !options.branch.trim()) throw new Error('运行前需要分支名。');
   ports.onPhase?.('plan');
   const records = await ports.accept(request);
   if (records.length !== 1 || !records[0]?.id) throw new Error('Native 未返回唯一任务；请刷新列表核对，不要重复创建。');

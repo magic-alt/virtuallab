@@ -411,6 +411,71 @@ blockers such as an absent Profile. A previous implementation report can accompa
 an independent verification Attempt; it cannot replace the result of a new
 implementation retry that failed before provider startup.
 
+**Task branch names and explicit terminal opening (2026-10-22).** Newly prepared
+task branches use `task/<title-slug>-<12-hex-suffix>`. The slug preserves bounded
+Unicode letters/numbers; a deterministic task-ID suffix separates repeated titles.
+Native launch and the manual/template preview share this contract. Task IDs and
+existing branch names remain stable; an explicitly edited template branch is retained.
+
+Task detail's **打开终端** carries a one-shot `TerminalOpenRequest` through the
+persistent shell and workspace host. The shell first re-inspects the task's exact
+registered worktree and checks the owning repository/navigation generation. Once
+terminal listeners are ready, the request focuses an existing starting/running PTY
+or invokes the existing typed `terminal_spawn` command. A consumed sequence cannot
+spawn again on rerender; a superseded navigation cannot start a shell in another
+workspace. A stopped PTY does not prevent a new session. Ordinary tab selection and
+notification navigation remain passive, and retained sessions keep their identity.
+
+**Optional automatic Draft PR delivery.** `TaskDraft` and `TaskRecord` carry
+`autoDraftPr` (default false) and an optional `prBaseBranch`. Acceptance requires
+local auto-commit and an implementation task; Native pins `prRepository` from the
+selected repository's qualified GitHub origin. Legacy request serialization omits
+the default policy fields so previously accepted launch digests remain recoverable.
+Quick creation, template launch and the advanced wizard expose the same policy.
+It is frozen with the accepted task, and repository changes clear draft consent.
+
+`task_delivery.rs` owns publication after a successful sealed candidate. The worker
+retains its workspace activity and execution slot through delivery; the explicit
+`task_deliver_pull_request` recovery command acquires the same exclusion without
+rerunning the Agent. It rechecks the prepared worktree/branch, pinned origin,
+candidate HEAD, clean qualified inputs, accepted scope against both the task base
+and PR base, and current native evidence when a Profile was configured. A task
+without a Profile can publish a Draft clearly marked unverified. Review and human
+acceptance remain independent facts.
+
+Delivery uses structured Git/`gh api` arguments through managed native processes.
+It pushes the exact candidate SHA with a create-only branch lease that cannot
+overwrite an existing remote branch, then creates a Draft against the selected or
+default base. It does not create forks implicitly. The bounded PR body identifies
+the task goal, scope, candidate and verification state. It never merges a PR.
+A separate durable `TaskPrDelivery` receipt records attempt/candidate, target,
+base revision, stage, status, remote URL/number and error; delivery failure does
+not change a successful execution Attempt into a failure.
+
+Write intentions are persisted before push and PR creation. Recovery queries
+remote state and accepts only the exact repository/head/base/candidate and task
+marker. An unknown PR-create outcome is not replayed when a matching PR cannot be
+observed. Restart changes unfinished delivery to `reconcile_required`; it does not
+repeat external writes automatically. A delivered receipt remains attached to its
+candidate after later verification. A different subsequent candidate requires a
+follow-up task, and the UI keeps the original PR link without claiming the newer
+code was published. The task observer also polls unsettled delivery after provider
+completion so lost delivery events cannot strand the UI.
+
+**Repository task recommendations.** Read-only `task_recommendation_context`
+returns bounded manifest/path metadata, actual declared npm/root Cargo checks,
+existing Run recipes and discovery limitations. It does not execute scripts or
+read environment-secret files; symlink components and secret-named paths are
+excluded. Typed `src/lib/taskRecommendations.ts` bridges this data to deterministic
+frontend recommendations for build, regression tests, CI, documentation and bug
+investigation. Saved global Profiles are recommended only when commands and paths
+match the inspected repository. Generated Profiles use supported executable/argv
+vectors, while unsupported CMake/Keil or nested Cargo cases retain explicit
+limitations instead of invented qualification. Selection copies an editable
+goal/scope/Profile snapshot into the chosen repository's draft. Stale responses
+cannot cross repository selections, and merely showing recommendations starts no
+work. The existing static workflow methods remain available.
+
 The launch command rejects with `{requestId, acceptance, message}`. Only
 `acceptance: 'rejected'` proves the request was durably closed under the same
 acceptance mutex and cannot later create work. Closed request IDs survive restart

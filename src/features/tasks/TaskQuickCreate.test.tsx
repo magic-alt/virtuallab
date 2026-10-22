@@ -42,6 +42,36 @@ beforeEach(() => {
 afterEach(() => { Reflect.deleteProperty(window,'__TAURI_INTERNALS__'); });
 
 describe('natural-language task creation', () => {
+  it('sends explicit automatic draft PR consent with local sealing and the chosen base', async () => {
+    const props = opening();
+    render(<TaskQuickCreate {...props}/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), '修复终端启动');
+    const publish = screen.getByRole('checkbox', {name:'完成后自动创建 Draft PR'});
+    expect(publish).not.toBeChecked();
+    await userEvent.click(publish);
+    expect(screen.getByRole('checkbox', {name:/完成后创建本地提交/})).toBeChecked();
+    await userEvent.type(screen.getByLabelText('PR 目标分支（可选）'), 'develop');
+    await userEvent.click(screen.getByRole('button', {name:'开始任务'}));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith('task_launch', {request:expect.objectContaining({
+      plan:expect.objectContaining({tasks:[expect.objectContaining({autoCommit:true,autoDraftPr:true,prBaseBranch:'develop'})]})
+    })}));
+  });
+  it('clears publication consent and target when the selected repository changes', async () => {
+    const props = opening();
+    render(<TaskQuickCreate {...props}/>);
+    await screen.findByText(headA.slice(0, 12));
+    await userEvent.type(screen.getByLabelText('你希望 Agent 完成什么？'), '修复问题');
+    await userEvent.click(screen.getByRole('checkbox', {name:'完成后自动创建 Draft PR'}));
+    await userEvent.type(screen.getByLabelText('PR 目标分支（可选）'), 'develop');
+    await userEvent.selectOptions(screen.getByLabelText('工作仓库'), b.path);
+    await screen.findByText(headB.slice(0, 12));
+    expect(screen.getByRole('checkbox', {name:'完成后自动创建 Draft PR'})).not.toBeChecked();
+    await userEvent.click(screen.getByRole('button', {name:'高级任务图 / JSON'}));
+    expect(props.onAdvanced).toHaveBeenCalledWith(expect.objectContaining({tasks:[expect.objectContaining({autoCommit:false})]}));
+    expect(props.onAdvanced.mock.calls[0][0].tasks[0].autoDraftPr).toBeFalsy();
+    expect(props.onAdvanced.mock.calls[0][0].tasks[0].prBaseBranch).toBeFalsy();
+  });
   it('retains the original companion worktree on an uncertain launch retry after the repository default changes', async () => {
     const originalRefs = [{ repositoryRoot: b.path, workspaceRoot: '/linked companion' }];
     useRepositoryContextStore.getState().setContextRepositories(a.path, originalRefs);

@@ -503,6 +503,9 @@ impl TaskManager {
                 }
                 dependencies.push(dependency);
             }
+            let pr_repository = if draft.auto_draft_pr {
+                Some(crate::task_delivery::approved_repository(Path::new(&root))?)
+            } else { None };
             records.push(TaskRecord {
                 id: keys[&draft.key].clone(),
                 repository_root: root.clone(),
@@ -515,6 +518,10 @@ impl TaskManager {
                 context_repositories: draft.context_repositories,
                 profile: draft.profile,
                 auto_commit: draft.auto_commit,
+                auto_draft_pr: draft.auto_draft_pr,
+                pr_base_branch: draft.pr_base_branch,
+                pr_repository,
+                delivery: None,
                 revision: 1,
                 workspace_root: None,
                 attempts: vec![],
@@ -546,6 +553,7 @@ impl TaskManager {
         let mut next = state.clone();
         let timestamp = now_ms();
         let mut interrupted = Vec::new();
+        let mut recovered_deliveries = Vec::new();
         for task in &mut next.tasks {
             let mut changed = false;
             for attempt in &mut task.attempts {
@@ -558,6 +566,13 @@ impl TaskManager {
                     changed = true;
                 }
             }
+            if let Some(delivery) = task.delivery.as_mut().filter(|delivery| delivery.status == "running") {
+                delivery.status = "reconcile_required".into();
+                delivery.error = Some("Application restarted during PR delivery. Retry observes the saved remote target and existing PR before any further write.".into());
+                delivery.updated_at_ms = timestamp.max(delivery.updated_at_ms);
+                recovered_deliveries.push(task.id.clone());
+                changed = true;
+            }
             if changed {
                 task.revision = task
                     .revision
@@ -566,11 +581,14 @@ impl TaskManager {
                 task.updated_at_ms = timestamp.max(task.updated_at_ms);
             }
         }
-        if interrupted.is_empty() {
+        if interrupted.is_empty() && recovered_deliveries.is_empty() {
             return Ok(());
         }
         for (task, attempt) in interrupted {
             append_event(&mut next, &task, Some(&attempt), "attempt.interrupted")?;
+        }
+        for task in recovered_deliveries {
+            append_event(&mut next, &task, None, "delivery.updated")?;
         }
         validation::generation(&next)?;
         persist(&self.path, &next)?;

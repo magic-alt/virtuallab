@@ -39,6 +39,12 @@ beforeEach(()=>{
 afterEach(()=>{Reflect.deleteProperty(window,'__TAURI_INTERNALS__');});
 async function openTask(){await userEvent.click(await screen.findByRole('button',{name:'修复解析器'}));}
 describe('task control center user flows',()=>{
+  it('suggests a readable task branch that keeps the Chinese title', async () => {
+    tasks = [taskFixture({workspaceRoot:null,title:'修复终端启动',id:'t-18e0def06d6ab748-e37c-1'})];
+    render(<Harness/>);
+    await userEvent.click(await screen.findByRole('button',{name:'修复终端启动'}));
+    expect((screen.getByLabelText('工作区分支') as HTMLInputElement).value).toMatch(/^task\/修复终端启动-[a-f0-9]{12}$/);
+  });
   it('suspends hidden prompt inspection while retaining its draft across workspace navigation', async () => {
     const page = render(<Harness view="home" visible={false} />);
     await screen.findByRole('button', { name: '修复解析器' });
@@ -163,7 +169,7 @@ describe('task control center user flows',()=>{
     expect(screen.getByRole('region',{name:'工作任务'})).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button',{name:'高级任务图 / JSON'}));
     const wizard=screen.getByRole('dialog',{name:'创建任务计划'});
-    expect(within(wizard).getByRole('button',{name:'AI 生成计划'})).toBeDisabled();
+    expect(within(wizard).getByRole('region',{name:'当前仓库推荐'})).toBeVisible();
     await userEvent.type(within(wizard).getByLabelText('计划标题'),'支持新功能');
     await userEvent.type(within(wizard).getByLabelText('目标'),'完成输入校验');
     await userEvent.click(within(wizard).getByRole('button',{name:'读取当前 HEAD'}));
@@ -302,7 +308,7 @@ describe('task control center user flows',()=>{
     await userEvent.type(screen.getByLabelText('工作区路径（可选）'),'/work/corrected');
     await userEvent.click(screen.getByRole('button',{name:'创建任务工作区'}));
     expect(await screen.findByText('/work/corrected')).toBeVisible();
-    expect(native.invoke.mock.calls.filter(([command])=>command==='task_prepare_workspace')).toEqual([['task_prepare_workspace',{request:{taskId:'task-1',branch:'task/task-1',targetPath:'/work/corrected'}}]]);
+    expect(native.invoke.mock.calls.filter(([command])=>command==='task_prepare_workspace')).toEqual([['task_prepare_workspace',{request:{taskId:'task-1',branch:expect.stringMatching(/^task\/修复解析器-[a-f0-9]{12}$/),targetPath:'/work/corrected'}}]]);
     expect(native.invoke.mock.calls.some(([command])=>['task_start','task_launch'].includes(command))).toBe(false);
   });
   it('keeps explicit creation reachable after remounting a retired preparation with its durable launch error', async () => {

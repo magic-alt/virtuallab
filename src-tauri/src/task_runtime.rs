@@ -507,6 +507,43 @@ fn complete_readiness(
     result
 }
 
+/// Draft PR publication checks native evidence without granting review or
+/// acceptance. Human rejection, stale inputs and failed formal gates still stop
+/// publication; tasks without a profile are explicitly described as unverified.
+pub(crate) fn validate_pr_verification(app: &AppHandle, manager: &TaskManager, task: &TaskRecord) -> Result<(), String> {
+    if task.profile.is_none() { return Ok(()); }
+    qualify_pr_evidence(task, observation(app, manager, task))?;
+    if !task.dependencies.is_empty() {
+        let attempt = task.attempts.last().ok_or("Task has no completed attempt")?;
+        let evidence = attempt.evidence.as_ref().ok_or("Formal evidence is missing")?;
+        let commits = prerequisites(app, task)?;
+        require_fixed_lineage(&export_lineage(manager, &task.id, &attempt.id, evidence), &commits)?;
+    }
+    Ok(())
+}
+
+fn qualify_pr_evidence(task: &TaskRecord, observed: Observation) -> Result<(), String> {
+    let Some(profile) = task.profile.as_ref() else { return Ok(()); };
+    let attempt = task.attempts.last().ok_or("Task has no completed attempt")?;
+    if attempt.state != "succeeded" || attempt.ended_at_ms.is_none() {
+        return Err("Formal verification has not completed successfully".into());
+    }
+    let evidence = attempt.evidence.as_ref().ok_or("Configured formal verification has no evidence")?;
+    let assessment = assess_checks(profile, &evidence.checks);
+    if evidence.status != "pass" || !assessment.blocked.is_empty() || !assessment.missing.is_empty() {
+        return Err("Automatic draft PR requires successful formal verification and every required gate to pass".into());
+    }
+    if candidate_rejected(task, evidence) { return Err("The current candidate was rejected in human review".into()); }
+    if let Some(error) = observed.integrity_error.or(observed.provenance_error) { return Err(error); }
+    if !observed.source.is_some_and(|source| source.clean && source.head_sha == evidence.head_sha && source.digest == evidence.input_digest)
+        || attempt.candidate_sha.as_deref() != Some(&evidence.head_sha)
+        || observed.profile_digest != evidence.profile_digest
+        || observed.toolchain_digest.as_deref() != Some(&evidence.toolchain_digest) {
+        return Err("Formal verification no longer matches the exact candidate, inputs, profile and toolchain".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn task_readiness(
     app: AppHandle,
@@ -1813,5 +1850,30 @@ mod tests {
         runtime.insert(preview).unwrap();
         assert!(runtime.take("once", 9).is_ok());
         assert!(runtime.take("once", 9).is_err());
+    }
+
+    #[test]
+    fn draft_pr_formal_gate_requires_successful_current_evidence_without_claiming_human_acceptance() {
+        let mut record = task();
+        record.review = None;
+        record.acceptance = None;
+        assert!(qualify_pr_evidence(&record, observation()).is_ok());
+        for failure in ["runner", "gate", "missing", "stale", "rejected", "interrupted"] {
+            let mut changed = record.clone();
+            let mut current = observation();
+            match failure {
+                "runner" => changed.attempts[0].evidence.as_mut().unwrap().status = "fail".into(),
+                "gate" => changed.attempts[0].evidence.as_mut().unwrap().checks[0]["status"] = json!("fail"),
+                "missing" => changed.attempts[0].evidence = None,
+                "stale" => current.provenance_error = Some("source changed".into()),
+                "rejected" => { let mut rejected = task().review.unwrap(); rejected.approved = false; changed.review = Some(rejected); }
+                _ => changed.attempts[0].state = "interrupted".into(),
+            }
+            assert!(qualify_pr_evidence(&changed, current).is_err(), "{failure}");
+        }
+        record.profile = None;
+        record.attempts[0].evidence = None;
+        assert!(qualify_pr_evidence(&record, observation()).is_ok());
+        assert!(record.review.is_none() && record.acceptance.is_none());
     }
 }

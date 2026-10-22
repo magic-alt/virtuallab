@@ -777,7 +777,8 @@ pub(crate) async fn task_launch(app: AppHandle, request: TaskLaunchRequest) -> R
     publish(&app, &manager);
     let task_id = accepted.task.id.clone();
     let outcome = async {
-        let (_prepared, _workspace_activity) = prepare_workspace_retained(app.clone(), PrepareWorkspaceRequest { task_id: task_id.clone(), branch: format!("task/{task_id}"), target_path: None }).await?;
+        let branch = crate::task_naming::task_branch_name(&accepted.task.title, &task_id);
+        let (_prepared, _workspace_activity) = prepare_workspace_retained(app.clone(), PrepareWorkspaceRequest { task_id: task_id.clone(), branch, target_path: None }).await?;
         // Keep the creation lease until enqueue has acquired its own target
         // activity. A separate path-based acquisition after prepare is too late.
         task_start(app.clone(), StartRequest { task_id: task_id.clone(), executable_path: request.executable_path })
@@ -1099,6 +1100,24 @@ fn read_preparation(manager: &TaskManager, id: &str) -> Result<PreparationIntent
     serde_json::from_slice(&bytes).map_err(|_| {
         "Preparation intent is incompatible or corrupt; manual reconciliation required".into()
     })
+}
+
+/// Delivery may publish only the branch from native's durable worktree intent.
+/// Observing whichever branch happens to be checked out is not authorization.
+pub(crate) fn delivery_branch(manager: &TaskManager, task: &TaskRecord) -> Result<String, String> {
+    let intent = read_preparation(manager, &task.id)?;
+    if intent.schema_version != 1 || intent.task_id != task.id || intent.base_sha != task.base_sha
+        || crate::workspace_identity::key(&intent.repository_root) != crate::workspace_identity::key(&task.repository_root) {
+        return Err("PR delivery preparation intent does not match the approved task".into());
+    }
+    let recorded = intent.target_path.as_deref().ok_or("PR delivery requires an exact retained worktree target")?;
+    let bound = task.workspace_root.as_deref().ok_or("Task worktree is not bound")?;
+    if fs::canonicalize(recorded).map_err(|_| "Prepared task worktree is unavailable")?
+        != fs::canonicalize(bound).map_err(|_| "Bound task worktree is unavailable")? {
+        return Err("Task worktree differs from its retained preparation target".into());
+    }
+    validate_branch(Path::new(&task.repository_root), &intent.branch)?;
+    Ok(intent.branch)
 }
 
 fn mark_preparation_failed(manager: &TaskManager, id: &str) -> Result<(), String> {
@@ -1569,7 +1588,7 @@ fn update_attempt(
     Ok(updated)
 }
 
-fn validate_scope(
+pub(crate) fn validate_scope(
     root: &Path,
     base: &str,
     candidate: &str,
@@ -2084,6 +2103,7 @@ async fn implement(app: &AppHandle, queued: &Queued, slot: &ExecutionSlot) -> Re
 async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
     let result = implement(&app, &queued, &slot).await;
     let cancelled = slot.is_cancelled();
+    let execution_succeeded = result.is_ok() && !cancelled;
     if result.is_err() || cancelled {
         // A task report is explicitly user-facing. Retain the actual bounded
         // native/provider reason, while the general AgentJournal remains metadata-only.
@@ -2103,6 +2123,11 @@ async fn worker(app: AppHandle, queued: Queued, slot: ExecutionSlot) {
         if let Some(attempt) = task.attempts.last().filter(|attempt| attempt.id == queued.attempt_id) {
             let _ = crate::task_reports::update(&app, &queued.task_id, &queued.attempt_id, |report| report.finish(&attempt.state, attempt.failure.as_deref()));
         }
+    }
+    if execution_succeeded {
+        // Delivery has a separate durable outcome. It must never turn a sealed,
+        // successful execution into a failed attempt or rerun the provider.
+        let _ = crate::task_delivery::deliver_automatically(app.clone(), queued.task_id.clone()).await;
     }
     let execution = app.state::<TaskExecution>().inner().clone();
     // implement has observed provider/verification shutdown, and terminal
@@ -2433,6 +2458,8 @@ mod review_tests {
                         context_repositories: vec![],
                         profile: None,
                         auto_commit: true,
+                        auto_draft_pr: false,
+                        pr_base_branch: None,
                     }],
                 })
                 .unwrap()

@@ -5,6 +5,13 @@ import {newProfile} from '@/features/task-profiles/profileModel';
 import type {TaskAttempt} from '@/types/tasks';
 const attempt=(state:TaskAttempt['state']):TaskAttempt=>({id:'a',state,phase:'implementation',candidateSha:null,failure:null,startedAtMs:1,endedAtMs:null,evidence:null});
 describe('native-derived task guidance',()=>{
+ it('routes PR delivery failure to the same task without reclassifying execution',()=>{
+  const task=taskFixture({autoCommit:true,autoDraftPr:true,attempts:[{...attempt('succeeded'),candidateSha:'a'.repeat(40)}],
+   delivery:{status:'failed',attemptId:'a',candidateSha:'a'.repeat(40),repository:'owner/repo',branch:'task/fix',baseBranch:'main',pullRequestUrl:null,pullRequestNumber:null,error:'Network unavailable',updatedAtMs:3}});
+  expect(nextTaskStep(task).label).toBe('恢复 PR 提交');
+  expect(nextTaskStep(task).tab).toBe('证据');
+  expect(taskQueues([task],{}).failedChecks).toEqual([]);
+ });
  it('prioritizes active/stopping work, missing configuration and explicit preparation',()=>{
   expect(nextTaskStep(taskFixture({attempts:[attempt('stopping')]})).tab).toBe('执行');
   expect(nextTaskStep(taskFixture({profile:newProfile(),workspaceRoot:null})).tab).toBe('概览');
