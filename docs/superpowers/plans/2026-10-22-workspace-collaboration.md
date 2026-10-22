@@ -43,7 +43,7 @@
 - [x] Test old record compatibility and snapshot retention, invalid references and prepared-worktree context propagation.
 - [x] Update architecture/user documentation and run frontend/Rust checks and UI inspection.
 - [x] Independently review the resulting branch and resolve material findings.
-- [ ] Commit and open a reviewable pull request against current main; platform CI remains the integration gate.
+- [x] Commit and open a reviewable pull request against current main: [PR #92](https://github.com/magic-alt/virtuallab/pull/92). Platform CI remains the integration gate.
 
 ## Verification record
 
