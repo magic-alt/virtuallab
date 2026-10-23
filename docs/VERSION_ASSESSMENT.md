@@ -1,15 +1,16 @@
 # Application version assessment
 
-Version: 0.5.11 → 0.5.12 (patch).
+Version: 0.5.12 → 0.5.13 (patch).
 
-Baseline commit: a0622e07dc085e1be9c8f6b81a8ce712f40ca7f0
-Assessed main commit: 5570ad1f7e54543e3c455fa0c634b0a6f1eddc9d
+Baseline commit: 40440cddd41ea6d9fd9b188d149a77c75f2a404d
+Assessed main commit: dd2f0c2b0dda6ef8ffd6b9f7249baf2a7bfaf9e6
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #92 — feat\(workspaces\): 打通协作仓库上下文与 Agents Hub (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #93 — fix\(workspaces\): preserve whitespace in companion paths (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #94 — fix\(agents\): improve task branches, terminals, PR delivery and templates (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 
