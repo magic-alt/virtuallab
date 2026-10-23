@@ -1,16 +1,15 @@
 # Application version assessment
 
-Version: 0.5.12 → 0.5.13 (patch).
+Version: 0.5.13 → 0.5.14 (patch).
 
-Baseline commit: 40440cddd41ea6d9fd9b188d149a77c75f2a404d
-Assessed main commit: dd2f0c2b0dda6ef8ffd6b9f7249baf2a7bfaf9e6
+Baseline commit: eadc634a4af1880ac891ac474be97b1d4f7d629b
+Assessed main commit: d089a3fbf9e9b6cc4a0205c13b2ab6dbc47610e1
 
 A patch may be synchronized as build metadata; milestones remain proposals. This does not authorize a tag, Release, deployment or hardware operation.
 
 ## Merged PRs
 
-- #93 — fix\(workspaces\): preserve whitespace in companion paths (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
-- #94 — fix\(agents\): improve task branches, terminals, PR delivery and templates (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
+- #95 — feat\(git\): Codex 智能分支清理与 Git 操作加固 (patch): Product changes; ordinary features and fixes use a patch until milestone qualification.
 
 ## Roadmap qualification
 
