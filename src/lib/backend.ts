@@ -142,9 +142,11 @@ export async function deleteLocalBranchAfterConfirmation(
   branch: string,
 ): Promise<boolean> {
   requireDesktop();
+  const expectedState = await invoke<LocalBranchDeletionState>("git_preview_local_branch_deletion", { repositoryRoot, branch });
   const confirmed = await confirm(
     `Delete the LOCAL branch "${branch}"?\n\n` +
-      "This does not delete a branch on GitHub. A branch with unmerged commits requires a separate force-delete confirmation. " +
+      `Commit: ${expectedState.branchHeadSha}\nComparison: ${expectedState.comparisonRef} @ ${expectedState.comparisonHeadSha}\n\n` +
+      "This deletes only the local branch. Matching its upstream means pushed, and does not prove integration into the default branch. A branch with unmerged commits requires a separate force-delete confirmation. " +
       "Stale origin branches are removed with Fetch.",
     {
       title: "Delete local Git branch",
@@ -154,7 +156,7 @@ export async function deleteLocalBranchAfterConfirmation(
     },
   );
   if (!confirmed) return false;
-  const result = await gitDeleteLocalBranch(repositoryRoot, branch, false, null);
+  const result = await gitDeleteLocalBranch(repositoryRoot, branch, false, expectedState);
   if (result.status === "deleted") return true;
   if (result.status !== "needsForce") throw new Error("Unexpected branch deletion response.");
 
@@ -176,9 +178,17 @@ export async function deleteLocalBranchAfterConfirmation(
   return true;
 }
 
-export async function gitDeleteOriginBranch(repositoryRoot: string, branch: string): Promise<void> {
+interface RemoteBranchDeletionState {
+  repositoryRoot: string;
+  branch: string;
+  branchHeadSha: string;
+  destination: string;
+  defaultBranch: string;
+}
+
+async function gitDeleteOriginBranch(repositoryRoot: string, branch: string, expectedState: RemoteBranchDeletionState): Promise<void> {
   requireDesktop();
-  return invoke("git_delete_origin_branch", { repositoryRoot, branch });
+  return invoke("git_delete_origin_branch", { repositoryRoot, branch, expectedState });
 }
 
 /**
@@ -190,8 +200,10 @@ export async function deleteOriginBranchAfterConfirmation(
   branch: string,
 ): Promise<boolean> {
   requireDesktop();
+  const expectedState = await invoke<RemoteBranchDeletionState>("git_preview_origin_branch_deletion", { repositoryRoot, branch });
   const confirmed = await confirm(
     `Permanently delete the REMOTE branch "origin/${branch}"?\n\n` +
+      `Destination: ${expectedState.destination}\nCommit: ${expectedState.branchHeadSha}\nDefault branch: ${expectedState.defaultBranch}\n\n` +
       "This deletes the branch from the shared origin repository and may affect other collaborators. " +
       "Your local branch and worktrees will be kept. Default branches are protected.",
     {
@@ -203,7 +215,7 @@ export async function deleteOriginBranchAfterConfirmation(
   );
 
   if (!confirmed) return false;
-  await gitDeleteOriginBranch(repositoryRoot, branch);
+  await gitDeleteOriginBranch(repositoryRoot, branch, expectedState);
   return true;
 }
 

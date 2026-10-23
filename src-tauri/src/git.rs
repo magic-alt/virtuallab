@@ -1,6 +1,6 @@
 mod cleanup;
 pub(crate) use cleanup::require_unrewritten_task_destination;
-pub use cleanup::{git_cleanup_preview, git_cleanup_merged};
+pub use cleanup::{git_cleanup_preview, git_cleanup_merged, git_cleanup_selected, git_cleanup_analyze, git_cleanup_cancel, CleanupAnalysisManager};
 use crate::process::background_command;
 use crate::workspace_lifecycle::WorkspaceLifecycle;
 use tauri::Manager;
@@ -22,6 +22,7 @@ pub struct RepositorySnapshot {
     head_sha: String,
     remote_url: Option<String>,
     origin_default_branch: Option<String>,
+    upstream: Option<String>,
     dirty_count: usize,
     staged_count: usize,
     unstaged_count: usize,
@@ -148,6 +149,8 @@ fn inspect_repository_blocking(path: String) -> Result<RepositorySnapshot, Strin
         head_sha: status.head_sha,
         remote_url,
         origin_default_branch,
+        upstream: git_read_optional(&path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+            .map(|value| value.trim().to_string()).filter(|value| !value.is_empty()),
         dirty_count: status.dirty_count,
         staged_count: status.staged_count,
         unstaged_count: status.unstaged_count,
@@ -1554,6 +1557,7 @@ pub async fn git_delete_local_branch(
     app: tauri::AppHandle, repository_root: String, branch: String,
     force: bool, expected_state: Option<LocalBranchDeletionState>,
 ) -> Result<LocalBranchDeletionResult, String> {
+    if expected_state.is_none() { return Err("Preview and confirm the exact branch commit before deletion".into()); }
     let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git branch deletion")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _reservation = reservation;
@@ -1563,10 +1567,13 @@ pub async fn git_delete_local_branch(
     .map_err(|error| format!("Git branch deletion task failed: {error}"))?
 }
 
-fn git_delete_local_branch_blocking(
-    repository_root: String, branch: String,
-    force: bool, expected_state: Option<LocalBranchDeletionState>,
-) -> Result<LocalBranchDeletionResult, String> {
+#[tauri::command]
+pub async fn git_preview_local_branch_deletion(repository_root: String, branch: String) -> Result<LocalBranchDeletionState, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_local_branch_deletion(&repository_root, &branch))
+        .await.map_err(|_| "Branch inspection worker failed".to_string())?
+}
+
+fn inspect_local_branch_deletion(repository_root: &str, branch: &str) -> Result<LocalBranchDeletionState, String> {
     let root = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -1613,12 +1620,20 @@ fn git_delete_local_branch_blocking(
         Some(sha) => (upstream.to_string(), sha.trim().to_string()),
         None => ("HEAD".to_string(), git_read(&root, &["rev-parse", "--verify", "HEAD^{commit}"])?.trim().to_string()),
     };
-    let state = LocalBranchDeletionState {
+    Ok(LocalBranchDeletionState {
         repository_root: std::fs::canonicalize(&root).map_err(|error| error.to_string())?.to_string_lossy().into_owned(),
         branch: branch.to_string(), branch_head_sha, comparison_ref, comparison_head_sha,
-    };
-    if force && expected_state.as_ref() != Some(&state) {
-        return Err("Branch or merge target changed before force deletion. Retry and review the latest branch.".into());
+    })
+}
+
+fn git_delete_local_branch_blocking(
+    repository_root: String, branch: String,
+    force: bool, expected_state: Option<LocalBranchDeletionState>,
+) -> Result<LocalBranchDeletionResult, String> {
+    let state = inspect_local_branch_deletion(&repository_root, &branch)?;
+    let root = state.repository_root.clone();
+    if (force || expected_state.is_some()) && expected_state.as_ref() != Some(&state) {
+        return Err("Branch or merge target changed before deletion. Retry and review the latest branch.".into());
     }
     let ancestry = background_command("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -1634,11 +1649,9 @@ fn git_delete_local_branch_blocking(
     if merged && force {
         return Err("Branch is now fully merged. Retry ordinary deletion.".into());
     }
-    if force {
-        force_delete_local_branch_ref(&root, &state)?;
-    } else {
-        git(&root, &["branch", "-d", "--", branch])?;
-    }
+    // The ancestry check above is mandatory for ordinary deletion. Both paths
+    // use the approved branch/base transaction, never an unchecked branch -D.
+    force_delete_local_branch_ref(&root, &state)?;
     Ok(LocalBranchDeletionResult::Deleted)
 }
 
@@ -1679,17 +1692,33 @@ fn force_delete_local_branch_ref(root: &str, state: &LocalBranchDeletionState) -
 }
 
 #[tauri::command]
-pub async fn git_delete_origin_branch(app: tauri::AppHandle, repository_root: String, branch: String) -> Result<(), String> {
+pub async fn git_delete_origin_branch(app: tauri::AppHandle, repository_root: String, branch: String, expected_state: RemoteBranchDeletionState) -> Result<(), String> {
     let reservation = app.state::<WorkspaceLifecycle>().reserve(&repository_root, "Git remote branch deletion")?;
     tauri::async_runtime::spawn_blocking(move || {
         let _reservation = reservation;
-        git_delete_origin_branch_blocking(repository_root, branch)
+        git_delete_origin_branch_guarded(repository_root, branch, Some(expected_state))
     })
     .await
     .map_err(|error| format!("Git origin branch deletion task failed: {error}"))?
 }
 
-fn git_delete_origin_branch_blocking(repository_root: String, branch: String) -> Result<(), String> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RemoteBranchDeletionState {
+    repository_root: String,
+    branch: String,
+    branch_head_sha: String,
+    destination: String,
+    default_branch: String,
+}
+
+#[tauri::command]
+pub async fn git_preview_origin_branch_deletion(repository_root: String, branch: String) -> Result<RemoteBranchDeletionState, String> {
+    tauri::async_runtime::spawn_blocking(move || inspect_origin_branch_deletion(&repository_root, &branch))
+        .await.map_err(|_| "Remote branch inspection worker failed".to_string())?
+}
+
+fn inspect_origin_branch_deletion(repository_root: &str, branch: &str) -> Result<RemoteBranchDeletionState, String> {
     let root = git_read(&repository_root, &["rev-parse", "--show-toplevel"])?
         .trim()
         .to_string();
@@ -1703,12 +1732,18 @@ fn git_delete_origin_branch_blocking(repository_root: String, branch: String) ->
         return Err(format!("Refusing to delete the default branch 'origin/{branch}'"));
     }
 
+    let destination = cleanup::cleanup_destination(&root, &git_read(&root, &["remote", "get-url", "--all", "origin"])?)?;
+    let push_destination = cleanup::cleanup_destination(&root, &git_read(&root, &["remote", "get-url", "--push", "--all", "origin"])?)?;
+    if destination != push_destination { return Err("Origin fetch and push destinations differ; refusing deletion".into()); }
+    cleanup::require_unrewritten_destination(&root, &destination)?;
+
     let remote_ref = format!("refs/heads/{branch}");
     // Consult origin, not a potentially stale refs/remotes/origin/HEAD.
     // Resolve the branch SHA at the same time to use an explicit push lease.
-    let advertised = git_origin_network(
+    let advertised = git_network_at(
         &root,
-        &["ls-remote", "--symref", "origin", "HEAD", remote_ref.as_str()],
+        &destination,
+        &["ls-remote", "--symref", "--", &destination, "HEAD", remote_ref.as_str()],
         false,
     )?;
     let remote_default = advertised
@@ -1739,17 +1774,39 @@ fn git_delete_origin_branch_blocking(repository_root: String, branch: String) ->
             format!("Remote branch 'origin/{branch}' no longer exists. Use Fetch + prune to refresh.")
         })?;
 
+    Ok(RemoteBranchDeletionState {
+        repository_root: std::fs::canonicalize(&root).map_err(|e| e.to_string())?.to_string_lossy().into_owned(),
+        branch: branch.into(), branch_head_sha: expected_sha.into(), destination, default_branch: remote_default.into(),
+    })
+}
+
+#[cfg(test)]
+fn git_delete_origin_branch_blocking(repository_root: String, branch: String) -> Result<(), String> {
+    git_delete_origin_branch_guarded(repository_root, branch, None)
+}
+
+fn git_delete_origin_branch_guarded(repository_root: String, branch: String, expected: Option<RemoteBranchDeletionState>) -> Result<(), String> {
+    let state = inspect_origin_branch_deletion(&repository_root, &branch)?;
+    if expected.as_ref().is_some_and(|approved| approved != &state) { return Err("Remote branch or destination changed; preview and confirm again".into()); }
+    let root = state.repository_root;
+    let destination = state.destination;
+    let branch = state.branch;
+    let expected_sha = state.branch_head_sha.as_str();
+    let remote_ref = format!("refs/heads/{branch}");
     // An explicit destination refspec deletes only this branch (never tags).
     // The lease rejects deletion if somebody pushed new commits since ls-remote.
     let lease = format!("--force-with-lease={remote_ref}:{expected_sha}");
     let deletion = format!(":{remote_ref}");
-    git_origin_network(&root, &["push", "--porcelain", lease.as_str(), "origin", deletion.as_str()], true)
+    cleanup::require_unrewritten_destination(&root, &destination)?;
+    git_network_at(&root, &destination, &["push", "--porcelain", lease.as_str(), "--", &destination, deletion.as_str()], true)
         .map_err(|error| format!("Unable to delete 'origin/{branch}': {error}"))?;
 
     // Reflect the successful server deletion immediately without touching any
     // refs/heads/*, including a checked-out branch or another worktree.
     let tracking_ref = format!("refs/remotes/origin/{branch}");
-    git(&root, &["update-ref", "-d", tracking_ref.as_str()])?;
+    if git_read_optional(&root, &["rev-parse", "--verify", &tracking_ref]).as_deref().map(str::trim) == Some(expected_sha) {
+        git(&root, &["update-ref", "-d", tracking_ref.as_str(), expected_sha])?;
+    }
     Ok(())
 }
 
@@ -1774,9 +1831,31 @@ fn git_pull_current_blocking(repository_root: String, workspace_root: String) ->
     if branch.is_empty() {
         return Err("Cannot pull a detached HEAD; switch to a branch first.".to_string());
     }
-    // Supplying origin and the checked-out branch avoids pulling from a
-    // surprising upstream; --ff-only refuses diverged histories.
-    git_origin_network(&workspace, &["pull", "--ff-only", "origin", branch], false)?;
+    // for-each-ref reports only the first configured merge target. Git permits
+    // multiple branch.<name>.merge values, so inspect cardinality explicitly.
+    let merge_targets = git_read_optional(&workspace, &["config", "--null", "--get-all", &format!("branch.{branch}.merge")])
+        .ok_or("No configured upstream; set one explicitly before Pull")?;
+    let merge_targets: Vec<_> = merge_targets.split_terminator('\0').collect();
+    let upstream_remotes = git_read_optional(&workspace, &["config", "--null", "--get-all", &format!("branch.{branch}.remote")])
+        .ok_or("No configured upstream remote; set one explicitly before Pull")?;
+    if merge_targets.len() != 1 || upstream_remotes.split_terminator('\0').count() != 1 {
+        return Err("Configured upstream is ambiguous; choose exactly one remote and merge target before Pull".into());
+    }
+    let local_ref = format!("refs/heads/{branch}");
+    let upstream = git_read(&workspace, &["for-each-ref", "--format=%(upstream:remotename)%09%(upstream:remoteref)", &local_ref])?;
+    let (remote, remote_ref) = upstream.trim_end_matches(['\r', '\n']).split_once('\t')
+        .filter(|(remote, reference)| !remote.is_empty() && reference.starts_with("refs/heads/"))
+        .ok_or("No configured upstream; set one explicitly before Pull")?;
+    if merge_targets[0] != remote_ref || upstream_remotes.split_terminator('\0').next() != Some(remote) {
+        return Err("Configured upstream changed during inspection; retry Pull".into());
+    }
+    let destination = if remote == "." { ".".to_string() } else {
+        cleanup::cleanup_destination(&workspace, &git_read(&workspace, &["remote", "get-url", "--all", remote])?)?
+    };
+    if remote != "." { cleanup::require_unrewritten_destination(&workspace, &destination)?; }
+    // Explicit arguments override rebase/autostash configuration. A differently
+    // named upstream is valid; silently substituting origin/current-name is not.
+    git_network_at(&workspace, &destination, &["pull", "--ff-only", "--no-rebase", "--no-autostash", "--", &destination, remote_ref], false)?;
     Ok(())
 }
 
@@ -2261,6 +2340,93 @@ pub(crate) fn execute_merged_cleanup_for_task_test(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pull_rejects_multiple_upstream_merge_targets() {
+        let (sandbox, repo) = init_fixture_repo("pull-ambiguous-upstream");
+        let root = repo.to_string_lossy().into_owned();
+        git_ok(&repo, &["branch", "-M", "local"]);
+        git_ok(&repo, &["branch", "trunk"]);
+        git_ok(&repo, &["config", "branch.local.remote", "."]);
+        git_ok(&repo, &["config", "--add", "branch.local.merge", "refs/heads/trunk"]);
+        git_ok(&repo, &["config", "--add", "branch.local.merge", "refs/heads/local"]);
+        assert!(git_pull_current_blocking(root.clone(), root).unwrap_err().contains("ambiguous"));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+    #[test]
+    fn ordinary_branch_deletion_rejects_changed_approved_sha() {
+        let (sandbox, repo) = init_fixture_repo("local-delete-snapshot");
+        let root = repo.to_string_lossy().into_owned();
+        git_ok(&repo, &["branch", "feat/target"]);
+        let mut state = inspect_local_branch_deletion(&root, "feat/target").unwrap();
+        state.branch_head_sha = "0".repeat(40);
+        assert!(git_delete_local_branch_blocking(root.clone(), "feat/target".into(), false, Some(state)).is_err());
+        assert!(git_read(&root, &["show-ref", "--verify", "refs/heads/feat/target"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+    #[test]
+    fn pull_uses_configured_upstream_even_when_remote_and_branch_names_differ() {
+        let (sandbox, repo) = init_fixture_repo("pull-upstream");
+        let remote = sandbox.join("upstream.git");
+        git_ok(&repo, &["init", "--bare", remote.to_str().unwrap()]);
+        git_ok(&repo, &["remote", "add", "team", remote.to_str().unwrap()]);
+        git_ok(&repo, &["push", "-u", "team", "HEAD:refs/heads/trunk"]);
+        git_ok(&repo, &["branch", "-m", "local-name"]);
+        assert!(git_pull_current_blocking(repo.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned()).is_ok());
+        git_ok(&repo, &["branch", "--unset-upstream"]);
+        assert!(git_pull_current_blocking(repo.to_string_lossy().into_owned(), repo.to_string_lossy().into_owned()).unwrap_err().contains("upstream"));
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn remote_delete_rejects_different_push_destination() {
+        let (sandbox, repo) = init_fixture_repo("remote-delete-destination");
+        let origin = sandbox.join("origin.git");
+        let other = sandbox.join("other.git");
+        git_ok(&repo, &["branch", "-M", "main"]);
+        for remote in [&origin, &other] { git_ok(&repo, &["init", "--bare", remote.to_str().unwrap()]); git_ok(remote, &["symbolic-ref", "HEAD", "refs/heads/main"]); }
+        git_ok(&repo, &["remote", "add", "origin", origin.to_str().unwrap()]);
+        git_ok(&repo, &["branch", "feat/done"]);
+        for remote in [&origin, &other] { git_ok(&repo, &["push", remote.to_str().unwrap(), "main", "feat/done"]); }
+        git_ok(&repo, &["remote", "set-url", "--push", "origin", other.to_str().unwrap()]);
+        assert!(git_delete_origin_branch_blocking(repo.to_string_lossy().into_owned(), "feat/done".into()).unwrap_err().contains("destination"));
+        assert!(git_read(other.to_str().unwrap(), &["show-ref", "--verify", "refs/heads/feat/done"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+    #[test]
+    fn selected_cleanup_deletes_only_approved_branch_and_rejects_forgery() {
+        let (sandbox, repo) = init_fixture_repo("cleanup-selection");
+        let root = repo.to_str().unwrap();
+        git_ok(&repo, &["branch", "-M", "master"]);
+        git_ok(&repo, &["branch", "feat/one"]);
+        git_ok(&repo, &["branch", "feat/two"]);
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let forged = serde_json::from_value(serde_json::json!([{"branch":"master","local":true,"remote":false,"worktree":false}])).unwrap();
+        assert!(cleanup::execute_selected_cleanup(plan.clone(), forged, &WorkspaceLifecycle::default(), |_,_,_| {}).is_err());
+        let selected = serde_json::from_value(serde_json::json!([{"branch":"feat/one","local":true,"remote":false,"worktree":false}])).unwrap();
+        let result = cleanup::execute_selected_cleanup(plan, selected, &WorkspaceLifecycle::default(), |_,_,_| {}).unwrap();
+        assert_eq!(result.removed, vec!["local feat/one"]);
+        assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/two"]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
+
+    #[test]
+    fn selected_worktree_removal_keeps_its_branch_and_duplicate_choices_are_rejected() {
+        let (sandbox, repo, lane) = removal_fixture("cleanup-worktree-only");
+        let root = repo.to_str().unwrap();
+        let branch = git_read(lane.to_str().unwrap(), &["branch", "--show-current"]).unwrap();
+        let branch = branch.trim();
+        let plan = cleanup::preview_cleanup(root, root).unwrap();
+        let item = serde_json::json!({"branch":branch,"local":false,"remote":false,"worktree":true});
+        let duplicate = serde_json::from_value(serde_json::json!([item.clone(), item.clone()])).unwrap();
+        assert!(cleanup::execute_selected_cleanup(plan.clone(), duplicate, &WorkspaceLifecycle::default(), |_,_,_| {}).is_err());
+        assert!(lane.exists());
+        let selected = serde_json::from_value(serde_json::json!([item])).unwrap();
+        let result = cleanup::execute_selected_cleanup(plan, selected, &WorkspaceLifecycle::default(), |_,_,_| {}).unwrap();
+        assert!(result.failed.is_empty(), "{:?}", result.failed);
+        assert!(!lane.exists());
+        assert!(git_read(root, &["show-ref", "--verify", &format!("refs/heads/{branch}")]).is_ok());
+        fs::remove_dir_all(sandbox).unwrap();
+    }
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2350,15 +2516,17 @@ mod tests {
     }
 
     #[test]
-    fn merged_cleanup_requires_main_both_at_preview_and_after_confirmation() {
+    fn merged_cleanup_previews_without_switching_and_protects_selected_branch() {
         let (sandbox, repo) = init_fixture_repo("cleanup-requires-main");
         let root = repo.to_str().unwrap();
         git_ok(&repo, &["branch", "-M", "main"]);
         git_ok(&repo, &["branch", "feat/done"]);
         let plan = cleanup::preview_cleanup(root, root).unwrap();
         git_ok(&repo, &["switch", "-c", "feat/current"]);
-        assert!(cleanup::preview_cleanup(root, root).unwrap_err().contains("Switch to main"));
-        assert!(cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).unwrap_err().contains("Switch to main"));
+        let preview = cleanup::preview_cleanup(root, root).unwrap();
+        assert!(!serde_json::to_value(&preview).unwrap()["targets"].as_array().unwrap().iter().any(|t| t["branch"] == "feat/current"));
+        assert_eq!(git_read(root, &["branch", "--show-current"]).unwrap().trim(), "feat/current");
+        assert!(cleanup::execute_cleanup(plan, &WorkspaceLifecycle::default(), |_, _, _| {}).is_err());
         assert!(git_read(root, &["show-ref", "--verify", "refs/heads/feat/done"]).is_ok());
         fs::remove_dir_all(sandbox).unwrap();
     }

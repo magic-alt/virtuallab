@@ -56,7 +56,7 @@ use execution::{
     process_spawn, process_stop, terminal_resize, terminal_spawn, terminal_spawn_codex, terminal_stop,
     terminal_write, ProcessManager, TerminalManager,
 };
-use git::{git_cleanup_preview, git_cleanup_merged, create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, inspect_worktree_status, open_workspace_directory, repository_detach, repository_restore, remove_worktree, stop_worktree_terminals};
+use git::{git_cleanup_analyze, git_cleanup_cancel, git_cleanup_selected, git_cleanup_preview, git_cleanup_merged, create_worktree, git_delete_local_branch, git_delete_origin_branch, git_diff, git_fetch_origin, git_local_changes, git_pull_current, git_switch_branch, inspect_repository, inspect_worktree_status, open_workspace_directory, repository_detach, repository_restore, remove_worktree, stop_worktree_terminals};
 use external_editor::open_workspace_in_editor;
 use github::{github_capabilities, github_context, github_list_pull_requests, github_merge_pull_request, github_mark_ready_for_review, github_post_review_comment};
 use watch::{watch_start, watch_stop, WatchManager};
@@ -73,6 +73,7 @@ fn desktop_context() -> tauri::Context<tauri::Wry> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(git::CleanupAnalysisManager::default())
         .manage(TerminalManager::default())
         .manage(ProcessManager::default())
         .manage(RunRegistry::default())
@@ -140,8 +141,13 @@ pub fn run() {
             open_workspace_in_editor,
             git_diff,
             git_switch_branch,
+            git::git_preview_local_branch_deletion,
+            git::git_preview_origin_branch_deletion,
             git_delete_local_branch,
             git_cleanup_preview,
+            git_cleanup_analyze,
+            git_cleanup_cancel,
+            git_cleanup_selected,
             git_cleanup_merged,
             git_delete_origin_branch,
             git_fetch_origin,
@@ -196,6 +202,7 @@ pub fn run() {
         .expect("error while building VirtualLab")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                app.state::<git::CleanupAnalysisManager>().shutdown();
                 app.state::<task_execution::TaskExecution>().shutdown();
                 app.state::<RunRegistry>().close();
                 app.state::<WatchManager>().shutdown();

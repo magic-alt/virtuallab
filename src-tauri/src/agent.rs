@@ -2071,7 +2071,10 @@ require('readline').createInterface({{input:process.stdin}}).on('line', line => 
         fn probe(&self) -> Result<CodexContextConfiguration, String> {
             let root = std::fs::canonicalize(&self.root).unwrap();
             let mut command = crate::execution::process_command(self.node.to_str().unwrap());
-            command.arg(root.join("fixture.cjs"));
+            // The probe pins cwd to this fixture root. Node 26 on Windows
+            // cannot resolve a verbatim (\\?\) CLI script path, so let the
+            // interpreter resolve the fixed filename from that same cwd.
+            command.arg("fixture.cjs");
             probe_codex_context_configuration_command(command, root.to_str().unwrap())
         }
         fn assert_stopped(&self) {

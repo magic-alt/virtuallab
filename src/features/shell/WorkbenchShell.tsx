@@ -1,5 +1,6 @@
-import { cleanupMergedAfterConfirmation, type CleanupOutcome } from "@/lib/gitCleanup";
+import { cleanupSelectedAfterConfirmation, type CleanupPlan, type CleanupSelection, type CleanupOutcome } from "@/lib/gitCleanup";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CleanupReviewDialog } from "@/features/git/CleanupReviewDialog";
 import { BuildIdentity } from "./BuildIdentity";
 import { AgentsHub } from "@/features/agents/AgentsHub";
 import { useTaskObserver } from "@/features/tasks/useTaskObserver";
@@ -149,6 +150,7 @@ export function WorkbenchShell() {
   const [gitBusy, setGitBusy] = useState(false);
   const [cleanupReport, setCleanupReport] = useState<(CleanupOutcome & { repositoryId: string }) | null>(null);
   const [cleanupProgress, setCleanupProgress] = useState("");
+  const [cleanupReview, setCleanupReview] = useState<{ repositoryId: string; workspaceRoot: string } | null>(null);
   // A synchronous guard prevents rapid double-clicks before React re-renders.
   const gitMutationInFlightRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +158,8 @@ export function WorkbenchShell() {
   const [workspaceDialog, setWorkspaceDialog] = useState(false);
   const [reviewIntent, setReviewIntent] = useState<ReviewWorkspaceRequest | null>(null);
   const [snapshotRevision, setSnapshotRevision] = useState(0);
+  const snapshotRevisionRef = useRef(snapshotRevision);
+  snapshotRevisionRef.current = snapshotRevision;
   const [searchQuery, setSearchQuery] = useState("");
   const preferredEditor = usePreferredEditor();
   const helpMenuTriggerRef = useRef<HTMLButtonElement>(null);
@@ -682,25 +686,32 @@ export function WorkbenchShell() {
     }));
   };
 
-  const cleanMerged = async () => {
+  const cleanMerged = () => {
     if (!activeRepository || gitBusy || loading || gitMutationInFlightRef.current) return;
-    const repositoryId = activeRepository.id;
     setCleanupReport(null);
-    // Use the normal branch switch/navigation flow, including its native
-    // Stash & Switch confirmation. Cancellation/failure stops cleanup.
-    if (snapshot.currentBranch !== "main") await selectBranch("main");
-    if (useWorkbenchStore.getState().activeRepositoryId !== repositoryId) return;
-    const selectedPath = activePathRef.current;
-    const selected = selectedPath && snapshotCacheRef.current.get(normalizePath(selectedPath));
-    if (!selected || selected.currentBranch !== "main") return;
-    await runGitMutation(async () => {
+    setCleanupReview({ repositoryId: activeRepository.id, workspaceRoot: snapshot.root });
+  };
+
+  const executeReviewedCleanup = async (plan: CleanupPlan, selection: CleanupSelection[]): Promise<boolean> => {
+    if (!activeRepository || cleanupReview?.repositoryId !== activeRepository.id ||
+        normalizePath(plan.selectedWorkspace) !== normalizePath(activePathRef.current ?? "")) return false;
+    const repositoryId = activeRepository.id;
+    let failure: unknown;
+    const reviewedRevision = snapshotRevisionRef.current;
+    const succeeded = await runGitMutation(async () => {
       try {
-        const result = await cleanupMergedAfterConfirmation(activeRepository.path, selected.root, setCleanupProgress);
+        const result = await cleanupSelectedAfterConfirmation(plan, selection, setCleanupProgress, () =>
+          useWorkbenchStore.getState().activeRepositoryId === repositoryId &&
+          snapshotRevisionRef.current === reviewedRevision &&
+          normalizePath(activePathRef.current ?? "") === normalizePath(plan.selectedWorkspace));
         if (!result) return false;
         snapshotCacheRef.current.clear();
-        setCleanupReport({ ...result, repositoryId });
-      } finally { setCleanupProgress(""); }
+        if (useWorkbenchStore.getState().activeRepositoryId === repositoryId) setCleanupReport({ ...result, repositoryId });
+      } catch (cause) { failure = cause; throw cause; }
+      finally { setCleanupProgress(""); }
     });
+    if (failure) throw failure;
+    return succeeded;
   };
 
   const selectBranch = async (name: string) => {
@@ -1103,6 +1114,11 @@ export function WorkbenchShell() {
 
         <section className="vl-stage flex min-h-0 min-w-0 flex-1 flex-col">
           <div hidden={appView !== "repositories"} className="vl-workspace-host min-h-0 min-w-0 flex-1 flex-col">
+          {cleanupReview?.repositoryId === activeRepository?.id && cleanupReview && activeRepository &&
+            normalizePath(cleanupReview.workspaceRoot) === normalizePath(snapshot.root) && (
+            <CleanupReviewDialog repositoryRoot={activeRepository.path} workspaceRoot={cleanupReview.workspaceRoot}
+              revision={snapshotRevision} busy={gitBusy} onClose={() => setCleanupReview(null)} onExecute={executeReviewedCleanup} />
+          )}
           {cleanupReport?.repositoryId === activeRepository?.id && cleanupReport && (
             <div role="status" className="shrink-0 border-b border-white/10 bg-slate-900 px-4 py-3 text-xs">
               <div className="flex items-center justify-between gap-3">

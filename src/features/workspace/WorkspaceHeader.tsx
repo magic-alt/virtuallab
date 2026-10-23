@@ -123,13 +123,13 @@ export function WorkspaceHeader({
           </Button>
           <Button
             disabled={
-              isPreview || loading || gitBusy || !snapshot.remoteUrl ||
+              isPreview || loading || gitBusy || (!snapshot.remoteUrl && !snapshot.upstream) || snapshot.upstream === null ||
               trackedDirty || snapshot.currentBranch.startsWith("detached@")
             }
             onClick={onPull}
             variant="outline"
             size="sm"
-            title="Fast-forward from origin; untracked files remain unless they conflict with incoming files"
+            title={snapshot.upstream === null ? "No configured upstream; configure one before Pull" : `Fast-forward from ${snapshot.upstream ?? "the configured upstream"}; untracked files remain unless they conflict with incoming files`}
           >
             <GitBranch size={13} />
             Pull
