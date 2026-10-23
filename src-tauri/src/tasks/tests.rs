@@ -98,6 +98,27 @@ fn empty_context_keeps_legacy_launch_serialization_and_retry_identity() {
 }
 
 #[test]
+fn disabled_pr_delivery_preserves_legacy_launch_request_digest() {
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let request = fixture.request(vec![draft("legacy-delivery", &[])]);
+    let mut legacy = serde_json::to_value(&request).unwrap();
+    assert!(legacy["tasks"][0].get("autoDraftPr").is_none());
+    assert!(legacy["tasks"][0].get("prBaseBranch").is_none());
+    legacy["repositoryRoot"] = serde_json::json!(super::validation::canonical_root(&fixture.repo).unwrap());
+    let expected = format!("{:x}", Sha256::digest(serde_json::to_vec(&serde_json::json!({"plan":legacy,"executablePath":null})).unwrap()));
+    let manager = fixture.manager();
+    let first = manager.accept_launch("legacy-pr-request", request, None).unwrap();
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(fixture.path()).unwrap()).unwrap();
+    assert_eq!(persisted["launchRequests"][0]["requestDigest"], expected);
+    legacy["tasks"][0]["autoDraftPr"] = serde_json::json!(false);
+    legacy["tasks"][0]["prBaseBranch"] = serde_json::Value::Null;
+    let replay = manager.accept_launch("legacy-pr-request", serde_json::from_value(legacy).unwrap(), None).unwrap();
+    assert!(!replay.created);
+    assert_eq!(replay.task.id, first.task.id);
+}
+
+#[test]
 fn launch_request_replay_keeps_one_durable_task_and_the_original_failure() {
     let f = Fixture::new();
     let m = f.manager();

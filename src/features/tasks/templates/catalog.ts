@@ -10,7 +10,7 @@ export const WORKFLOW_SKILLS = [
   { id: 'evidence', name: '证据交接', trigger: '返回完成结果前', instruction: '运行适用的测试，报告完整命令、退出码、通过/失败数量和未执行检查。Agent 的文字报告只是报告，Native 验证和人工审查决定交付。' },
 ] as const;
 export type WorkflowSkillId = typeof WORKFLOW_SKILLS[number]['id'];
-export type TaskTemplateId = 'feature' | 'bugfix' | 'node-demo';
+export type TaskTemplateId = 'feature' | 'bugfix' | 'build' | 'test' | 'ci' | 'docs' | 'node-demo';
 export interface TaskTemplate {
   id: TaskTemplateId;
   version: 1;
@@ -19,9 +19,13 @@ export interface TaskTemplate {
   skills: readonly WorkflowSkillId[];
 }
 export const TASK_TEMPLATES: readonly TaskTemplate[] = [
-  { id: 'node-demo', version: 1, name: '可运行案例：任务优先级排序器', description: 'Node.js 零第三方依赖；自动填写目标、范围与验证 Profile，由真实 Agent 编写实现。', skills: ['intent','plan','tdd','self-review','evidence'] },
   { id: 'feature', version: 1, name: '测试驱动功能开发', description: '目标 → 计划 → TDD → 自查 → 原生验证 → 人工交付。填写项目目标并选择已有验证 Profile。', skills: ['intent','plan','tdd','self-review','evidence'] },
   { id: 'bugfix', version: 1, name: '根因驱动缺陷修复', description: '复现 → 根因假设 → 回归测试 → 最小修复 → 验证；不把猜测当作定位结论。', skills: ['intent','root-cause','plan','tdd','self-review','evidence'] },
+  { id: 'build', version: 1, name: '项目构建检查', description: '依据当前仓库的真实构建入口复现并修复构建问题。', skills: ['intent','root-cause','plan','self-review','evidence'] },
+  { id: 'test', version: 1, name: '测试与回归检查', description: '使用项目现有测试入口，补齐明确的行为覆盖缺口。', skills: ['intent','plan','tdd','self-review','evidence'] },
+  { id: 'ci', version: 1, name: '持续集成检查', description: '核对仓库 CI 配置与真实构建、类型检查和测试命令。', skills: ['intent','plan','self-review','evidence'] },
+  { id: 'docs', version: 1, name: '项目文档核对', description: '对照当前代码与命令修正文档，保留未验证事项。', skills: ['intent','plan','self-review','evidence'] },
+  { id: 'node-demo', version: 1, name: '可运行案例：任务优先级排序器', description: '可选的 Node.js 入门案例；在独立示例目录体验任务流程。', skills: ['intent','plan','tdd','self-review','evidence'] },
 ];
 export interface TemplateInput {
   title: string;
@@ -29,6 +33,8 @@ export interface TemplateInput {
   scope: string[];
   profile: TaskVerificationProfile | null;
   autoCommit: boolean;
+  autoDraftPr?: boolean;
+  prBaseBranch?: string | null;
 }
 
 /** Materialize content, not execution state. Native owns persistence and every gate. */
@@ -51,6 +57,7 @@ export function materializeTemplate(templateId: string, input: TemplateInput, in
     kind: 'implementation', dependencyKeys: [],
     profile: demo ? demoProfile(directory) : input.profile ? structuredClone(input.profile) : null,
     autoCommit: input.autoCommit,
+    ...(input.autoDraftPr ? { autoDraftPr: true, prBaseBranch: input.prBaseBranch?.trim() || null } : {}),
   };
 }
 

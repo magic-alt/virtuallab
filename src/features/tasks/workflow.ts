@@ -8,6 +8,7 @@ export function nextTaskStep(task:TaskRecord,ready?:TaskReadiness):TaskStep {
  const latest=task.attempts.at(-1);const detail=ready?.blockers.join('；');
  if(active(task))return {label:latest?.state==='stopping'?'等待停止观察':'查看执行',detail:'执行、排队或停止中的任务请查看原生状态；可使用现有取消操作。',tab:'执行'};
  if(!task.workspaceRoot)return {label:'准备工作区',detail:'在下方表单显式创建任务工作区；打开页面不会开始工作。',tab:'概览'};
+ if(task.delivery?.attemptId===latest?.id&&task.delivery?.candidateSha===latest?.candidateSha&&['failed','reconcile_required'].includes(task.delivery?.status??''))return {label:'恢复 PR 提交',detail:task.delivery?.error||'查看 PR 提交状态；可核对远端结果或重试提交。',tab:'证据'};
  if(ready?.acceptanceCurrent&&task.acceptance)return {label:'查看已验收交付',detail:'验收当前性由 Native 确认；远端交付仍需独立操作。',tab:'交付'};
  if(needsReview(ready))return {label:'审查当前验证结果',detail:detail!,tab:'变更与审查'};
  if(ready?.reviewCurrent&&['ready','warning'].includes(ready.status))return {label:'确认交付验收',detail:'查看当前修订、Run 和警告，再显式验收。',tab:'交付'};

@@ -14,6 +14,8 @@ import { TaskExecutionConsole } from './TaskExecutionConsole';
 import { TaskReport } from './TaskReport';
 import { useTaskAttemptReport } from './useTaskAttemptReport';
 import { ContextRepositoryList } from '@/features/workspace/RepositoryContextSelector';
+import { suggestTaskBranch } from './taskBranch';
+import { TaskDeliveryPanel } from './TaskDeliveryPanel';
 import './taskControlCenter.css';
 
 const tabs = ['概览','执行','证据'] as const;
@@ -29,7 +31,7 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
   const tab = useTaskStore(state => state.activeTaskId === task.id ? state.activeTaskTab : '概览');
   const setTab = (value:TaskDetailTab) => selectTask(task.id,value);
   const primaryTab = tab === '变更与审查' || tab === '交付' ? '证据' : tab;
-  const [branch,setBranch] = useState(() => 'task/' + task.id); const [targetPath,setTargetPath] = useState('');
+  const [branch,setBranch] = useState(() => suggestTaskBranch(task.title, task.id)); const [targetPath,setTargetPath] = useState('');
   const defaultExecutablePath = useAgentPreferences(state => state.codexExecutablePath);
   const [executableOverride,setExecutableOverride] = useState<string | null>(null);
   const executablePath = executableOverride ?? defaultExecutablePath;
@@ -81,6 +83,7 @@ export function TaskDetail({task, onOpenWorkspace}: {task: TaskRecord; onOpenWor
     {launchError && launchError !== actionError && <p role="alert" className="task-error">{launchError}</p>}
     {readinessError && <p className="task-error">就绪来源不可用：{readinessError}</p>}
     <div role="tablist" aria-label="任务详情标签" className="task-tabs">{tabs.map(label => <button key={label} role="tab" id={`task-tab-${label}`} aria-selected={primaryTab === label} aria-controls="task-detail-panel" onClick={() => setTab(label)}>{label === '证据' ? '报告' : label}</button>)}</div>
+    <TaskDeliveryPanel task={task} disabled={disabled} onDeliver={() => act(() => tasks.deliverTaskPullRequest(task.id))}/>
     <section role="tabpanel" id="task-detail-panel" aria-labelledby={`task-tab-${primaryTab}`} className="task-panel">
       {primaryTab === '证据' && <div className="task-report-actions" role="group" aria-label="报告与交付操作">{(['证据','变更与审查','交付'] as const).map(value => <button key={value} type="button" aria-pressed={tab === value} onClick={() => setTab(value)}>{value === '证据' ? '结果报告' : value}</button>)}</div>}
       {tab === '概览' && <>

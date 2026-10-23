@@ -39,4 +39,25 @@ describe('single-task prompt normalization', () => {
     expect(plan.tasks[0].scope).toEqual(['src']);
     expect(plan.tasks[0].dependencyKeys).toEqual([]);
   });
+  it('rejects an incoherent PR policy before accepting the plan', () => {
+    const plan=create('修复代码');
+    plan.tasks[0].autoDraftPr=true;
+    expect(validateTaskPlan(plan).join()).toMatch(/本地提交/);
+    plan.tasks[0].autoCommit=true;
+    expect(validateTaskPlan(plan)).toEqual([]);
+    plan.tasks[0].prBaseBranch='refs/heads/main..unsafe';
+    expect(validateTaskPlan(plan).join()).toMatch(/目标分支/);
+    plan.tasks[0].prBaseBranch='release/2026';
+    plan.tasks[0].kind='integration';
+    expect(validateTaskPlan(plan).join()).toMatch(/实现节点/);
+  });
+  it.each(['HEAD','refs/heads/main','a'.repeat(241),'分'.repeat(81)])('rejects a PR base that native cannot accept: %s', base => {
+    const plan=create('修复代码');
+    Object.assign(plan.tasks[0], {autoCommit:true,autoDraftPr:true,prBaseBranch:base});
+    expect(validateTaskPlan(plan).join()).toMatch(/目标分支/);
+  });
+  it('does not accept a PR target without publication consent', () => {
+    const plan=create('修复代码'); plan.tasks[0].prBaseBranch='main';
+    expect(validateTaskPlan(plan).join()).toMatch(/自动 PR/);
+  });
 });

@@ -250,6 +250,19 @@ fn github_capabilities_blocking(workspace_root: &str) -> GithubCapabilities {
     }
 }
 
+/// Reuse the workbench's installed/authenticated GitHub qualification. Task
+/// delivery additionally pins and validates every effective fetch/push URL.
+pub(crate) fn qualify_task_delivery(workspace_root: &str, expected_repository: &str) -> Result<(), String> {
+    let capabilities = github_capabilities_blocking(workspace_root);
+    if capabilities.mode != "connected" {
+        return Err(capabilities.detail);
+    }
+    if !capabilities.repository.as_deref().is_some_and(|repository| repository.eq_ignore_ascii_case(expected_repository)) {
+        return Err("GitHub qualification no longer matches the task's approved repository".into());
+    }
+    Ok(())
+}
+
 fn capability_from_probes(
     installed: bool,
     authenticated: bool,
@@ -882,7 +895,7 @@ fn repository_from_workspace(workspace_root: &str) -> Result<Option<String>, Str
     Ok(parse_github_remote(&remote))
 }
 
-fn parse_github_remote(remote: &str) -> Option<String> {
+pub(crate) fn parse_github_remote(remote: &str) -> Option<String> {
     let trimmed = remote.trim().trim_end_matches('/').trim_end_matches(".git");
     let path = if let Some(value) = trimmed.strip_prefix("https://github.com/") {
         value

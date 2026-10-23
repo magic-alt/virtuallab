@@ -14,6 +14,7 @@ export function taskStatus(task: TaskRecord, ready?: TaskReadiness) {
 export function needsAttention(task: TaskRecord, ready?: TaskReadiness) {
   const state = task.attempts.at(-1)?.state;
   return !ready || ready.status === 'blocked' || ready.status === 'warning'
+    || (!!task.delivery && task.delivery.attemptId === task.attempts.at(-1)?.id && ['failed','reconcile_required'].includes(task.delivery.status))
     || ['failed', 'interrupted', 'stopping'].includes(state ?? '')
     || (!!task.acceptance && !ready.acceptanceCurrent) || (!!task.review && !ready.reviewCurrent);
 }
@@ -69,6 +70,15 @@ export function validateTaskPlan(request: TaskPlanRequest, existing: TaskRecord[
     if (!task.title.trim() || !task.goal.trim()) errors.push(`${task.key}: 需要标题和目标。`);
     if (!task.scope.length || task.scope.length > 128 || new Set(task.scope).size !== task.scope.length || (task.scope.includes('.') && task.scope.length !== 1) || task.scope.some(path => path !== '.' && !safeRelative(path))) errors.push(`${task.key}: 范围必须为安全的相对路径。`);
     if (task.kind !== 'implementation' && task.kind !== 'integration') errors.push(`${task.key}: 类型无效。`);
+    if (task.autoDraftPr && !task.autoCommit) errors.push(`${task.key}: 自动 PR 需要允许创建本地提交。`);
+    if (task.autoDraftPr && task.kind !== 'implementation') errors.push(`${task.key}: 自动 PR 仅支持实现节点。`);
+    const base = task.prBaseBranch;
+    if (base != null && !task.autoDraftPr) errors.push(`${task.key}: PR 目标分支需要先启用自动 PR。`);
+    if (base != null && (!base || new TextEncoder().encode(base).byteLength > 240 || /[\s\x00-\x1f\x7f~^:?*\[\\]/u.test(base)
+      || base.startsWith('-') || base.startsWith('refs/') || base === 'HEAD' || base === '@' || base.includes('..') || base.includes('@{')
+      || base.split('/').some(part => !part || part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock')))) {
+      errors.push(`${task.key}: PR 目标分支必须是有效的 Git 分支名称。`);
+    }
     if (task.profile) { try {parseTaskProfile(JSON.stringify(task.profile));} catch (error) {errors.push(`${task.key}: Profile ${String(error)}`);} }
   }
   const byKey = new Map(request.tasks.map(task => [task.key, task]));

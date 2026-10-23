@@ -85,4 +85,10 @@
 .task-quick-actions { justify-content:space-between; padding-top:16px; }
 .task-center .task-quick-actions button[type=submit] { background:#6c4827; border-color:var(--task-accent); color:#fff; font-weight:650; padding:9px 20px; }
 .task-center .task-quick-actions button[type=submit]:hover:not(:disabled) { background:#85562e; }
+.task-delivery-options {margin:14px 0;padding:8px 14px;background:#12171e;border:1px solid var(--task-border);border-radius:8px;}
+.task-center .task-delivery-options p {color:var(--task-muted);font-size:12px;line-height:1.6;}
+.task-pr-delivery h3 {margin:0;}
+.task-pr-delivery [data-status=delivered] {color:#a6d2b4;}
+.task-pr-delivery [data-status=failed],.task-pr-delivery [data-status=reconcile_required] {color:#e8bb79;}
+.task-pr-delivery a {color:#f1c99e;text-decoration:underline;overflow-wrap:anywhere;}
 @media(max-width:700px) { .task-quick-dialog .task-quick-prompt { min-height:130px; } .task-quick-actions button { flex:1; } }

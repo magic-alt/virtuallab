@@ -17,12 +17,40 @@ pub(crate) struct TaskRecord {
     pub(crate) context_repositories: Vec<crate::workspace_context::ContextRepository>,
     pub(crate) profile: Option<Value>,
     pub(crate) auto_commit: bool,
+    #[serde(default)]
+    pub(crate) auto_draft_pr: bool,
+    #[serde(default)]
+    pub(crate) pr_base_branch: Option<String>,
+    /// Native pins the approved origin identity when accepting an opted-in task.
+    #[serde(default)]
+    pub(crate) pr_repository: Option<String>,
+    #[serde(default)]
+    pub(crate) delivery: Option<TaskPrDelivery>,
     pub(crate) revision: u64,
     pub(crate) workspace_root: Option<String>,
     pub(crate) attempts: Vec<TaskAttempt>,
     pub(crate) review: Option<TaskReview>,
     pub(crate) acceptance: Option<TaskAcceptance>,
     pub(crate) created_at_ms: u64,
+    pub(crate) updated_at_ms: u64,
+}
+
+/// External delivery has its own durable receipt. A network failure must never
+/// rewrite a completed execution attempt or require another provider turn.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TaskPrDelivery {
+    pub(crate) status: String,
+    pub(crate) stage: String,
+    pub(crate) attempt_id: String,
+    pub(crate) candidate_sha: String,
+    pub(crate) repository: Option<String>,
+    pub(crate) branch: Option<String>,
+    pub(crate) base_branch: Option<String>,
+    pub(crate) remote_base_sha: Option<String>,
+    pub(crate) pull_request_url: Option<String>,
+    pub(crate) pull_request_number: Option<u64>,
+    pub(crate) error: Option<String>,
     pub(crate) updated_at_ms: u64,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -119,7 +147,12 @@ pub(crate) struct TaskDraft {
     pub(crate) context_repositories: Vec<crate::workspace_context::ContextRepository>,
     pub(crate) profile: Option<Value>,
     pub(crate) auto_commit: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(crate) auto_draft_pr: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pr_base_branch: Option<String>,
 }
+fn is_false(value: &bool) -> bool { !value }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TaskPlanRequest {

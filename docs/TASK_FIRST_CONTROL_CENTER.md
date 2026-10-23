@@ -45,6 +45,13 @@ Agents, Run/build processes and verification share an exclusive workspace writer
 
 The default action is the user's authorization to create and start that task.
 Merely opening a page, changing a filter, or selecting a task never starts work.
+New branches use `task/<readable-title>-<12-hex-suffix>`; Unicode titles are retained
+within a bounded slug and repeated titles remain distinct. Existing task branches
+are not renamed. **打开终端** is an explicit action: it inspects the task's exact
+worktree and focuses a running/starting shell or opens one once the terminal
+listeners are ready. Repeated clicks reuse the shell, while a stopped shell allows
+a new session. Passive navigation does not start a terminal.
+
 Queued and running tasks keep their linked worktrees protected from native removal
 and **Clean merged**, including the gaps before Codex starts and while it stops.
 Cancelling queued work releases that protection after the cancellation is saved;
@@ -63,6 +70,47 @@ recovery action can reconcile an existing worktree; an old error alone does not
 prevent corrected explicit creation when Native has no retained preparation intent.
 
 AI plan suggestions and machine Reviewer are currently unavailable: the implementation does not claim a qualified read-only provider mode. The quick composer **does not invoke an AI planner** or synthesize a dependency DAG: it freezes the user's words as the implementation Agent's goal, with a bounded title derived locally. This provides low-friction Vibe Coding task creation without fabricating an AI capability, execution or verification. Manual planning and human review remain usable. These labels are intentional capability gates, not simulated AI output. Other existing harnesses remain available through Agents Hub → 工作区会话; the task coordinator's first implementation uses Codex only.
+
+## Optional automatic Draft PR
+
+Before creating an implementation task, enable **完成后自动创建 Draft PR** to
+authorize local auto-commit and publication of its sealed candidate. The policy is
+off by default and frozen with the accepted task. An optional target branch uses
+the GitHub default when blank. Native binds the repository from `origin`; this
+requires Git push permission and an authenticated `gh` on the local machine.
+
+After successful execution, Native checks the exact prepared branch, clean
+candidate, accepted scope and configured verification. It pushes only that task
+branch with a create-only precondition and opens a Draft. No Profile produces an
+explicitly unverified Draft; configured failing/stale evidence prevents publication.
+The PR includes the task goal, scope, candidate and verification state. It does not
+merge the PR or mark the task reviewed/accepted.
+
+The **PR 提交** panel shows progress, errors and the resulting link. Delivery
+failure preserves successful execution and its report. **重试提交 PR** recovers
+delivery without restarting the provider. **核对 PR 提交结果** checks a retained
+remote intention before continuing; an unknown creation response is never blindly
+replayed. If a create request failed and no exact PR can be observed, the retained
+receipt stays unresolved; it may require a follow-up task instead of another POST.
+Restart requires explicit recovery. A delivered receipt remains linked
+to its original candidate; later verification of that candidate keeps the link,
+while a new implementation requires a follow-up task for another PR.
+
+## Repository recommendations
+
+**流程模板** and **高级任务** expose **当前仓库推荐** based on bounded, read-only
+inspection of actual manifests, source/documentation/CI paths and existing Run
+recipes. Available recommendations cover builds, regression checks, CI, documents
+and defect investigation. Each shows the actual commands, proposed scope and
+verification limitations before selection. Choosing one fills an editable draft;
+it does not execute commands. Review the proposed goal and narrow the scope as needed.
+
+Supported npm and root Cargo checks can generate a frozen structured Profile.
+Matching saved Profiles are copied with their revision. Unsupported recipes or
+missing checks keep a null Profile with an unverified notice; CMake/Keil recipes
+and nested Cargo manifests do not fabricate qualified commands. Switching the
+repository discards old repository-specific scope, Profile and publication consent,
+and delayed responses cannot replace the new repository's recommendations.
 
 ## Task-driven surfaces
 

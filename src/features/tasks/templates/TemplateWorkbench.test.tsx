@@ -21,7 +21,7 @@ const launchButton = () => screen.getByRole('button',{name:'确认并运行模�
 const open = async () => userEvent.click(screen.getByRole('button',{name:'预览并运行案例'}));
 const baseline = async () => {await userEvent.click(screen.getByRole('button',{name:'读取模板基线'}));await screen.findByText('a'.repeat(40));};
 const consent = async () => {
-  await userEvent.click(screen.getByLabelText('允许 Native 检查范围后封存本地提交（不推送、不合并）'));
+  await userEvent.click(screen.getByLabelText('完成后创建本地提交'));
   await userEvent.click(screen.getByLabelText('确认创建独立 Worktree 并启动真实 Agent，接受实际调用费用'));
 };
 beforeEach(() => {

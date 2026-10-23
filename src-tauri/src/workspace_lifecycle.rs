@@ -667,6 +667,9 @@ mod tests {
         let service = WorkspaceLifecycle::default();
         let root = fixture();
         let child = root.join("other");
+        // Keep independent fixture identities even beneath a host Git workspace.
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::create_dir(child.join(".git")).unwrap();
         let nested = child.join("nested");
         fs::create_dir_all(nested.join(".git")).unwrap();
         let paths = vec![child.to_string_lossy().into_owned()];
@@ -926,6 +929,9 @@ mod tests {
     fn independent_workspaces_can_run_concurrently() {
         let service = WorkspaceLifecycle::default();
         let root = fixture();
+        // Keep independent fixture identities even beneath a host Git workspace.
+        fs::create_dir(root.join(".git")).unwrap();
+        fs::create_dir(root.join("other").join(".git")).unwrap();
         let _first = service.reserve(root.to_str().unwrap(), "build").unwrap();
         let _second = service
             .reserve(root.join("other").to_str().unwrap(), "build")

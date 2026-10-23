@@ -23,6 +23,35 @@ beforeEach(() => {
 });
 
 describe('task execution observation independent of delivery readiness', () => {
+  it.each(['preflight','push','create_pr'] as const)('catches a new delivery after a successful retry still carries an older %s failure', async stage => {
+    const task = taskFixture({autoCommit:true,autoDraftPr:true,attempts:[{id:'new-attempt',state:'succeeded',phase:'review',candidateSha:'b'.repeat(40),failure:null,startedAtMs:4,endedAtMs:5,evidence:null}],
+      delivery:{status:stage === 'preflight' ? 'failed' : 'reconcile_required',stage,attemptId:'old-attempt',candidateSha:(stage === 'preflight' ? 'a' : 'b').repeat(40),repository:'owner/repo',branch:'task/fix',baseBranch:'main',pullRequestUrl:null,pullRequestNumber:null,error:'Authentication or connectivity required',updatedAtMs:3}});
+    let record = task;
+    native.invoke.mockImplementation(async command => command === 'task_list' ? [record] : command === 'task_events' ? [] : command === 'task_readiness' ? readinessFixture() : null);
+    vi.useFakeTimers();
+    const stop = observeTasks(['/repo']);
+    try {
+      await vi.waitFor(() => expect(useTaskStore.getState().tasks[0]?.delivery?.attemptId).toBe('old-attempt'));
+      record = {...task, delivery:{...task.delivery!,status:'delivered',stage:'complete',attemptId:'new-attempt',candidateSha:'b'.repeat(40),pullRequestUrl:'https://github.com/owner/repo/pull/17',pullRequestNumber:17,error:null}};
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(useTaskStore.getState().tasks[0]?.delivery?.status).toBe('delivered');
+    } finally { stop(); vi.useRealTimers(); }
+  });
+  it('catches missed PR delivery events after the execution attempt has already succeeded', async () => {
+    const task = taskFixture({autoCommit:true,autoDraftPr:true,attempts:[{id:'attempt',state:'succeeded',phase:'review',candidateSha:'a'.repeat(40),failure:null,startedAtMs:1,endedAtMs:2,evidence:null}],
+      delivery:{status:'running',attemptId:'attempt',candidateSha:'a'.repeat(40),repository:'owner/repo',branch:'task/fix',baseBranch:'main',pullRequestUrl:null,pullRequestNumber:null,error:null,updatedAtMs:3}});
+    native.invoke.mockImplementation(async command => command === 'task_list' ? [task] : command === 'task_events' ? [] : command === 'task_readiness' ? readinessFixture() : null);
+    vi.useFakeTimers();
+    const stop = observeTasks(['/repo']);
+    try {
+      await vi.waitFor(() => expect(useTaskStore.getState().tasks[0]?.delivery?.status).toBe('running'));
+      // Existing observer catches-up every five seconds, even with a working
+      // event subscription; its timer must also observe completed providers.
+      native.invoke.mockClear();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(native.invoke).toHaveBeenCalledWith('task_list',{repositoryRoots:['/repo']});
+    } finally { stop(); vi.useRealTimers(); }
+  });
   it('publishes a terminal task snapshot while a readiness query is still pending', async () => {
     const running = taskFixture({ attempts: [{ id: 'attempt', state: 'running', phase: 'implementation',
       candidateSha: null, failure: null, startedAtMs: 1, endedAtMs: null, evidence: null }] });

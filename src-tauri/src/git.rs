@@ -1,4 +1,5 @@
 mod cleanup;
+pub(crate) use cleanup::require_unrewritten_task_destination;
 pub use cleanup::{git_cleanup_preview, git_cleanup_merged};
 use crate::process::background_command;
 use crate::workspace_lifecycle::WorkspaceLifecycle;
@@ -531,6 +532,20 @@ fn macos_gh_cli() -> Option<String> {
         .stdout(Stdio::null()).stderr(Stdio::null()).status()
         .is_ok_and(|status| status.success())
         .then(|| path.to_string_lossy().into_owned())
+}
+
+/// Task publication uses the same per-child macOS GitHub HTTPS credentials as
+/// existing workbench Git operations. SSH and other platforms keep normal Git
+/// credentials; no global configuration or credential file is changed.
+pub(crate) fn configure_task_github_transport(command: &mut std::process::Command, destination: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if is_github_https_remote(destination) {
+        let executable = macos_gh_cli().ok_or("GitHub HTTPS task delivery requires the existing authenticated GitHub CLI; its executable could not be qualified")?;
+        configure_github_https_git(command, Some(&executable));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (command, destination);
+    Ok(())
 }
 
 /// Only operations that contact origin pass through this path. On macOS,

@@ -20,6 +20,7 @@ import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { NewWorkspaceDialog } from "@/features/workspace/NewWorkspaceDialog";
 import { ProjectSidebar } from "@/features/sidebar/ProjectSidebar";
 import { WorkspaceContent } from "@/features/workspace/WorkspaceContent";
+import type { TerminalOpenRequest } from "@/features/terminal/TerminalWorkspace";
 import { WorkspaceHeader } from "@/features/workspace/WorkspaceHeader";
 import {
   chooseRepositoryDirectory,
@@ -109,7 +110,7 @@ export function WorkbenchShell() {
       const selected = next.workspaceStates[next.activeRepositoryId ?? ""];
       const prior = previous.workspaceStates[previous.activeRepositoryId ?? ""];
       if (next.activeRepositoryId !== previous.activeRepositoryId ||
-          selected?.activeWorktreePath !== prior?.activeWorktreePath || selected?.activeTab !== prior?.activeTab) {
+          workspaceKey(selected?.activeWorktreePath ?? "") !== workspaceKey(prior?.activeWorktreePath ?? "") || selected?.activeTab !== prior?.activeTab) {
         navigationEpoch.current += 1;
       }
     });
@@ -171,6 +172,8 @@ export function WorkbenchShell() {
   const latestSnapshotRequestRef = useRef<string | null>(null);
   const [retiredTerminal, setRetiredTerminal] = useState<{ path: string; sequence: number } | null>(null);
   const retiredTerminalSequence = useRef(0);
+  const [terminalOpenRequest, setTerminalOpenRequest] = useState<TerminalOpenRequest | null>(null);
+  const terminalOpenSequence = useRef(0);
 
   const loadSnapshot = useCallback((
     path: string, requireFresh = false,
@@ -947,15 +950,36 @@ export function WorkbenchShell() {
   };
 
   const openTaskWorkspace = (root: string, destination: WorkspaceTab, repositoryRoot?: string) => {
+    if (!root.trim()) return;
     const state = useWorkbenchStore.getState();
-    const owner = state.repositories.find((item) => repositoryRoot && workspaceKey(item.path) === workspaceKey(repositoryRoot))
-      ?? state.repositories.find((item) => workspaceKey(item.path) === workspaceKey(root)
-        || snapshotCacheRef.current.get(workspaceKey(item.path))?.worktrees.some((tree) => workspaceKey(tree.path) === workspaceKey(root)));
+    // An explicit task owner must still be registered. Do not silently attach
+    // a removed repository's task to a separately registered worktree alias.
+    const owner = repositoryRoot
+      ? state.repositories.find((item) => workspaceKey(item.path) === workspaceKey(repositoryRoot))
+      : state.repositories.find((item) => workspaceKey(item.path) === workspaceKey(root)
+        || snapshotCacheRef.current.get(workspaceKey(item.path))?.worktrees.some((tree) => !tree.missing && workspaceKey(tree.path) === workspaceKey(root)));
     if (!owner) return;
     saveWorkspaceState({repositoryId:owner.id,activeWorktreePath:root,activeTab:destination,updatedAt:Date.now()});
     setAppView("repositories");
     if (state.activeRepositoryId !== owner.id) selectRepository(owner.id);
-    else {setTab(destination);void loadSnapshot(root).catch(() => undefined);}
+    else setTab(destination);
+    const request = navigationEpoch.current;
+    void loadSnapshot(root, false, owner.id).then(next => {
+      if (destination !== "terminal" || !isDesktopRuntime() || navigationEpoch.current !== request) return;
+      const isCurrent = () => {
+        const current = useWorkbenchStore.getState();
+        const selected = current.workspaceStates[owner.id];
+        return navigationEpoch.current === request && current.activeRepositoryId === owner.id &&
+          current.repositories.some(item => item.id === owner.id && workspaceKey(item.path) === workspaceKey(owner.path)) &&
+          selected?.activeTab === "terminal" && workspaceKey(selected.activeWorktreePath) === workspaceKey(root);
+      };
+      // Recovery may have returned the primary worktree after removal. Opening
+      // the task terminal must never create a shell in that fallback directory.
+      if (!isCurrent() || workspaceKey(next.root) !== workspaceKey(root) ||
+          !next.worktrees.some(tree => !tree.missing && workspaceKey(tree.path) === workspaceKey(root)) ||
+          !next.worktrees.some(tree => !tree.missing && workspaceKey(tree.path) === workspaceKey(owner.path))) return;
+      setTerminalOpenRequest({ sequence: ++terminalOpenSequence.current, repositoryId: owner.id, workspaceRoot: root, isCurrent });
+    }).catch(() => undefined);
   };
 
   return (
@@ -1127,6 +1151,7 @@ export function WorkbenchShell() {
             terminalRepositoryId={workspaceReady ? activeRepository?.id ?? null : null}
             registeredRepositoryIds={repositories.map((item) => item.id)}
             retiredTerminal={retiredTerminal}
+            terminalOpenRequest={terminalOpenRequest}
             tab={tab}
             isPreview={isPreview}
             snapshotRevision={snapshotRevision}
