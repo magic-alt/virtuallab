@@ -3,7 +3,7 @@ import type { RepositoryRecord } from '@/types/workbench';
 import { workspaceKey } from '@/lib/workspaceKey';
 import { TASK_TEMPLATES, type TaskTemplate } from './catalog';
 import { TaskTemplateDialog } from './TaskTemplateDialog';
-import { RepositoryRecommendations } from './RepositoryRecommendations';
+import { RepositoryRecommendations } from './RepositoryRecommendationList';
 import { useRepositoryRecommendations } from './useRepositoryRecommendations';
 import type { TaskRecommendation } from './repositoryRecommendations';
 import './templates.css';

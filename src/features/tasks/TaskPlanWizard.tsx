@@ -12,7 +12,7 @@ import { useRepositoryContextStore } from '@/stores/repositoryContext';
 import { copyContextRepositories } from '@/lib/workspaceContext';
 import type { ContextRepository } from '@/types/workspaceContext';
 import { TaskDeliveryOptions } from './TaskDeliveryOptions';
-import { RepositoryRecommendations } from './templates/RepositoryRecommendations';
+import { RepositoryRecommendations } from './templates/RepositoryRecommendationList';
 import { useRepositoryRecommendations } from './templates/useRepositoryRecommendations';
 import type { TaskRecommendation } from './templates/repositoryRecommendations';
 
