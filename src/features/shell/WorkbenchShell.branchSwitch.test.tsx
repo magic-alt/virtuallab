@@ -26,7 +26,11 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => vi.fn()),
 }));
 
-vi.mock("@/lib/gitCleanup", () => ({ cleanupMergedAfterConfirmation: harness.cleanup }));
+vi.mock("@/lib/gitCleanup", () => ({ cleanupSelectedAfterConfirmation: harness.cleanup, cleanupMergedAfterConfirmation: harness.cleanup }));
+
+vi.mock("@/features/git/CleanupReviewDialog", () => ({
+  CleanupReviewDialog: (props: { onClose: () => void; onExecute: (plan: unknown, selection: unknown[]) => Promise<boolean> }) => <div role="dialog" aria-label="Cleanup review"><button onClick={() => void props.onExecute({ repositoryRoot: repoRoot, selectedWorkspace: repoRoot }, [{ branch: "feat/done", local: true, remote: false, worktree: false }])}>Confirm reviewed cleanup</button><button onClick={props.onClose}>Close review</button></div>,
+}));
 
 vi.mock("@/lib/backend", () => ({
   confirmNativeAction: vi.fn().mockResolvedValue(true),
@@ -609,30 +613,30 @@ describe("workbench branch switching with untracked artifacts", () => {
     expect(screen.getByRole("button", { name: "Remove workspace" })).toBeEnabled();
   });
 
-  it("switches to main before previewing merged cleanup", async () => {
+  it("opens cleanup review without switching, stashing or deleting", async () => {
     const user = userEvent.setup();
-    harness.cleanup.mockImplementation(async (_repository: string, selected: string) => {
-      expect(harness.currentBranch).toBe("main");
-      expect(selected).toBe(repoRoot);
-      return { removed: ["local feat/done"], failed: [] };
-    });
     render(<WorkbenchShell />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Clean merged…" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Clean merged…" }));
+    await screen.findByRole("dialog", { name: "Cleanup review" });
+    expect(harness.switchBranch).not.toHaveBeenCalled();
+    expect(harness.stashChanges).not.toHaveBeenCalled();
+    expect(harness.cleanup).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm reviewed cleanup" }));
     await screen.findByText("Cleanup: 1 removed; 0 failed or skipped.");
-    expect(harness.switchBranch).toHaveBeenCalledWith(repoRoot, repoRoot, "main");
     expect(harness.cleanup).toHaveBeenCalledOnce();
+    expect(harness.currentBranch).toBe("codex/pr-15");
   });
 
-  it("does not start cleanup if switching to main fails", async () => {
+  it("closing review preserves repository state", async () => {
     const user = userEvent.setup();
-    harness.switchBranch.mockRejectedValueOnce(new Error("main switch blocked"));
     render(<WorkbenchShell />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Clean merged…" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Clean merged…" }));
-    await screen.findByText("main switch blocked");
+    await user.click(await screen.findByRole("button", { name: "Close review" }));
+    expect(screen.queryByRole("dialog", { name: "Cleanup review" })).not.toBeInTheDocument();
     expect(harness.cleanup).not.toHaveBeenCalled();
-    expect(harness.currentBranch).toBe("codex/pr-15");
+    expect(harness.switchBranch).not.toHaveBeenCalled();
   });
 
 });

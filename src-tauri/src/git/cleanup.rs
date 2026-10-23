@@ -1,4 +1,8 @@
 use super::*;
+use std::{sync::atomic::{AtomicBool, Ordering}, time::{Duration, Instant}};
+#[path = "cleanup_analysis.rs"]
+mod analysis;
+pub use analysis::{CleanupAnalysisManager, git_cleanup_analyze, git_cleanup_cancel};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,9 +35,55 @@ pub struct CleanupOutcome {
     pub failed: Vec<String>,
 }
 
-/// Preview uses ancestry against main, never a feature's own
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CleanupSelection {
+    branch: String,
+    local: bool,
+    remote: bool,
+    worktree: bool,
+}
+
+fn validate_selection(plan: &CleanupPlan, selection: &[CleanupSelection]) -> Result<(), String> {
+    if selection.is_empty() { return Err("Select at least one cleanup action".into()); }
+    let mut seen = HashSet::new();
+    for item in selection {
+        let target = plan.targets.iter().find(|target| target.branch == item.branch)
+            .ok_or("Invalid cleanup selection: branch is not eligible")?;
+        if !seen.insert(&item.branch) || !(item.local || item.remote || item.worktree)
+            || (item.local && target.local_sha.is_none())
+            || (item.remote && target.remote_sha.is_none())
+            || (item.worktree && target.worktree_path.is_none())
+            || (item.local && target.worktree_path.is_some() && !item.worktree) {
+            return Err("Invalid cleanup selection: duplicate, unavailable or occupied action".into());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn git_cleanup_selected(
+    app: tauri::AppHandle, plan: CleanupPlan, selection: Vec<CleanupSelection>, operation_id: String,
+) -> Result<CleanupOutcome, String> {
+    use tauri::Emitter;
+    let lifecycle = app.state::<WorkspaceLifecycle>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        execute_selected_cleanup(plan, selection, &lifecycle, |completed, total, branch| {
+            let _ = app.emit("git-cleanup-progress", CleanupProgress {
+                operation_id: operation_id.clone(), completed, total, branch: branch.into(),
+            });
+        })
+    }).await.map_err(|_| "Cleanup worker failed".to_string())?
+}
+
+/// Preview uses ancestry against the default branch, never a feature's own
 /// upstream (a pushed feature is not necessarily merged). No fetch or prune.
 pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan, String> {
+    preview_cleanup_cancellable(root, selected, None)
+}
+
+fn preview_cleanup_cancellable(root: &str, selected: &str, cancelled: Option<&AtomicBool>) -> Result<CleanupPlan, String> {
+    require_not_cancelled(cancelled)?;
     let (root, selected) = resolve_git_workspace(root, selected)?;
     let root = std::fs::canonicalize(root)
         .map_err(|e| e.to_string())?
@@ -43,7 +93,6 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
         &root,
         &["worktree", "list", "--porcelain", "-z"],
     )?);
-    require_main(&selected)?;
     let origin_url = git_read_optional(&root, &["remote", "get-url", "origin"])
         .map(|raw| cleanup_destination(&root, &raw))
         .transpose()?;
@@ -63,14 +112,14 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
         );
     }
     let remote = if origin_url.is_some() {
-        Some(remote_heads(&root, origin_url.as_deref().unwrap())?)
+        Some(remote_heads_cancellable(&root, origin_url.as_deref().unwrap(), cancelled)?)
     } else {
         None
     };
-    let base_ref = "refs/heads/main".to_string();
+    let base_ref = resolve_cleanup_base(&root, remote.as_ref().map(|(default, _)| default.as_str()))?;
     let base_sha = git_read(
         &root,
-        &["rev-parse", "--verify", "refs/heads/main^{commit}"],
+        &["rev-parse", "--verify", &format!("{base_ref}^{{commit}}")],
     )?
     .trim()
     .to_string();
@@ -130,7 +179,8 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
     let mut targets = Vec::new();
     let mut skipped = Vec::new();
     for (branch, mut target) in branches {
-        if matches!(branch.as_str(), "main" | "master")
+        require_not_cancelled(cancelled)?;
+        if matches!(branch.as_str(), "main" | "master") || base_ref == format!("refs/heads/{branch}")
             || remote
                 .as_ref()
                 .is_some_and(|(default, _)| default == &branch)
@@ -163,7 +213,7 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
         }
         if let Some(sha) = &target.local_sha {
             if !is_merged(&root, sha, &base_sha)? {
-                skipped.push(format!("{branch}: local branch is not merged into main"));
+                skipped.push(format!("{branch}: local branch is not merged into {base_ref}; squash/rebase integration is unproven"));
                 continue;
             }
         }
@@ -173,7 +223,7 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
                 .as_deref()
                 .is_some_and(|server_base| is_merged(&root, sha, server_base).unwrap_or(false));
             if !is_merged(&root, sha, &base_sha).unwrap_or(false) || !merged_on_server {
-                skipped.push(format!("origin/{branch}: not merged into both main and origin's default branch (or commit unavailable; Fetch first)"));
+                skipped.push(format!("origin/{branch}: not merged into both {base_ref} and origin's default branch (or commit unavailable; Fetch first)"));
                 target.remote_sha = None;
             }
         }
@@ -181,7 +231,7 @@ pub(super) fn preview_cleanup(root: &str, selected: &str) -> Result<CleanupPlan,
             targets.push(target);
         } else {
             skipped.push(format!(
-                "{branch}: not merged into main (or commit unavailable; Fetch first)"
+                "{branch}: not merged into {base_ref} (or commit unavailable; Fetch first)"
             ));
         }
     }
@@ -234,7 +284,7 @@ fn is_merged(root: &str, sha: &str, base: &str) -> Result<bool, String> {
 
 // get-url has already expanded origin's rewrite. Applying a matching rule to
 // that result again could redirect a native remote operation to another repository.
-fn require_unrewritten_destination(root: &str, destination: &str) -> Result<(), String> {
+pub(super) fn require_unrewritten_destination(root: &str, destination: &str) -> Result<(), String> {
     inspect_unrewritten_destination(root, destination, false)
 }
 
@@ -285,20 +335,24 @@ fn remote_heads(
     root: &str,
     destination: &str,
 ) -> Result<(String, BTreeMap<String, String>), String> {
+    remote_heads_cancellable(root, destination, None)
+}
+
+fn remote_heads_cancellable(root: &str, destination: &str, cancelled: Option<&AtomicBool>) -> Result<(String, BTreeMap<String, String>), String> {
     require_unrewritten_destination(root, destination)?;
-    let raw = git_network_at(
-        root,
-        destination,
-        &[
+    let mut command = background_command("git");
+    #[cfg(target_os = "macos")]
+    if is_github_https_remote(destination) { configure_github_https_git(&mut command, macos_gh_cli().as_deref()); }
+    command.arg("-C").arg(root).args([
             "ls-remote",
             "--symref",
             "--",
             destination,
             "HEAD",
             "refs/heads/*",
-        ],
-        false,
-    )?;
+        ]).env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let raw = bounded_network_read(command, cancelled, Duration::from_secs(30))?;
     let mut default = None;
     let mut heads = BTreeMap::new();
     for line in raw.lines() {
@@ -323,19 +377,74 @@ fn remote_heads(
     ))
 }
 
-fn require_main(workspace: &str) -> Result<(), String> {
-    if git_read(workspace, &["symbolic-ref", "--quiet", "HEAD"])?.trim() != "refs/heads/main" {
-        return Err("Switch to main before cleaning merged branches and worktrees.".into());
-    }
+fn require_not_cancelled(cancelled: Option<&AtomicBool>) -> Result<(), String> {
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err("Analysis cancelled".into()); }
     Ok(())
+}
+
+/// Bound remote inventory reads as well as the model phase. Never expose Git
+/// stderr: authentication helpers may echo credential-bearing destinations.
+fn bounded_network_read(mut command: std::process::Command, cancelled: Option<&AtomicBool>, timeout: Duration) -> Result<String, String> {
+    let mut child = crate::managed_process::spawn(&mut command).map_err(|_| "Cannot start remote inspection")?;
+    let stdout = child.stdout.take().ok_or("Remote inspection output unavailable")?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let read = stdout.take(1_000_001).read_to_end(&mut bytes);
+        let _ = tx.send(read.map(|_| bytes));
+    });
+    let begin = Instant::now();
+    let mut output = None;
+    let status = loop {
+        if let Err(error) = require_not_cancelled(cancelled) { break Err(error); }
+        if begin.elapsed() >= timeout { break Err("Remote inspection timed out; retry when the remote is reachable".into()); }
+        if output.is_none() {
+            match rx.try_recv() {
+                Ok(Ok(bytes)) if bytes.len() <= 1_000_000 => output = Some(bytes),
+                Ok(_) => break Err("Remote inspection output failed or exceeds limit".to_string()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break Err("Remote inspection reader disconnected".into()),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {},
+            }
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if !status.success() => break Err("Remote inspection failed; verify authentication and connectivity".into()),
+            Ok(Some(_)) if output.is_some() => break Ok(()),
+            Err(_) => break Err("Cannot observe remote inspection exit".into()),
+            _ => thread::sleep(Duration::from_millis(30)),
+        }
+    };
+    // Keep native ownership until every descendant is observed stopped, even
+    // if the operating system briefly refuses the first termination request.
+    while crate::process::terminate_tree(&mut child).is_err() { thread::sleep(Duration::from_millis(30)); }
+    status?;
+    String::from_utf8(output.ok_or("Remote inspection returned no output")?).map_err(|_| "Invalid remote inventory encoding".into())
+}
+
+fn resolve_cleanup_base(root: &str, remote_default: Option<&str>) -> Result<String, String> {
+    if let Some(branch) = remote_default {
+        for reference in [format!("refs/heads/{branch}"), format!("refs/remotes/origin/{branch}")] {
+            if git_read(root, &["rev-parse", "--verify", &format!("{reference}^{{commit}}")]).is_ok() { return Ok(reference); }
+        }
+        return Err("Default branch commit is unavailable locally. Fetch explicitly before cleanup.".into());
+    }
+    let candidates: Vec<_> = ["refs/heads/main", "refs/heads/master"].into_iter()
+        .filter(|reference| git_read(root, &["show-ref", "--verify", "--quiet", reference]).is_ok()).collect();
+    if candidates.len() != 1 { return Err("Cannot determine an unambiguous default branch for cleanup.".into()); }
+    Ok(candidates[0].into())
 }
 
 // Force URL semantics: an unqualified relative local path could otherwise be
 // reinterpreted by Git as another configured remote name.
-fn cleanup_destination(root: &str, raw: &str) -> Result<String, String> {
+pub(super) fn cleanup_destination(root: &str, raw: &str) -> Result<String, String> {
     let value = raw.trim_end_matches(['\r', '\n']);
     if value.is_empty() || value.contains(['\r', '\n']) {
         return Err("Cleanup requires exactly one origin destination".into());
+    }
+    if let Some((scheme, rest)) = value.split_once("://") {
+        let authority = rest.split('/').next().unwrap_or("");
+        if matches!(scheme, "http" | "https") && (authority.contains('@') || value.contains(['?', '#'])) {
+            return Err("Credential-bearing Git URLs cannot be used for reviewed operations; configure a credential helper or SSH authentication.".into());
+        }
     }
     let bytes = value.as_bytes();
     let drive = bytes.len() > 2
@@ -361,15 +470,14 @@ fn cleanup_destination(root: &str, raw: &str) -> Result<String, String> {
 }
 
 fn validate_remote_plan(plan: &CleanupPlan) -> Result<Option<BTreeMap<String, String>>, String> {
-    require_main(&plan.selected_workspace)?;
     if git_read(
         &plan.repository_root,
-        &["rev-parse", "--verify", "refs/heads/main"],
+        &["rev-parse", "--verify", &plan.base_ref],
     )?
     .trim()
         != plan.base_sha
     {
-        return Err("Main changed; preview cleanup again".into());
+        return Err("Default branch changed; preview cleanup again".into());
     }
     let Some(destination) = plan.origin_url.as_deref() else {
         return Ok(None);
@@ -448,8 +556,22 @@ pub async fn git_cleanup_merged(
 pub(super) fn execute_cleanup(
     plan: CleanupPlan,
     lifecycle: &WorkspaceLifecycle,
+    progress: impl FnMut(usize, usize, &str),
+) -> Result<CleanupOutcome, String> {
+    let selection = plan.targets.iter().map(|target| CleanupSelection {
+        branch: target.branch.clone(), local: target.local_sha.is_some(), remote: target.remote_sha.is_some(), worktree: target.worktree_path.is_some(),
+    }).collect();
+    if plan.targets.is_empty() { return Ok(CleanupOutcome { removed: vec![], failed: vec![] }); }
+    execute_selected_cleanup(plan, selection, lifecycle, progress)
+}
+
+pub(super) fn execute_selected_cleanup(
+    plan: CleanupPlan,
+    selection: Vec<CleanupSelection>,
+    lifecycle: &WorkspaceLifecycle,
     mut progress: impl FnMut(usize, usize, &str),
 ) -> Result<CleanupOutcome, String> {
+    validate_selection(&plan, &selection)?;
     // Reject forged paths and any changes while the confirmation was open.
     let current = preview_cleanup(&plan.repository_root, &plan.selected_workspace)?;
     if current != plan {
@@ -459,11 +581,12 @@ pub(super) fn execute_cleanup(
         removed: Vec::new(),
         failed: Vec::new(),
     };
-    for (index, target) in plan.targets.iter().enumerate() {
-        progress(index, plan.targets.len(), &target.branch);
+    for (index, item) in selection.iter().enumerate() {
+        let target = plan.targets.iter().find(|target| target.branch == item.branch).ok_or("Invalid selection")?;
+        progress(index, selection.len(), &target.branch);
         let local = (|| -> Result<(), String> {
             validate_remote_plan(&plan)?;
-            if let Some(path) = &target.worktree_path {
+            if let Some(path) = target.worktree_path.as_ref().filter(|_| item.worktree) {
                 if !matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
                 {
                     if !cleanup_worktree_clean(path)? {
@@ -500,7 +623,7 @@ pub(super) fn execute_cleanup(
                     _ => return Err("Worktree became dirty; refusing cleanup".into()),
                 }
             }
-            if let Some(sha) = &target.local_sha {
+            if let Some(sha) = target.local_sha.as_ref().filter(|_| item.local) {
                 let _claim = lifecycle.reserve(&plan.repository_root, "merged branch cleanup")?;
                 if !is_merged(&plan.repository_root, sha, &plan.base_sha)? {
                     return Err("Branch is not merged".into());
@@ -522,10 +645,10 @@ pub(super) fn execute_cleanup(
         })();
         if let Err(error) = local {
             outcome.failed.push(format!("{}: {error}", target.branch));
-            progress(index + 1, plan.targets.len(), &target.branch);
+            progress(index + 1, selection.len(), &target.branch);
             continue; // Keep its remote branch too if local work could not be safely retired.
         }
-        if let Some(sha) = &target.remote_sha {
+        if let Some(sha) = target.remote_sha.as_ref().filter(|_| item.remote) {
             let result = (|| -> Result<(), String> {
                 let _claim =
                     lifecycle.reserve(&plan.repository_root, "merged remote branch cleanup")?;
@@ -564,7 +687,7 @@ pub(super) fn execute_cleanup(
                     .push(format!("origin/{}: {error}", target.branch)),
             }
         }
-        progress(index + 1, plan.targets.len(), &target.branch);
+        progress(index + 1, selection.len(), &target.branch);
     }
     Ok(outcome)
 }

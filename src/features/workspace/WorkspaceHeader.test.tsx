@@ -5,6 +5,11 @@ import { PREVIEW_SNAPSHOT } from "@/data/preview";
 import { WorkspaceHeader } from "./WorkspaceHeader";
 
 describe("WorkspaceHeader", () => {
+  it("shows the configured upstream and supports repositories without origin", () => {
+    render(<WorkspaceHeader snapshot={{ ...PREVIEW_SNAPSHOT, remoteUrl: null, upstream: "team/trunk", dirtyCount: 0, stagedCount: 0, unstagedCount: 0 }} isPreview={false} loading={false} gitBusy={false} onFetch={vi.fn()} onPull={vi.fn()} onOpenFolder={vi.fn()} editor="auto" onEditorChange={vi.fn()} onOpenEditor={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Pull" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Pull" })).toHaveAttribute("title", expect.stringContaining("team/trunk"));
+  });
   it("runs Fetch and hides manual Refresh", async () => {
     const user = userEvent.setup();
     const onFetch = vi.fn();

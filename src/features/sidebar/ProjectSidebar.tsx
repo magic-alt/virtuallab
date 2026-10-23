@@ -247,7 +247,7 @@ export function ProjectSidebar({
 
         <div className="mt-7">
           <SectionLabel icon={<GitBranch size={13} />} label="Git branches" />
-          <Button className="mt-2 w-full text-xs" disabled={!branchActionsEnabled || !workspaceActionsEnabled} onClick={onCleanupMerged} title="Switch to main, then preview and confirm cleanup of branches and worktrees merged into main">
+          <Button className="mt-2 w-full text-xs" disabled={!branchActionsEnabled || !workspaceActionsEnabled} onClick={onCleanupMerged} title="Run Codex read-only analysis, select exact branch/worktree targets, then confirm cleanup">
             <Trash2 size={12} /> Clean merged…
           </Button>
           {cleanupProgress && <p role="status" className="mt-1 break-all px-1 text-[10px] text-orange-300">{cleanupProgress}</p>}
